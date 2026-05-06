@@ -11,7 +11,7 @@ import { useToast, ToastContainer } from "@/components/ui/Toast"
 const TABS = [{ id: "submit", label: "📤 Submit Assignment" }, { id: "feedback", label: "📋 My Feedback" }]
 const MAX_MB = 10
 
-export default function StudentView({ student }) {
+export default function StudentView({ student, onLogout }) {
   const [tab, setTab] = useState("submit")
   const [submissions, setSubmissions] = useState([])
   const [loadingSubs, setLoadingSubs] = useState(false)
