@@ -83,7 +83,7 @@ export default function StudentView({ student, onLogout }) {
             <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>👤 {student.name} &nbsp;•&nbsp; 📚 {student.batch}</p>
           </div>
           <div className="flex gap-2">
-            <a href="/teacher" className="btn btn-secondary btn-sm text-xs">🧑‍🏫 Trainer</a>
+            {/* <a href="/teacher" className="btn btn-secondary btn-sm text-xs">🧑‍🏫 Trainer</a> */} 
             <button className="btn btn-secondary btn-sm text-xs" onClick={onLogout}>🚪 Logout</button>
           </div>
         </div>
