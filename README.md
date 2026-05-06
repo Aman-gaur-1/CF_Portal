@@ -5,7 +5,7 @@ Fast, beautiful replacement for the Streamlit portal.
 ## Stack
 - **Next.js 14** (React) – frontend
 - **Supabase** – same database, same storage (no migration needed)
-- **Vercel** – free hosting, zero cold starts
+- **Vercel** – free hosting, zero cold starts 
 
 ## Setup
 
