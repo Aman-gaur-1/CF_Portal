@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { supabase } from "@/lib/supabase"
 import { hashPassword } from "@/lib/utils"
 import Spinner from "@/components/ui/Spinner"
@@ -7,6 +7,85 @@ import Tabs from "@/components/ui/Tabs"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
 
 const TABS = [{ id: "login", label: "🔐 Login" }, { id: "register", label: "📝 Register" }]
+
+// Custom dropdown — works in both dark and light mode
+function BatchSelect({ value, onChange, batches }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [])
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: "100%",
+          padding: "10px 36px 10px 14px",
+          background: "var(--select-bg)",
+          border: "1px solid var(--input-border)",
+          borderRadius: "10px",
+          color: "var(--text-primary)",
+          fontSize: "0.875rem",
+          textAlign: "left",
+          cursor: "pointer",
+          position: "relative",
+          outline: "none",
+        }}
+      >
+        {value || "Select batch..."}
+        <span style={{
+          position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)",
+          color: "var(--text-muted)", fontSize: "0.75rem", pointerEvents: "none"
+        }}>▼</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+          background: "var(--bg-card)",
+          border: "1px solid var(--border)",
+          borderRadius: "10px",
+          boxShadow: "var(--shadow)",
+          zIndex: 999,
+          maxHeight: "220px",
+          overflowY: "auto",
+        }}>
+          {batches.map(b => (
+            <button
+              key={b}
+              type="button"
+              onClick={() => { onChange(b); setOpen(false) }}
+              style={{
+                display: "block",
+                width: "100%",
+                padding: "10px 14px",
+                background: b === value ? "var(--primary)" : "transparent",
+                color: b === value ? "#fff" : "var(--text-primary)",
+                fontSize: "0.875rem",
+                textAlign: "left",
+                border: "none",
+                cursor: "pointer",
+                borderRadius: b === value ? "8px" : "0",
+              }}
+              onMouseEnter={e => { if (b !== value) e.currentTarget.style.background = "var(--expander-hover)" }}
+              onMouseLeave={e => { if (b !== value) e.currentTarget.style.background = "transparent" }}
+            >
+              {b}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function StudentAuth({ onLogin }) {
   const [tab, setTab] = useState("login")
@@ -25,7 +104,11 @@ export default function StudentAuth({ onLogin }) {
 
   useEffect(() => {
     supabase.from("batches").select("name").order("created_at").then(({ data }) => {
-      if (data) { setBatches(data.map(b => b.name)); setLoginBatch(data[0]?.name || ""); setRegBatch(data[0]?.name || "") }
+      if (data) {
+        setBatches(data.map(b => b.name))
+        setLoginBatch(data[0]?.name || "")
+        setRegBatch(data[0]?.name || "")
+      }
     })
   }, [])
 
@@ -78,9 +161,7 @@ export default function StudentAuth({ onLogin }) {
               <div><label className="label">Full Name</label><input className="input" value={loginName} onChange={e => setLoginName(e.target.value)} placeholder="Enter your full name" /></div>
               <div>
                 <label className="label">Batch</label>
-                <select className="select" value={loginBatch} onChange={e => setLoginBatch(e.target.value)}>
-                  {batches.map(b => <option key={b}>{b}</option>)}
-                </select>
+                <BatchSelect value={loginBatch} onChange={setLoginBatch} batches={batches} />
               </div>
               <div><label className="label">Password</label><input type="password" className="input" value={loginPass} onChange={e => setLoginPass(e.target.value)} placeholder="Enter password" /></div>
               <button type="submit" className="btn btn-primary w-full flex items-center justify-center gap-2 mt-2" disabled={loading}>
@@ -94,9 +175,7 @@ export default function StudentAuth({ onLogin }) {
               <div><label className="label">Full Name</label><input className="input" value={regName} onChange={e => setRegName(e.target.value)} placeholder="Enter your full name" /></div>
               <div>
                 <label className="label">Select Batch</label>
-                <select className="select" value={regBatch} onChange={e => setRegBatch(e.target.value)}>
-                  {batches.map(b => <option key={b}>{b}</option>)}
-                </select>
+                <BatchSelect value={regBatch} onChange={setRegBatch} batches={batches} />
               </div>
               <div><label className="label">Password (min 4 chars)</label><input type="password" className="input" value={regPass} onChange={e => setRegPass(e.target.value)} placeholder="Create a password" /></div>
               <div><label className="label">Confirm Password</label><input type="password" className="input" value={regConfirm} onChange={e => setRegConfirm(e.target.value)} placeholder="Confirm password" /></div>
