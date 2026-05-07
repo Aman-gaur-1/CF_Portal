@@ -6,6 +6,7 @@ import Tabs from "@/components/ui/Tabs"
 import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
 import ScoreSection from "@/components/student/ScoreSection"
+import ThemeToggle from "@/components/ui/ThemeToggle"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
 
 const TABS = [{ id: "submit", label: "📤 Submit Assignment" }, { id: "feedback", label: "📋 My Feedback" }]
@@ -18,7 +19,6 @@ export default function StudentView({ student, onLogout }) {
   const [submitting, setSubmitting] = useState(false)
   const { toasts, success, error: showError } = useToast()
 
-  // form state
   const [topic, setTopic] = useState("")
   const [file, setFile] = useState(null)
   const [code, setCode] = useState("")
@@ -77,13 +77,13 @@ export default function StudentView({ student, onLogout }) {
     <div className="min-h-screen p-6" style={{ background: "var(--bg-main)" }}>
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-black gradient-text">Assignment Portal</h1>
             <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>👤 {student.name} &nbsp;•&nbsp; 📚 {student.batch}</p>
           </div>
-          <div className="flex gap-2">
-            {/* <a href="/teacher" className="btn btn-secondary btn-sm text-xs">🧑‍🏫 Trainer</a> */} 
+          <div className="flex items-center gap-2 flex-wrap">
+            <ThemeToggle />
             <button className="btn btn-secondary btn-sm text-xs" onClick={onLogout}>🚪 Logout</button>
           </div>
         </div>
@@ -205,6 +205,12 @@ export default function StudentView({ student, onLogout }) {
             )}
           </div>
         )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-between mt-8 flex-wrap gap-3">
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>Built with ❤️ by ConsoleFlare</p>
+          <ThemeToggle />
+        </div>
       </div>
       <ToastContainer toasts={toasts} />
     </div>
