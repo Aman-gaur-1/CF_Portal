@@ -18,11 +18,8 @@ export default function ThemeToggle() {
 
   function applyToDOM(id) {
     const html = document.documentElement
-    if (id === "auto") {
-      html.removeAttribute("data-theme")
-    } else {
-      html.setAttribute("data-theme", id)
-    }
+    if (id === "auto") html.removeAttribute("data-theme")
+    else html.setAttribute("data-theme", id)
   }
 
   function handleChange(id) {
