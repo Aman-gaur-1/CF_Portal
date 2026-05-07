@@ -4,6 +4,7 @@ import Tabs from "@/components/ui/Tabs"
 import SubmissionsTab from "@/components/teacher/SubmissionsTab"
 import StudentsTab from "@/components/teacher/StudentsTab"
 import BatchesTab from "@/components/teacher/BatchesTab"
+import ThemeToggle from "@/components/ui/ThemeToggle"
 
 const TABS = [
   { id: "submissions", label: "📋 Submissions" },
@@ -22,7 +23,10 @@ export default function TeacherDashboard({ teacherName, onLogout }) {
             <h1 className="text-2xl font-black gradient-text">Trainer Panel</h1>
             <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>🧑‍🏫 {teacherName} &nbsp;•&nbsp; ConsoleFlare</p>
           </div>
-          <button className="btn btn-secondary btn-sm" onClick={onLogout}>🚪 Logout</button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <ThemeToggle />
+            <button className="btn btn-secondary btn-sm" onClick={onLogout}>🚪 Logout</button>
+          </div>
         </div>
 
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
@@ -31,8 +35,9 @@ export default function TeacherDashboard({ teacherName, onLogout }) {
         {tab === "students" && <StudentsTab />}
         {tab === "batches" && <BatchesTab teacherName={teacherName} />}
 
-        <div className="text-center mt-8 text-xs" style={{ color: "var(--text-muted)" }}>
-          Built with ❤️ by ConsoleFlare &nbsp;•&nbsp; © {new Date().getFullYear()}
+        <div className="flex items-center justify-between mt-8 flex-wrap gap-3">
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>Built with ❤️ by ConsoleFlare &nbsp;•&nbsp; © {new Date().getFullYear()}</p>
+          <ThemeToggle />
         </div>
       </div>
     </div>
