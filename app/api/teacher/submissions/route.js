@@ -7,21 +7,13 @@ function requireTeacher() {
   return readTeacher(cookies())
 }
 
-async function withSignedFileUrls(supabase, rows) {
-  return Promise.all((rows || []).map(async row => {
-    if (!row.file_name) return row
-    const { data } = await supabase.storage.from("assignments").createSignedUrl(row.file_name, 24 * 60 * 60)
-    return { ...row, file_url: data?.signedUrl || row.file_url }
-  }))
-}
-
 export async function GET() {
   try {
     if (!requireTeacher()) return unauthorized()
     const supabase = createServerSupabase()
     const { data, error } = await supabase.from("submissions").select("*").order("submitted_at", { ascending: false })
     if (error) throw error
-    return ok({ submissions: await withSignedFileUrls(supabase, data || []) })
+    return ok({ submissions: data || [] })
   } catch (error) {
     return serverError(error)
   }
