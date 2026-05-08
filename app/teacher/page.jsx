@@ -14,8 +14,17 @@ export default function TeacherPage() {
   const [logging, setLogging] = useState(false)
 
   useEffect(() => {
-    try { const s = localStorage.getItem(SESSION_KEY); if (s) setTeacher(JSON.parse(s)) } catch {}
-    setLoading(false)
+    fetch("/api/teacher-session")
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.teacher) {
+          localStorage.setItem(SESSION_KEY, JSON.stringify(data.teacher))
+          setTeacher(data.teacher)
+        } else {
+          localStorage.removeItem(SESSION_KEY)
+        }
+      })
+      .finally(() => setLoading(false))
   }, [])
 
   async function handleLogin(e) {
@@ -27,7 +36,10 @@ export default function TeacherPage() {
     setLogging(false)
   }
 
-  function handleLogout() { localStorage.removeItem(SESSION_KEY); setTeacher(null) }
+  function handleLogout() {
+    fetch("/api/teacher-session", { method: "DELETE" }).catch(() => {})
+    localStorage.removeItem(SESSION_KEY); setTeacher(null)
+  }
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--bg-main)" }}>

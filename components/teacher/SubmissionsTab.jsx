@@ -1,6 +1,5 @@
 "use client"
 import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabase"
 import { getPoints, BROWSER_RENDERABLE, formatDate } from "@/lib/utils"
 import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
@@ -18,11 +17,15 @@ function FeedbackEditor({ r, newType, newPhase, teacherName, onSaved }) {
   async function save() {
     if (!fb.trim()) return
     setSaving(true)
-    await supabase.from("submissions").update({
-      feedback: fb.trim(), feedback_by: teacherName,
-      feedback_at: new Date().toISOString(),
+    await fetch("/api/teacher/submissions", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: r.id,
+        feedback: fb.trim(),
       submission_type: newType, phase: newPhase
-    }).eq("id", r.id)
+      }),
+    })
     setSaving(false)
     setEditing(false)
     onSaved()
@@ -62,7 +65,8 @@ export default function SubmissionsTab({ teacherName }) {
 
   async function load() {
     setLoading(true)
-    const { data: rows } = await supabase.from("submissions").select("*").order("submitted_at", { ascending: false })
+    const res = await fetch("/api/teacher/submissions")
+    const { submissions: rows = [] } = await res.json().catch(() => ({}))
     setData(rows || [])
     const types = {}, phases = {}
     for (const r of rows || []) {
@@ -76,9 +80,12 @@ export default function SubmissionsTab({ teacherName }) {
   useEffect(() => { load() }, [])
 
   async function deleteSubmission(r) {
-    if (r.file_name) await supabase.storage.from("assignments").remove([r.file_name]).catch(() => {})
-    const { error } = await supabase.from("submissions").delete().eq("id", r.id)
-    if (error) { showError("Delete failed."); return }
+    const res = await fetch("/api/teacher/submissions", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: r.id, file_name: r.file_name }),
+    })
+    if (!res.ok) { showError("Delete failed."); return }
     success("Deleted."); setConfirming(null); load()
   }
 

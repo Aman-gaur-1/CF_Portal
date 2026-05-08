@@ -1,7 +1,6 @@
 "use client"
 import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabase"
-import { hashPassword, formatDate } from "@/lib/utils"
+import { formatDate } from "@/lib/utils"
 import Spinner from "@/components/ui/Spinner"
 import ConfirmDialog from "@/components/ui/ConfirmDialog"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
@@ -23,13 +22,10 @@ export default function StudentsTab() {
 
   async function load() {
     setLoading(true)
-    const [{ data: stus }, { data: subs }, { data: batchData }] = await Promise.all([
-      supabase.from("students").select("*").order("created_at"),
-      supabase.from("submissions").select("student_id"),
-      supabase.from("batches").select("name").order("created_at")
-    ])
-    setStudents(stus || [])
-    setBatches((batchData || []).map(b => b.name))
+    const res = await fetch("/api/teacher/students")
+    const { students: stus = [], submissions: subs = [], batches: batchData = [] } = await res.json().catch(() => ({}))
+    setStudents(stus)
+    setBatches(batchData.map(b => b.name))
     const map = {}
     for (const s of subs || []) map[s.student_id] = (map[s.student_id] || 0) + 1
     setSubMap(map)
@@ -46,16 +42,22 @@ export default function StudentsTab() {
     if (!editName.trim()) { showError("Name cannot be empty."); return }
     if (editPass.trim() && editPass.trim().length < 4) { showError("Password must be at least 4 chars."); return }
     setSaving(true)
-    const upd = { name: editName.trim(), batch: editBatch }
-    if (editPass.trim()) upd.password_hash = await hashPassword(editPass)
-    const { error } = await supabase.from("students").update(upd).eq("id", s.id)
-    if (error) { showError("Update failed.") } else { success("Student updated!"); setEditing(null); load() }
+    const res = await fetch("/api/teacher/students", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: s.id, name: editName, batch: editBatch, password: editPass }),
+    })
+    if (!res.ok) { showError("Update failed.") } else { success("Student updated!"); setEditing(null); load() }
     setSaving(false)
   }
 
   async function deleteStudent(id) {
-    const { error } = await supabase.from("students").delete().eq("id", id)
-    if (error) { showError("Delete failed.") } else { success("Deleted."); setConfirming(null); load() }
+    const res = await fetch("/api/teacher/students", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    })
+    if (!res.ok) { showError("Delete failed.") } else { success("Deleted."); setConfirming(null); load() }
   }
 
   const allBatches = ["All Batches", ...new Set(students.map(s => s.batch))]

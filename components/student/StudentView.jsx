@@ -1,6 +1,5 @@
 "use client"
 import { useState, useEffect, useCallback } from "react"
-import { supabase } from "@/lib/supabase"
 import { sanitizeFilename, getPoints, BROWSER_RENDERABLE, formatDate } from "@/lib/utils"
 import Tabs from "@/components/ui/Tabs"
 import Expander from "@/components/ui/Expander"
@@ -26,10 +25,11 @@ export default function StudentView({ student, onLogout }) {
 
   const loadSubmissions = useCallback(async () => {
     setLoadingSubs(true)
-    const { data } = await supabase.from("submissions").select("*").eq("student_id", student.id).order("submitted_at", { ascending: false })
-    setSubmissions(data || [])
+    const res = await fetch("/api/student/submissions")
+    const data = await res.json().catch(() => ({}))
+    setSubmissions(res.ok ? data.submissions || [] : [])
     setLoadingSubs(false)
-  }, [student.id])
+  }, [])
 
   useEffect(() => {
     if (tab === "feedback") loadSubmissions()
@@ -42,26 +42,19 @@ export default function StudentView({ student, onLogout }) {
     if (file && file.size > MAX_MB * 1024 * 1024) { showError(`File exceeds ${MAX_MB}MB limit.`); return }
 
     setSubmitting(true)
-    let storedName = null, fileUrl = null
-
     try {
-      if (file) {
-        const ts = new Date().toISOString().replace(/[:.]/g, "").slice(0, 15)
-        storedName = `${sanitizeFilename(student.name)}_${ts}_${sanitizeFilename(file.name)}`
-        const { error: uploadErr } = await supabase.storage.from("assignments").upload(storedName, file, { contentType: file.type || "application/octet-stream" })
-        if (uploadErr) throw uploadErr
-        fileUrl = supabase.storage.from("assignments").getPublicUrl(storedName).data.publicUrl
-      }
-      const { error: dbErr } = await supabase.from("submissions").insert({
-        student_id: student.id, student_name: student.name, batch: student.batch,
-        topic: topic.trim(), file_name: storedName, file_url: fileUrl,
-        code_text: code.trim() || null, comment: comment.trim(),
-        submitted_at: new Date().toISOString(), submission_type: "assignment", phase: "Python"
+      const formData = new FormData()
+      formData.set("topic", topic.trim())
+      formData.set("code", code.trim())
+      formData.set("comment", comment.trim())
+      if (file) formData.set("file", file, sanitizeFilename(file.name))
+
+      const res = await fetch("/api/student/submit", {
+        method: "POST",
+        body: formData,
       })
-      if (dbErr) {
-        if (storedName) await supabase.storage.from("assignments").remove([storedName]).catch(() => {})
-        throw dbErr
-      }
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Submission failed.")
       success("Assignment submitted! Check Feedback tab for updates.")
       setTopic(""); setFile(null); setCode(""); setComment("")
       const fi = document.getElementById("fileInput"); if (fi) fi.value = ""

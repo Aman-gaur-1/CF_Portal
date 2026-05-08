@@ -11,12 +11,24 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    try { const s = localStorage.getItem(SESSION_KEY); if (s) setStudent(JSON.parse(s)) } catch {}
-    setLoading(false)
+    fetch("/api/student-session")
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.student) {
+          localStorage.setItem(SESSION_KEY, JSON.stringify(data.student))
+          setStudent(data.student)
+        } else {
+          localStorage.removeItem(SESSION_KEY)
+        }
+      })
+      .finally(() => setLoading(false))
   }, [])
 
   function handleLogin(s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); setStudent(s) }
-  function handleLogout() { localStorage.removeItem(SESSION_KEY); setStudent(null) }
+  function handleLogout() {
+    fetch("/api/student-session", { method: "DELETE" }).catch(() => {})
+    localStorage.removeItem(SESSION_KEY); setStudent(null)
+  }
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--bg-main)" }}>

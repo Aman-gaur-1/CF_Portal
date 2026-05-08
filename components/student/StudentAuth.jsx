@@ -1,14 +1,11 @@
 "use client"
 import { useState, useEffect, useRef } from "react"
-import { supabase } from "@/lib/supabase"
-import { hashPassword } from "@/lib/utils"
 import Spinner from "@/components/ui/Spinner"
 import Tabs from "@/components/ui/Tabs"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
 
-const TABS = [{ id: "login", label: "🔐 Login" }, { id: "register", label: "📝 Register" }]
+const TABS = [{ id: "login", label: "Login" }, { id: "register", label: "Register" }]
 
-// Custom dropdown — works in both dark and light mode
 function BatchSelect({ value, onChange, batches }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
@@ -44,7 +41,7 @@ function BatchSelect({ value, onChange, batches }) {
         <span style={{
           position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)",
           color: "var(--text-muted)", fontSize: "0.75rem", pointerEvents: "none"
-        }}>▼</span>
+        }}>v</span>
       </button>
 
       {open && (
@@ -103,25 +100,35 @@ export default function StudentAuth({ onLogin }) {
   const [regConfirm, setRegConfirm] = useState("")
 
   useEffect(() => {
-    supabase.from("batches").select("name").order("created_at").then(({ data }) => {
-      if (data) {
-        setBatches(data.map(b => b.name))
-        setLoginBatch(data[0]?.name || "")
-        setRegBatch(data[0]?.name || "")
-      }
-    })
+    fetch("/api/student/batches")
+      .then(res => res.json())
+      .then(({ batches = [] }) => {
+        setBatches(batches)
+        setLoginBatch(batches[0] || "")
+        setRegBatch(batches[0] || "")
+      })
+      .catch(() => showError("Could not load batches. Please refresh."))
   }, [])
+
+  async function readJson(res) {
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || "Request failed.")
+    return data
+  }
 
   async function handleLogin(e) {
     e.preventDefault()
     if (!loginName.trim() || !loginPass.trim()) { showError("Name and password are required."); return }
     setLoading(true)
-    const hash = await hashPassword(loginPass)
-    const { data } = await supabase.from("students").select("*").ilike("name", loginName.trim()).eq("batch", loginBatch).eq("password_hash", hash)
-    if (data && data.length > 0) {
-      success(`Welcome back, ${data[0].name}! 🎉`)
-      setTimeout(() => onLogin(data[0]), 800)
-    } else {
+    try {
+      const data = await readJson(await fetch("/api/student/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: loginName, batch: loginBatch, password: loginPass }),
+      }))
+      success(`Welcome back, ${data.student.name}!`)
+      setTimeout(() => onLogin(data.student), 800)
+    } catch {
       showError("Invalid name, batch, or password.")
     }
     setLoading(false)
@@ -133,13 +140,16 @@ export default function StudentAuth({ onLogin }) {
     if (!regPass.trim() || regPass.trim().length < 4) { showError("Password must be at least 4 characters."); return }
     if (regPass.trim() !== regConfirm.trim()) { showError("Passwords do not match."); return }
     setLoading(true)
-    const hash = await hashPassword(regPass)
-    const { error: err } = await supabase.from("students").insert({ name: regName.trim(), batch: regBatch, password_hash: hash, created_at: new Date().toISOString() })
-    if (err) {
-      showError(err.message.includes("duplicate") || err.message.includes("unique") ? "Account already exists. Please login." : `Registration failed: ${err.message}`)
-    } else {
+    try {
+      await readJson(await fetch("/api/student/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: regName, batch: regBatch, password: regPass, confirmPassword: regConfirm }),
+      }))
       success("Registered! Please login.")
       setTab("login"); setRegName(""); setRegPass(""); setRegConfirm("")
+    } catch (err) {
+      showError(err.message || "Registration failed.")
     }
     setLoading(false)
   }
@@ -165,7 +175,7 @@ export default function StudentAuth({ onLogin }) {
               </div>
               <div><label className="label">Password</label><input type="password" className="input" value={loginPass} onChange={e => setLoginPass(e.target.value)} placeholder="Enter password" /></div>
               <button type="submit" className="btn btn-primary w-full flex items-center justify-center gap-2 mt-2" disabled={loading}>
-                {loading ? <Spinner /> : "🔓 Login"}
+                {loading ? <Spinner /> : "Login"}
               </button>
             </form>
           )}
@@ -180,7 +190,7 @@ export default function StudentAuth({ onLogin }) {
               <div><label className="label">Password (min 4 chars)</label><input type="password" className="input" value={regPass} onChange={e => setRegPass(e.target.value)} placeholder="Create a password" /></div>
               <div><label className="label">Confirm Password</label><input type="password" className="input" value={regConfirm} onChange={e => setRegConfirm(e.target.value)} placeholder="Confirm password" /></div>
               <button type="submit" className="btn btn-primary w-full flex items-center justify-center gap-2 mt-2" disabled={loading}>
-                {loading ? <Spinner /> : "🚀 Register"}
+                {loading ? <Spinner /> : "Register"}
               </button>
             </form>
           )}

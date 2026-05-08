@@ -1,7 +1,6 @@
 "use client"
 import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabase"
-import { hashPassword, formatDate } from "@/lib/utils"
+import { formatDate } from "@/lib/utils"
 import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
 import ConfirmDialog from "@/components/ui/ConfirmDialog"
@@ -23,12 +22,9 @@ export default function BatchesTab({ teacherName }) {
 
   async function load() {
     setLoading(true)
-    const [{ data: b }, { data: s }, { data: subs }] = await Promise.all([
-      supabase.from("batches").select("*").order("created_at"),
-      supabase.from("students").select("*").order("created_at"),
-      supabase.from("submissions").select("*").order("submitted_at", { ascending: false })
-    ])
-    setBatches(b || []); setStudents(s || []); setSubs(subs || [])
+    const res = await fetch("/api/teacher/batches")
+    const { batches: b = [], students: s = [], submissions: rows = [] } = await res.json().catch(() => ({}))
+    setBatches(b); setStudents(s); setSubs(rows)
     setLoading(false)
   }
 
@@ -37,23 +33,35 @@ export default function BatchesTab({ teacherName }) {
   async function addBatch() {
     if (!newBatch.trim()) { showError("Batch name cannot be empty."); return }
     setAdding(true)
-    const { error } = await supabase.from("batches").insert({ name: newBatch.trim(), created_by: teacherName, created_at: new Date().toISOString() })
-    if (error) { showError(error.message.includes("unique") || error.message.includes("duplicate") ? "Batch already exists." : "Failed to add batch.") }
+    const res = await fetch("/api/teacher/batches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newBatch }),
+    })
+    if (!res.ok) { showError("Failed to add batch.") }
     else { success(`Batch "${newBatch.trim()}" added!`); setNewBatch(""); load() }
     setAdding(false)
   }
 
   async function deleteBatch(b) {
-    const { error } = await supabase.from("batches").delete().eq("id", b.id)
-    if (error) { showError("Delete failed.") } else { success("Batch deleted."); setConfirming(null); load() }
+    const res = await fetch("/api/teacher/batches", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: b.id }),
+    })
+    if (!res.ok) { showError("Delete failed.") } else { success("Batch deleted."); setConfirming(null); load() }
   }
 
   async function resetPassword(stuId, stuName) {
     if (!newPw.trim() || newPw.trim().length < 4) { showError("Password must be at least 4 chars."); return }
     if (newPw.trim() !== confirmPw.trim()) { showError("Passwords do not match."); return }
     setResetting(true)
-    const { error } = await supabase.from("students").update({ password_hash: await hashPassword(newPw) }).eq("id", stuId)
-    if (error) { showError("Reset failed.") } else { success(`Password reset for ${stuName}.`); setResetTarget(null); setNewPw(""); setConfirmPw("") }
+    const res = await fetch("/api/teacher/batches", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ studentId: stuId, password: newPw, confirmPassword: confirmPw }),
+    })
+    if (!res.ok) { showError("Reset failed.") } else { success(`Password reset for ${stuName}.`); setResetTarget(null); setNewPw(""); setConfirmPw("") }
     setResetting(false)
   }
 
