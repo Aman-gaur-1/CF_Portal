@@ -209,7 +209,7 @@ export default function StudentView({ student, onLogout }) {
         {/* Footer */}
         <div className="flex items-center justify-between mt-8 flex-wrap gap-3">
           <div className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
-            <span>{"Built with ❤️ by"}</span>
+            <span>{"Built with ✨ by"}</span>
             <button
               onClick={() => window.open("https://www.linkedin.com/in/aman-gaur-39077214a", "_blank")}
               style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", padding: "0 2px", fontSize: "inherit", fontWeight: 600 }}
