@@ -12,15 +12,20 @@ const TABS = [
   { id: "batches", label: "🗂️ Batches" },
 ]
 
+const openLinkedIn = () => window.open("https://www.linkedin.com/in/aman-gaur-39077214a", "_blank")
+
 export default function TeacherDashboard({ teacherName, onLogout }) {
   const [tab, setTab] = useState("submissions")
   return (
     <div className="min-h-screen p-6" style={{ background: "var(--bg-main)" }}>
       <div className="max-w-5xl mx-auto">
+
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-black gradient-text">Trainer Panel</h1>
-            <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>{"🧑‍🏫"} {teacherName} {"•"} ConsoleFlare</p>
+            <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>
+              {"🧑‍🏫"} {teacherName} {"•"} ConsoleFlare
+            </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <ThemeToggle />
@@ -36,20 +41,18 @@ export default function TeacherDashboard({ teacherName, onLogout }) {
 
         <div className="flex items-center justify-between mt-8 flex-wrap gap-3">
           <div className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
-            <span>Built with ❤️ by</span>
-            
-              href="https://www.linkedin.com/in/aman-gaur-39077214a"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold hover:underline"
-              style={{ color: "var(--primary)" }}
+            <span>{"Built with ❤️ by"}</span>
+            <button
+              onClick={openLinkedIn}
+              style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", padding: "0 2px", fontSize: "inherit", fontWeight: 600 }}
             >
-              Aman Gaur
-            </a>
-            <span>• ConsoleFlare • © {new Date().getFullYear()}</span>
+              {"Aman Gaur"}
+            </button>
+            <span>{"• ConsoleFlare •"} {new Date().getFullYear()}</span>
           </div>
           <ThemeToggle />
         </div>
+
       </div>
     </div>
   )
