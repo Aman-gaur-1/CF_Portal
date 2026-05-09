@@ -20,11 +20,11 @@ export default function TeacherDashboard({ teacherName, onLogout }) {
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-black gradient-text">Trainer Panel</h1>
-            <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>🧑‍🏫 {teacherName} &nbsp;•&nbsp; ConsoleFlare</p>
+            <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>{"🧑‍🏫"} {teacherName} {"•"} ConsoleFlare</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <ThemeToggle />
-            <button className="btn btn-secondary btn-sm" onClick={onLogout}>🚪 Logout</button>
+            <button className="btn btn-secondary btn-sm" onClick={onLogout}>{"🚪"} Logout</button>
           </div>
         </div>
 
@@ -35,20 +35,19 @@ export default function TeacherDashboard({ teacherName, onLogout }) {
         {tab === "batches" && <BatchesTab teacherName={teacherName} />}
 
         <div className="flex items-center justify-between mt-8 flex-wrap gap-3">
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Built with ❤️ by{"Aman Gaur"}
+          <div className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
+            <span>Built with ❤️ by</span>
             
               href="https://www.linkedin.com/in/aman-gaur-39077214a"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 font-semibold hover:underline"
+              className="font-semibold hover:underline"
               style={{ color: "var(--primary)" }}
             >
-              <img src="https://img.icons8.com/color/16/linkedin.png" width="14" height="14" alt="LinkedIn" />
               Aman Gaur
             </a>
-            {" "}&nbsp;•&nbsp; ConsoleFlare &nbsp;•&nbsp; © {new Date().getFullYear()}
-          </p>
+            <span>• ConsoleFlare • © {new Date().getFullYear()}</span>
+          </div>
           <ThemeToggle />
         </div>
       </div>
