@@ -41,7 +41,7 @@ export default function TeacherDashboard({ teacherName, onLogout }) {
 
         <div className="flex items-center justify-between mt-8 flex-wrap gap-3">
           <div className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
-            <span>{"Built with ❤️ by"}</span>
+            <span>{"Built with ✨ by"}</span>
             <button
               onClick={openLinkedIn}
               style={{ color: "var(--primary)", background: "none", border: "none", cursor: "pointer", padding: "0 2px", fontSize: "inherit", fontWeight: 600 }}
