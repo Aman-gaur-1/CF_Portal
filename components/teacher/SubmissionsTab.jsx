@@ -10,6 +10,25 @@ import { useToast, ToastContainer } from "@/components/ui/Toast"
 const TYPE_OPTIONS = ["assignment", "project"]
 const PHASE_OPTIONS = ["Python", "Data Analytics"]
 
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false)
+  function handleCopy() {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      className="text-xs px-2 py-1 rounded font-semibold"
+      style={{ background: copied ? "var(--success)" : "var(--primary)", color: "#1a1a1a" }}
+    >
+      {copied ? "✅ Copied!" : "📋 Copy"}
+    </button>
+  )
+}
+
 function FeedbackEditor({ r, newType, newPhase, teacherName, onSaved }) {
   const [editing, setEditing] = useState(!r.feedback)
   const [fb, setFb] = useState(r.feedback || "")
@@ -165,7 +184,10 @@ export default function SubmissionsTab({ teacherName }) {
                 {r.code_text ? (
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-secondary)" }}>📋 Pasted Code</p>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-secondary)" }}>📋 Pasted Code</p>
+                        <CopyButton text={r.code_text} />
+                      </div>
                       <pre className="code-block h-64">{r.code_text}</pre>
                     </div>
                     <div>
