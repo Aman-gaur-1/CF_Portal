@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect, useCallback } from "react"
 import { supabase } from "@/lib/supabase"
-import { sanitizeFilename, getPoints, BROWSER_RENDERABLE, formatDate } from "@/lib/utils"
+import { sanitizeFilename, getPoints, BROWSER_RENDERABLE, formatDate, getTypeLabel, getTypeEmoji } from "@/lib/utils"
 import Tabs from "@/components/ui/Tabs"
 import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
@@ -157,8 +157,9 @@ export default function StudentView({ student, onLogout }) {
                 {submissions.map(r => {
                   const hasFb = !!r.feedback
                   const pts = getPoints(r.submission_type)
-                  const type = r.submission_type || "assignment"
-                  const typeEmoji = type === "project" ? "🚀" : "📝"
+                  const rawType = r.submission_type || "assignment"
+                  const typeLabel = getTypeLabel(rawType)
+                  const typeEmoji = getTypeEmoji(rawType)
                   return (
                     <Expander
                       key={r.id}
@@ -168,7 +169,7 @@ export default function StudentView({ student, onLogout }) {
                       <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm mb-3">
                         <span><b>Topic:</b> {r.topic}</span>
                         <span><b>Date:</b> {formatDate(r.submitted_at)}</span>
-                        <span><b>Type:</b> {typeEmoji} {type} &nbsp;<span className="text-xs" style={{ color: "var(--primary)" }}>+{pts}pts</span></span>
+                        <span><b>Type:</b> {typeEmoji} {typeLabel} &nbsp;<span className="text-xs" style={{ color: "var(--primary)" }}>+{pts}pts</span></span>
                         <span><b>Phase:</b> {r.phase || "Python"}</span>
                       </div>
                       {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "rgba(245,166,35,0.06)", color: "var(--text-secondary)" }}>💬 {r.comment}</p>}

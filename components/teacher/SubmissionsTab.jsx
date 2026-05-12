@@ -1,14 +1,20 @@
 "use client"
 import { useState, useEffect } from "react"
 import { supabase } from "@/lib/supabase"
-import { getPoints, BROWSER_RENDERABLE, formatDate } from "@/lib/utils"
+import { getPoints, BROWSER_RENDERABLE, formatDate, getTypeLabel, getTypeEmoji } from "@/lib/utils"
 import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
 import ConfirmDialog from "@/components/ui/ConfirmDialog"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
 
-const TYPE_OPTIONS = ["assignment", "project"]
-const PHASE_OPTIONS = ["Python", "Data Analytics"]
+const POINT_OPTIONS = [
+  { value: "100", label: "📝 Assignment (+100 pts)" },
+  { value: "200", label: "🚀 Project (+200 pts)" },
+  { value: "50", label: "✨ Small Task (+50 pts)" },
+  { value: "20", label: "⚡ Micro Task (+20 pts)" },
+  { value: "custom", label: "🔧 Manual points" },
+]
+const DEFAULT_PHASE_OPTIONS = ["Python", "Data Analytics"]
 
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false)
@@ -29,18 +35,21 @@ function CopyButton({ text }) {
   )
 }
 
-function FeedbackEditor({ r, newType, newPhase, teacherName, onSaved }) {
+function FeedbackEditor({ r, newType, newPhase, customPoints, teacherName, onSaved }) {
   const [editing, setEditing] = useState(!r.feedback)
   const [fb, setFb] = useState(r.feedback || "")
   const [saving, setSaving] = useState(false)
+  const customValue = customPoints || ""
+  const customInvalid = newType === "custom" && (!customValue || !/^[0-9]+$/.test(customValue) || Number(customValue) <= 0)
 
   async function save() {
-    if (!fb.trim()) return
+    if (!fb.trim() || customInvalid) return
     setSaving(true)
+    const finalType = newType === "custom" ? customValue : newType
     await supabase.from("submissions").update({
       feedback: fb.trim(), feedback_by: teacherName,
       feedback_at: new Date().toISOString(),
-      submission_type: newType, phase: newPhase
+      submission_type: finalType, phase: newPhase
     }).eq("id", r.id)
     setSaving(false)
     setEditing(false)
@@ -61,7 +70,8 @@ function FeedbackEditor({ r, newType, newPhase, teacherName, onSaved }) {
     <div>
       <label className="label">Write Feedback</label>
       <textarea className="input text-sm mb-2" rows={5} value={fb} onChange={e => setFb(e.target.value)} placeholder="Write detailed feedback here..." />
-      <button className="btn btn-primary w-full flex items-center justify-center gap-2" onClick={save} disabled={saving || !fb.trim()}>
+      {customInvalid && <p className="text-xs mb-2" style={{ color: "var(--danger)" }}>Enter a valid custom point value.</p>}
+      <button className="btn btn-primary w-full flex items-center justify-center gap-2" onClick={save} disabled={saving || !fb.trim() || customInvalid}>
         {saving ? <Spinner /> : "💾 Save Feedback"}
       </button>
     </div>
@@ -77,22 +87,69 @@ export default function SubmissionsTab({ teacherName }) {
   const [confirming, setConfirming] = useState(null)
   const [submissionTypes, setSubmissionTypes] = useState({})
   const [submissionPhases, setSubmissionPhases] = useState({})
+  const [submissionCustomPoints, setSubmissionCustomPoints] = useState({})
+  const [phaseOptions, setPhaseOptions] = useState(DEFAULT_PHASE_OPTIONS)
+  const [newPhase, setNewPhase] = useState("")
   const { toasts, success, error: showError } = useToast()
 
-  async function load() {
+  async function load(initialPhaseOptions = phaseOptions) {
     setLoading(true)
     const { data: rows } = await supabase.from("submissions").select("*").order("submitted_at", { ascending: false })
     setData(rows || [])
-    const types = {}, phases = {}
+    const types = {}, phases = {}, customPoints = {}
+    const allPhases = new Set(initialPhaseOptions)
+
     for (const r of rows || []) {
-      types[r.id] = r.submission_type || "assignment"
+      const rawType = r.submission_type || "assignment"
+      if (rawType === "assignment") {
+        types[r.id] = "100"
+      } else if (rawType === "project") {
+        types[r.id] = "200"
+      } else if (/^[0-9]+$/.test(rawType) && !["100", "200", "50", "20"].includes(rawType)) {
+        types[r.id] = "custom"
+        customPoints[r.id] = rawType
+      } else {
+        types[r.id] = rawType
+      }
       phases[r.id] = r.phase || "Python"
+      allPhases.add(r.phase || "Python")
     }
-    setSubmissionTypes(types); setSubmissionPhases(phases)
+
+    setSubmissionTypes(types)
+    setSubmissionCustomPoints(customPoints)
+    setSubmissionPhases(phases)
+    setPhaseOptions(Array.from(allPhases))
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    let initialPhases = DEFAULT_PHASE_OPTIONS
+    if (typeof window !== "undefined") {
+      const saved = window.localStorage.getItem("cf_phase_options")
+      if (saved) {
+        try { initialPhases = JSON.parse(saved) } catch (e) {}
+      }
+    }
+    setPhaseOptions(initialPhases)
+    load(initialPhases)
+  }, [])
+
+  function savePhaseOptions(options) {
+    setPhaseOptions(options)
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("cf_phase_options", JSON.stringify(options))
+    }
+  }
+
+  function addPhase() {
+    const phase = newPhase.trim()
+    if (!phase) { showError("Phase name cannot be empty."); return }
+    if (phaseOptions.includes(phase)) { showError("Phase already exists."); return }
+    const next = [...phaseOptions, phase]
+    savePhaseOptions(next)
+    setNewPhase("")
+    success(`Phase "${phase}" added!`)
+  }
 
   async function deleteSubmission(r) {
     if (r.file_name) await supabase.storage.from("assignments").remove([r.file_name]).catch(() => {})
@@ -117,7 +174,13 @@ export default function SubmissionsTab({ teacherName }) {
           <div key={l} className="stat-card"><div className="stat-num">{n}</div><div className="stat-label">{l}</div></div>
         ))}
       </div>
-
+      <div className="grid grid-cols-1 gap-3 mb-4">
+        <div className="flex flex-col lg:flex-row gap-3">
+          <input className="input flex-1" placeholder="Add new phase" value={newPhase} onChange={e => setNewPhase(e.target.value)} />
+          <button className="btn btn-primary btn-sm" onClick={addPhase}>➕ Add Phase</button>
+        </div>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>New phases are stored for this trainer session and will appear in the phase dropdown immediately.</p>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         <select className="select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           {["All", "Pending Feedback", "Feedback Done"].map(o => <option key={o}>{o}</option>)}
@@ -137,13 +200,18 @@ export default function SubmissionsTab({ teacherName }) {
           <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>📊 {filtered.length} submissions</p>
           {filtered.map(r => {
             const hasFb = !!r.feedback
-            const typeEmoji = (submissionTypes[r.id] || r.submission_type) === "project" ? "🚀" : "📝"
-            const newType = submissionTypes[r.id] || r.submission_type || "assignment"
+            const rawType = submissionTypes[r.id] || r.submission_type || "assignment"
+            const normalizedRawType = rawType === "assignment" ? "100" : rawType === "project" ? "200" : rawType
+            const newType = /^[0-9]+$/.test(normalizedRawType) && !["100", "200", "50", "20"].includes(normalizedRawType) ? "custom" : normalizedRawType
+            const customValue = submissionCustomPoints[r.id] || ""
+            const typeEmoji = getTypeEmoji(rawType)
+            const displayType = getTypeLabel(rawType)
+            const pointsValue = newType === "custom" ? Number(customValue) || 0 : getPoints(rawType)
             const newPhase = submissionPhases[r.id] || r.phase || "Python"
             return (
               <Expander
                 key={r.id}
-                title={`${hasFb ? "✅" : "⏳"} ${r.student_name} • ${r.batch || "N/A"} • ${typeEmoji} ${r.topic} • ${formatDate(r.submitted_at)}`}
+                title={`${hasFb ? "✅" : "⏳"} ${r.student_name} • ${r.batch || "N/A"} • ${typeEmoji} ${displayType} • +${pointsValue}pts`}
                 badge={hasFb ? <span className="badge-done">REVIEWED</span> : <span className="badge-pending animate-pulse">PENDING</span>}
               >
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm mb-3">
@@ -166,16 +234,35 @@ export default function SubmissionsTab({ teacherName }) {
                 {/* Type + Phase */}
                 <div className="grid grid-cols-2 gap-3 mb-4 p-3 rounded-xl" style={{ background: "rgba(245,166,35,0.05)", border: "1px solid var(--border)" }}>
                   <div>
-                    <label className="label text-xs">📂 Submission Type</label>
-                    <select className="select text-xs" value={newType} onChange={e => setSubmissionTypes(prev => ({ ...prev, [r.id]: e.target.value }))}>
-                      <option value="assignment">📝 Assignment (+100 pts)</option>
-                      <option value="project">🚀 Project (+200 pts)</option>
+                    <label className="label text-xs">📂 Points</label>
+                    <select
+                      className="select text-xs"
+                      value={newType}
+                      onChange={e => {
+                        const selected = e.target.value
+                        setSubmissionTypes(prev => ({ ...prev, [r.id]: selected }))
+                        if (selected !== "custom") {
+                          setSubmissionCustomPoints(prev => ({ ...prev, [r.id]: "" }))
+                        }
+                      }}
+                    >
+                      {POINT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
+                    {newType === "custom" && (
+                      <input
+                        type="number"
+                        min="1"
+                        className="input text-xs mt-2"
+                        placeholder="Enter custom points"
+                        value={customValue}
+                        onChange={e => setSubmissionCustomPoints(prev => ({ ...prev, [r.id]: e.target.value }))}
+                      />
+                    )}
                   </div>
                   <div>
                     <label className="label text-xs">🎯 Phase</label>
                     <select className="select text-xs" value={newPhase} onChange={e => setSubmissionPhases(prev => ({ ...prev, [r.id]: e.target.value }))}>
-                      {PHASE_OPTIONS.map(p => <option key={p}>{p}</option>)}
+                      {phaseOptions.map(p => <option key={p}>{p}</option>)}
                     </select>
                   </div>
                 </div>
@@ -192,12 +279,12 @@ export default function SubmissionsTab({ teacherName }) {
                     </div>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-secondary)" }}>✍️ Feedback</p>
-                      <FeedbackEditor r={{ ...r, submission_type: newType, phase: newPhase }} newType={newType} newPhase={newPhase} teacherName={teacherName} onSaved={load} />
+                      <FeedbackEditor r={{ ...r, submission_type: newType, phase: newPhase }} newType={newType} newPhase={newPhase} customPoints={customValue} teacherName={teacherName} onSaved={load} />
                     </div>
                   </div>
                 ) : (
                   <div className="mb-4">
-                    <FeedbackEditor r={{ ...r, submission_type: newType, phase: newPhase }} newType={newType} newPhase={newPhase} teacherName={teacherName} onSaved={load} />
+                    <FeedbackEditor r={{ ...r, submission_type: newType, phase: newPhase }} newType={newType} newPhase={newPhase} customPoints={customValue} teacherName={teacherName} onSaved={load} />
                   </div>
                 )}
 
