@@ -80,9 +80,11 @@ function FeedbackEditor({ r, newType, newPhase, customPoints, teacherName, onSav
 
 export default function SubmissionsTab({ teacherName }) {
   const [data, setData] = useState([])
+  const [batchList, setBatchList] = useState([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState("All")
   const [batchFilter, setBatchFilter] = useState("All Batches")
+  const [trainerFilter, setTrainerFilter] = useState("All Trainers")
   const [search, setSearch] = useState("")
   const [confirming, setConfirming] = useState(null)
   const [submissionTypes, setSubmissionTypes] = useState({})
@@ -94,8 +96,12 @@ export default function SubmissionsTab({ teacherName }) {
 
   async function load(initialPhaseOptions = phaseOptions) {
     setLoading(true)
-    const { data: rows } = await supabase.from("submissions").select("*").order("submitted_at", { ascending: false })
+    const [{ data: rows }, { data: batches }] = await Promise.all([
+      supabase.from("submissions").select("*").order("submitted_at", { ascending: false }),
+      supabase.from("batches").select("name,created_by")
+    ])
     setData(rows || [])
+    setBatchList(batches || [])
     const types = {}, phases = {}, customPoints = {}
     const allPhases = new Set(initialPhaseOptions)
 
@@ -158,11 +164,15 @@ export default function SubmissionsTab({ teacherName }) {
     success("Deleted."); setConfirming(null); load()
   }
 
+  const trainerMap = Object.fromEntries((batchList || []).map(b => [b.name, b.created_by || "Unassigned"]))
+  const trainerOptions = ["All Trainers", ...new Set(batchList.map(b => b.created_by || "Unassigned"))]
   const batches = ["All Batches", ...new Set(data.map(d => d.batch).filter(Boolean))]
+
   let filtered = data
   if (statusFilter === "Pending Feedback") filtered = filtered.filter(d => !d.feedback)
   if (statusFilter === "Feedback Done") filtered = filtered.filter(d => !!d.feedback)
   if (batchFilter !== "All Batches") filtered = filtered.filter(d => d.batch === batchFilter)
+  if (trainerFilter !== "All Trainers") filtered = filtered.filter(d => trainerMap[d.batch] === trainerFilter)
   if (search.trim()) filtered = filtered.filter(d => d.student_name?.toLowerCase().includes(search.trim().toLowerCase()))
 
   const pending = data.filter(d => !d.feedback).length
@@ -181,9 +191,12 @@ export default function SubmissionsTab({ teacherName }) {
         </div>
         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>New phases are stored for this trainer session and will appear in the phase dropdown immediately.</p>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
         <select className="select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-          {["All", "Pending Feedback", "Feedback Done"].map(o => <option key={o}>{o}</option>)}
+          { ["All", "Pending Feedback", "Feedback Done"].map(o => <option key={o}>{o}</option>) }
+        </select>
+        <select className="select" value={trainerFilter} onChange={e => setTrainerFilter(e.target.value)}>
+          { trainerOptions.map(t => <option key={t}>{t}</option>) }
         </select>
         <select className="select" value={batchFilter} onChange={e => setBatchFilter(e.target.value)}>
           {batches.map(b => <option key={b}>{b}</option>)}
