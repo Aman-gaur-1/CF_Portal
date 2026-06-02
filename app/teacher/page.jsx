@@ -14,7 +14,14 @@ export default function TeacherPage() {
   const [logging, setLogging] = useState(false)
 
   useEffect(() => {
-    try { const s = localStorage.getItem(SESSION_KEY); if (s) setTeacher(JSON.parse(s)) } catch {}
+    try {
+      const s = localStorage.getItem(SESSION_KEY)
+      if (s) {
+        const saved = JSON.parse(s)
+        if (saved?.token) setTeacher(saved)
+        else localStorage.removeItem(SESSION_KEY)
+      }
+    } catch {}
     setLoading(false)
   }, [])
 
@@ -22,7 +29,7 @@ export default function TeacherPage() {
     e.preventDefault(); setError(""); setLogging(true)
     const res = await fetch("/api/teacher-login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) })
     const data = await res.json()
-    if (data.success) { const t = { name: data.name }; localStorage.setItem(SESSION_KEY, JSON.stringify(t)); setTeacher(t) }
+    if (data.success) { const t = { name: data.name, token: data.token }; localStorage.setItem(SESSION_KEY, JSON.stringify(t)); setTeacher(t) }
     else setError("Invalid username or password.")
     setLogging(false)
   }
@@ -58,5 +65,5 @@ export default function TeacherPage() {
     </div>
   )
 
-  return <TeacherDashboard teacherName={teacher.name} onLogout={handleLogout} />
+  return <TeacherDashboard teacherName={teacher.name} teacherToken={teacher.token} onLogout={handleLogout} />
 }

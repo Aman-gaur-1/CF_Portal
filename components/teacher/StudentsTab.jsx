@@ -1,124 +1,167 @@
 "use client"
-import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabase"
-import { hashPassword, formatDate } from "@/lib/utils"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { formatDate } from "@/lib/utils"
+import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
 import Spinner from "@/components/ui/Spinner"
-import ConfirmDialog from "@/components/ui/ConfirmDialog"
-import { useToast, ToastContainer } from "@/components/ui/Toast"
+import { ToastContainer, useToast } from "@/components/ui/Toast"
 
-export default function StudentsTab() {
+const SCOPE_REFRESH_MS = 5000
+
+function authHeaders(token) {
+  return { Authorization: `Bearer ${token}` }
+}
+
+export default function StudentsTab({ teacherToken }) {
   const [students, setStudents] = useState([])
-  const [subMap, setSubMap] = useState({})
+  const [submissions, setSubmissions] = useState([])
+  const [batches, setBatches] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [batchFilter, setBatchFilter] = useState("All Batches")
-  const [editing, setEditing] = useState(null)
-  const [confirming, setConfirming] = useState(null)
-  const [batches, setBatches] = useState([])
-  const [editName, setEditName] = useState("")
-  const [editBatch, setEditBatch] = useState("")
-  const [editPass, setEditPass] = useState("")
-  const [saving, setSaving] = useState(false)
+  const [resetStudentId, setResetStudentId] = useState(null)
+  const [newPassword, setNewPassword] = useState("")
+  const [savingPassword, setSavingPassword] = useState(false)
+  const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
 
-  async function load() {
-    setLoading(true)
-    const [{ data: stus }, { data: subs }, { data: batchData }] = await Promise.all([
-      supabase.from("students").select("*").order("created_at"),
-      supabase.from("submissions").select("student_id"),
-      supabase.from("batches").select("name").order("created_at")
-    ])
-    setStudents(stus || [])
-    setBatches((batchData || []).map(b => b.name))
-    const map = {}
-    for (const s of subs || []) map[s.student_id] = (map[s.student_id] || 0) + 1
-    setSubMap(map)
-    setLoading(false)
-  }
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (loadAbortRef.current) loadAbortRef.current.abort()
+    const controller = new AbortController()
+    loadAbortRef.current = controller
 
-  useEffect(() => { load() }, [])
+    if (!silent) setLoading(true)
+    try {
+      const res = await fetch("/api/teacher-data?mode=summary", { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not load students.")
+      setStudents(data.students || [])
+      setSubmissions(data.submissions || [])
+      setBatches(data.batches || [])
+    } catch (err) {
+      if (err.name !== "AbortError") showError(err.message || "Could not load students.")
+    } finally {
+      if (loadAbortRef.current === controller) {
+        loadAbortRef.current = null
+        if (!silent) setLoading(false)
+      }
+    }
+  }, [teacherToken])
 
-  function startEdit(s) {
-    setEditing(s.id); setEditName(s.name); setEditBatch(s.batch); setEditPass("")
-  }
+  useEffect(() => {
+    load()
+    return () => {
+      if (loadAbortRef.current) loadAbortRef.current.abort()
+    }
+  }, [load])
 
-  async function saveEdit(s) {
-    if (!editName.trim()) { showError("Name cannot be empty."); return }
-    if (editPass.trim() && editPass.trim().length < 4) { showError("Password must be at least 4 chars."); return }
-    setSaving(true)
-    const upd = { name: editName.trim(), batch: editBatch }
-    if (editPass.trim()) upd.password_hash = await hashPassword(editPass)
-    const { error } = await supabase.from("students").update(upd).eq("id", s.id)
-    if (error) { showError("Update failed.") } else { success("Student updated!"); setEditing(null); load() }
-    setSaving(false)
-  }
-
-  async function deleteStudent(id) {
-    const { error } = await supabase.from("students").delete().eq("id", id)
-    if (error) { showError("Delete failed.") } else { success("Deleted."); setConfirming(null); load() }
-  }
-
-  const allBatches = ["All Batches", ...new Set(students.map(s => s.batch))]
-  const filtered = students.filter(s =>
-    (batchFilter === "All Batches" || s.batch === batchFilter) &&
-    (!search.trim() || s.name.toLowerCase().includes(search.trim().toLowerCase()))
+  useAdaptivePolling(
+    () => load({ silent: true }),
+    { enabled: Boolean(teacherToken), activeMs: SCOPE_REFRESH_MS }
   )
+
+  const subMap = useMemo(() => {
+    const map = {}
+    for (const sub of submissions) map[sub.student_id] = (map[sub.student_id] || 0) + 1
+    return map
+  }, [submissions])
+
+  const reviewedMap = useMemo(() => {
+    const map = {}
+    for (const sub of submissions) {
+      if (sub.feedback) map[sub.student_id] = (map[sub.student_id] || 0) + 1
+    }
+    return map
+  }, [submissions])
+
+  const allBatches = ["All Batches", ...batches.map(batch => batch.name)]
+  const filtered = students.filter(student =>
+    (batchFilter === "All Batches" || student.batch === batchFilter) &&
+    (!search.trim() || student.name?.toLowerCase().includes(search.trim().toLowerCase()))
+  )
+
+  function openPasswordReset(studentId) {
+    setResetStudentId(studentId)
+    setNewPassword("")
+  }
+
+  function closePasswordReset() {
+    setResetStudentId(null)
+    setNewPassword("")
+  }
+
+  async function changeStudentPassword(studentId) {
+    if (newPassword.trim().length < 4) {
+      showError("Password must be at least 4 characters.")
+      return
+    }
+
+    setSavingPassword(true)
+    try {
+      const res = await fetch("/api/teacher-student-password", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
+        body: JSON.stringify({ studentId, password: newPassword }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not change student password.")
+      success("Student password changed.")
+      closePasswordReset()
+    } catch (err) {
+      showError(err.message || "Could not change student password.")
+    } finally {
+      setSavingPassword(false)
+    }
+  }
 
   return (
     <div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
-        <input className="input" placeholder="Search by name..." value={search} onChange={e => setSearch(e.target.value)} />
+        <input className="input" placeholder="Search your assigned students..." value={search} onChange={e => setSearch(e.target.value)} />
         <select className="select" value={batchFilter} onChange={e => setBatchFilter(e.target.value)}>
-          {allBatches.map(b => <option key={b}>{b}</option>)}
+          {allBatches.map(batch => <option key={batch}>{batch}</option>)}
         </select>
       </div>
-      <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>📊 {filtered.length} students found</p>
+      <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>{filtered.length} assigned students</p>
 
       {loading ? (
         <div className="flex justify-center py-16"><Spinner size="lg" /></div>
       ) : filtered.length === 0 ? (
-        <div className="card p-8 text-center"><p style={{ color: "var(--text-secondary)" }}>No students found.</p></div>
+        <div className="card p-8 text-center"><p style={{ color: "var(--text-secondary)" }}>No assigned students found.</p></div>
       ) : (
-        filtered.map(s => (
-          <div key={s.id} className="card p-4 mb-3">
+        filtered.map(student => (
+          <div key={student.id} className="card p-4 mb-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
-                <p className="font-semibold">{s.name}</p>
+                <p className="font-semibold">{student.name}</p>
                 <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
-                  Batch: {s.batch} &nbsp;•&nbsp; Joined: {formatDate(s.created_at)} &nbsp;•&nbsp; Assignments: <span style={{ color: "var(--primary)" }}>{subMap[s.id] || 0}</span>
+                  Batch: {student.batch} - Joined: {formatDate(student.created_at)}
                 </p>
               </div>
-              <div className="flex gap-2">
-                <button className="btn btn-secondary btn-sm" onClick={() => editing === s.id ? setEditing(null) : startEdit(s)}>✏️ Edit</button>
-                <button className="btn btn-sm" style={{ background: "rgba(255,107,107,0.15)", color: "var(--danger)" }} onClick={() => setConfirming(s.id)}>🗑️</button>
-              </div>
-            </div>
-
-            {editing === s.id && (
-              <div className="mt-3 p-4 rounded-xl" style={{ background: "rgba(245,166,35,0.05)", border: "1px solid var(--border)" }}>
-                <p className="text-xs font-semibold mb-3" style={{ color: "var(--text-muted)" }}>Edit Profile</p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                  <div><label className="label text-xs">Name</label><input className="input text-sm" value={editName} onChange={e => setEditName(e.target.value)} /></div>
-                  <div>
-                    <label className="label text-xs">Batch</label>
-                    <select className="select text-sm" value={editBatch} onChange={e => setEditBatch(e.target.value)}>
-                      {batches.map(b => <option key={b}>{b}</option>)}
-                    </select>
-                  </div>
-                  <div><label className="label text-xs">New Password (blank = keep)</label><input type="password" className="input text-sm" value={editPass} onChange={e => setEditPass(e.target.value)} placeholder="Leave blank to keep" /></div>
-                </div>
-                <button className="btn btn-primary btn-sm flex items-center gap-2" onClick={() => saveEdit(s)} disabled={saving}>
-                  {saving ? <Spinner /> : "💾 Save"}
+              <div className="flex gap-2 flex-wrap">
+                <span className="badge-pending">{subMap[student.id] || 0} submissions</span>
+                <span className="badge-done">{reviewedMap[student.id] || 0} reviewed</span>
+                <button className="btn btn-secondary btn-sm" onClick={() => openPasswordReset(student.id)}>
+                  Change Password
                 </button>
               </div>
-            )}
-
-            {confirming === s.id && (
-              <ConfirmDialog
-                message={`Delete "${s.name}"? Their submissions will NOT be deleted.`}
-                onConfirm={() => deleteStudent(s.id)}
-                onCancel={() => setConfirming(null)}
-              />
+            </div>
+            {resetStudentId === student.id && (
+              <div className="mt-4 flex gap-2 flex-wrap">
+                <input
+                  type="password"
+                  className="input flex-1 min-w-[220px]"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  autoFocus
+                />
+                <button className="btn btn-primary btn-sm" onClick={() => changeStudentPassword(student.id)} disabled={savingPassword}>
+                  {savingPassword ? <Spinner /> : "Save Password"}
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={closePasswordReset} disabled={savingPassword}>
+                  Cancel
+                </button>
+              </div>
             )}
           </div>
         ))

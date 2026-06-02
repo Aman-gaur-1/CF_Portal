@@ -6,16 +6,39 @@ import Spinner from "@/components/ui/Spinner"
 
 const SESSION_KEY = "cf_student"
 
+function safeStudentProfile(student) {
+  if (!student?.id || !student?.name || !student?.batch) return null
+  return { id: student.id, name: student.name, batch: student.batch }
+}
+
 export default function HomePage() {
   const [student, setStudent] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    try { const s = localStorage.getItem(SESSION_KEY); if (s) setStudent(JSON.parse(s)) } catch {}
+    try {
+      const saved = localStorage.getItem(SESSION_KEY)
+      if (saved) {
+        const profile = safeStudentProfile(JSON.parse(saved))
+        if (profile) {
+          localStorage.setItem(SESSION_KEY, JSON.stringify(profile))
+          setStudent(profile)
+        } else {
+          localStorage.removeItem(SESSION_KEY)
+        }
+      }
+    } catch {
+      localStorage.removeItem(SESSION_KEY)
+    }
     setLoading(false)
   }, [])
 
-  function handleLogin(s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); setStudent(s) }
+  function handleLogin(s) {
+    const profile = safeStudentProfile(s)
+    if (!profile) return
+    localStorage.setItem(SESSION_KEY, JSON.stringify(profile))
+    setStudent(profile)
+  }
   function handleLogout() { localStorage.removeItem(SESSION_KEY); setStudent(null) }
 
   if (loading) return (
