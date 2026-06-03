@@ -40,8 +40,21 @@ export async function PATCH(request) {
     if (body?.submission_type) update.submission_type = String(body.submission_type)
     if (body?.phase) update.phase = String(body.phase)
 
-    const { error } = await supabase.from('submissions').update(update).eq('id', submissionId)
+    const { data: updatedRows, error } = await supabase
+      .from('submissions')
+      .update(update)
+      .eq('id', submissionId)
+      .select('id, feedback, feedback_at')
     if (error) throw new Error(error.message)
+
+    const updated = updatedRows?.[0]
+    if (!updated?.feedback?.trim()) {
+      console.error('[teacher-feedback] update did not persist feedback', {
+        submissionId,
+        updatedRows: updatedRows?.length || 0,
+      })
+      return jsonNoStore({ error: 'Feedback was not saved. Please try again.' }, { status: 409 })
+    }
 
     const topic = submission.topic || 'assignment'
     const approvedAiDraft = Boolean(submission.ai_feedback)
@@ -53,7 +66,15 @@ export async function PATCH(request) {
       supabase,
     })
 
-    return jsonNoStore({ success: true })
+    return jsonNoStore({
+      success: true,
+      submission: {
+        id: updated.id,
+        feedback: updated.feedback,
+        feedback_at: updated.feedback_at,
+        feedback_by: teacher.name,
+      },
+    })
   } catch (err) {
     const status = err?.status || 500
     console.error('[teacher-feedback] failed', err?.message)

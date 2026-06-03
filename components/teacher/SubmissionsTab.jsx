@@ -460,6 +460,18 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not save feedback.")
+      const published = data.submission || {
+        id: r.id,
+        feedback,
+        feedback_at: new Date().toISOString(),
+        feedback_by: teacherName,
+      }
+      setData(prev => {
+        const nextRows = prev.map(row => String(row.id) === String(r.id) ? { ...row, ...published } : row)
+        return statusFilter === "Pending Feedback"
+          ? nextRows.filter(row => String(row.id) !== String(r.id))
+          : nextRows
+      })
       const nextPendingId = nextPendingIdAfterApproval(r.id)
       success(nextPendingId === null ? "Feedback published." : "Feedback published. Opening next pending review.")
       setActiveSubmissionId(nextPendingId)
