@@ -69,8 +69,8 @@ function applyReviewFilters(query, params, teacherName) {
   const batch = params.get('batch') || 'All Batches'
   let search = normalizeSearchText(params.get('search'))
 
-  if (status === 'Pending Feedback') query = query.is('feedback', null)
-  if (status === 'Feedback Done') query = query.not('feedback', 'is', null)
+  if (status === 'Pending Feedback') query = query.is('feedback', null).is('feedback_at', null)
+  if (status === 'Feedback Done') query = query.or('feedback.not.is.null,feedback_at.not.is.null')
   if (status === 'Failed AI') query = query.eq('ai_status', 'failed')
   if (aiStatus !== 'All') query = query.eq('ai_status', aiStatus)
   if (batch !== 'All Batches') query = query.eq('batch', batch)
@@ -96,11 +96,11 @@ function applyReviewStatusSearch(query, search) {
     search = search.replace('ai ready', '')
   }
   if (search.includes('reviewed')) {
-    query = query.not('feedback', 'is', null)
+    query = query.or('feedback.not.is.null,feedback_at.not.is.null')
     search = search.replace('reviewed', '')
   }
   if (search.includes('needs review')) {
-    query = query.is('feedback', null)
+    query = query.is('feedback', null).is('feedback_at', null)
     search = search.replace('needs review', '')
   }
   return { query, search }

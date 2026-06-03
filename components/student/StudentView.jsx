@@ -21,6 +21,10 @@ const FEEDBACK_LANGUAGES = [
   { id: "hindi", label: "Hindi" },
 ]
 
+function isReviewedSubmission(row) {
+  return Boolean(row?.feedback || row?.feedback_at || row?.reviewed || row?.reviewed_at)
+}
+
 function FeedbackTranslation({ feedback, onError }) {
   const [activeLanguage, setActiveLanguage] = useState("english")
   const [translations, setTranslations] = useState({
@@ -212,7 +216,7 @@ export default function StudentView({ student, onLogout }) {
     }
   }
 
-  const pending = submissions.filter(r => !r.feedback).length
+  const pending = submissions.filter(r => !isReviewedSubmission(r)).length
 
   return (
     <div className="min-h-screen p-6" style={{ background: "var(--bg-main)" }}>
@@ -296,7 +300,7 @@ export default function StudentView({ student, onLogout }) {
                 </div>
 
                 {submissions.map(r => {
-                  const hasFb = !!r.feedback
+                  const hasFb = isReviewedSubmission(r)
                   const pts = getPoints(r.submission_type)
                   const rawType = r.submission_type || "assignment"
                   const typeLabel = getTypeLabel(rawType)

@@ -52,11 +52,11 @@ export async function GET(request) {
 
     const [total, pending, reviewed, rowsResult] = await Promise.all([
       countRows(supabase, supabase.from('submissions').select('id', { count: 'exact', head: true }).in('batch', scope.batchNames)),
-      countRows(supabase, supabase.from('submissions').select('id', { count: 'exact', head: true }).in('batch', scope.batchNames).is('feedback', null)),
-      countRows(supabase, supabase.from('submissions').select('id', { count: 'exact', head: true }).in('batch', scope.batchNames).not('feedback', 'is', null)),
+      countRows(supabase, supabase.from('submissions').select('id', { count: 'exact', head: true }).in('batch', scope.batchNames).is('feedback', null).is('feedback_at', null)),
+      countRows(supabase, supabase.from('submissions').select('id', { count: 'exact', head: true }).in('batch', scope.batchNames).or('feedback.not.is.null,feedback_at.not.is.null')),
       supabase
         .from('submissions')
-        .select('id,batch,submitted_at,feedback,ai_status')
+        .select('id,batch,submitted_at,feedback,feedback_at,ai_status')
         .in('batch', scope.batchNames)
         .order('submitted_at', { ascending: false }),
     ])
@@ -95,7 +95,7 @@ export async function GET(request) {
       const batch = row.batch || 'Unassigned'
       const current = batchMap.get(batch) || { batch, submissions: 0, pending: 0 }
       current.submissions += 1
-      if (!row.feedback) current.pending += 1
+      if (!row.feedback && !row.feedback_at) current.pending += 1
       batchMap.set(batch, current)
     }
     const batchDistribution = Array.from(batchMap.values())

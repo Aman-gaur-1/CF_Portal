@@ -89,6 +89,16 @@ function isMissingAiFeedback(row) {
   return row && !row.feedback && !row.ai_feedback && row.ai_status !== "processing"
 }
 
+function isReviewedSubmission(row) {
+  return Boolean(
+    row?.feedback ||
+    row?.feedback_at ||
+    row?.reviewed ||
+    row?.reviewed_at ||
+    ["reviewed", "finalized", "completed"].includes(String(row?.status || row?.review_status || "").toLowerCase())
+  )
+}
+
 function isBulkJobActive(job) {
   return job?.status === "running"
 }
@@ -101,16 +111,7 @@ function isEditableTarget(target) {
 }
 
 function resolveSubmissionReviewState(row) {
-  const normalizedStatus = String(row?.status || row?.review_status || "").toLowerCase()
-  if (
-    row?.feedback ||
-    row?.feedback_at ||
-    row?.reviewed ||
-    row?.reviewed_at ||
-    normalizedStatus === "reviewed" ||
-    normalizedStatus === "finalized" ||
-    normalizedStatus === "completed"
-  ) {
+  if (isReviewedSubmission(row)) {
     return { label: "REVIEWED", tone: "reviewed" }
   }
 
@@ -414,7 +415,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   )
 
   function pendingRows() {
-    return data.filter(row => !row.feedback)
+    return data.filter(row => !isReviewedSubmission(row))
   }
 
   function adjacentPendingId(currentId, direction) {
@@ -469,7 +470,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       setData(prev => {
         const nextRows = prev.map(row => String(row.id) === String(r.id) ? { ...row, ...published } : row)
         return statusFilter === "Pending Feedback"
-          ? nextRows.filter(row => String(row.id) !== String(r.id))
+          ? nextRows.filter(row => String(row.id) !== String(r.id) && !isReviewedSubmission(row))
           : nextRows
       })
       const nextPendingId = nextPendingIdAfterApproval(r.id)
@@ -716,7 +717,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         <div className="card p-8 text-center"><p style={{ color: "var(--text-secondary)" }}>{search ? "No submissions matched your search." : "No assigned submissions found."}</p></div>
       ) : (
         filtered.map(r => {
-          const hasFb = !!r.feedback
+          const hasFb = isReviewedSubmission(r)
           const rawType = submissionTypes[r.id] || r.submission_type || "assignment"
           const normalizedRawType = rawType === "assignment" ? "100" : rawType === "project" ? "200" : rawType
           const newType = /^[0-9]+$/.test(normalizedRawType) && !["100", "200", "50", "20"].includes(normalizedRawType) ? "custom" : normalizedRawType
