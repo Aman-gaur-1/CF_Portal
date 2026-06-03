@@ -4,6 +4,7 @@ import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { getScopedTeacherData, getTeacherScope } from '@/lib/teacher-scope'
 import { pageRange, paginationMeta, parsePage } from '@/lib/pagination'
 import { normalizeSearchText } from '@/lib/submission-search'
+import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,6 +38,7 @@ export async function GET(request) {
 
 async function loadReviewPage(request, teacherName) {
   const supabase = getSupabaseAdmin()
+  await recoverStaleAiDrafts(supabase, { context: 'teacher-data' })
   const scope = await getTeacherScope(supabase, teacherName)
   const page = parsePage(request.nextUrl.searchParams.get('page'))
   const { from, to } = pageRange(page)

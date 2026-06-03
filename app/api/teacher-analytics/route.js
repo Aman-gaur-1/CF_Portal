@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { getTeacherScope } from '@/lib/teacher-scope'
+import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +36,7 @@ export async function GET(request) {
     if (!teacher) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
 
     const supabase = getSupabaseAdmin()
+    await recoverStaleAiDrafts(supabase, { context: 'teacher-analytics' })
     const scope = await getTeacherScope(supabase, teacher.name)
     if (!scope.batchNames.length) {
       return jsonNoStore({

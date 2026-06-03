@@ -7,6 +7,7 @@ import { normalizeName } from '@/lib/teacher-scope'
 import { pageRange, paginationMeta, parsePage } from '@/lib/pagination'
 import { normalizeSearchText } from '@/lib/submission-search'
 import { appendActivity } from '@/lib/activity-log'
+import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -75,6 +76,7 @@ function getCurrentJob() {
 
 async function loadQueueData() {
   const supabase = getSupabaseAdmin()
+  await recoverStaleAiDrafts(supabase, { context: 'admin-bulk-ai-load' })
   const [
     { data: trainers, error: trainerError },
     { data: batches, error: batchError },
@@ -104,6 +106,7 @@ async function loadQueueData() {
 
 async function loadQueuePage(request) {
   const supabase = getSupabaseAdmin()
+  await recoverStaleAiDrafts(supabase, { context: 'admin-bulk-ai-page' })
   const { trainerNames, trainerByBatch } = await loadQueueMetadata(supabase)
   const params = request.nextUrl.searchParams
   const page = parsePage(params.get('page'))

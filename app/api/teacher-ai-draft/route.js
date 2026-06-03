@@ -4,6 +4,7 @@ import { sanitizeStudentText } from '@/lib/ai/sanitize'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { assertSubmissionInTeacherScope } from '@/lib/teacher-scope'
+import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
 
 function jsonNoStore(body, init) {
   return NextResponse.json(body, {
@@ -28,6 +29,7 @@ export async function PATCH(request) {
     }
 
     const supabase = getSupabaseAdmin()
+    await recoverStaleAiDrafts(supabase, { context: 'teacher-ai-draft-save' })
     const { submission } = await assertSubmissionInTeacherScope(supabase, teacher.name, submissionId)
     if (submission.feedback) {
       return jsonNoStore({ error: 'Submission already has approved feedback' }, { status: 409 })

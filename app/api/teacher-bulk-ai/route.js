@@ -4,6 +4,7 @@ import { evaluateSubmission } from '@/lib/ai/orchestrator'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { getTeacherScope, normalizeName } from '@/lib/teacher-scope'
+import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -142,6 +143,7 @@ export async function POST(request) {
     }
 
     const supabase = getSupabaseAdmin()
+    await recoverStaleAiDrafts(supabase, { context: 'teacher-bulk-ai-start' })
     const scope = await getTeacherScope(supabase, teacher.name)
     const { data: submissions, error: submissionError } = scope.batchNames.length
       ? await supabase
