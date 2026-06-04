@@ -114,7 +114,10 @@ export default function AdminAiGenerationQueue({ adminToken, success, showError,
 
       {jobRunning && (
         <div className="admin-note mt-4 flex items-center justify-between gap-3">
-          <span>{data.job.completed} / {data.job.total} drafts generated{data.job.remaining ? ` - ${data.job.remaining} remaining` : ""}</span>
+          <span>
+            {data.job.currentState ? `${data.job.currentState} - ` : ""}
+            {data.job.completed} / {data.job.total} drafts generated{data.job.remaining ? ` - ${data.job.remaining} remaining` : ""}
+          </span>
           <Spinner size="sm" />
         </div>
       )}

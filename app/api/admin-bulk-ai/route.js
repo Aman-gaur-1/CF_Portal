@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getAdminFromRequest } from '@/lib/admin-auth'
-import { AI_STATUS } from '@/lib/ai/constants'
-import { evaluateSubmission } from '@/lib/ai/orchestrator'
+import { AI_QUEUE_ITEM_COOLDOWN_MS, AI_STATUS } from '@/lib/ai/constants'
+import { evaluateSubmission, getAiEvaluationLoad } from '@/lib/ai/orchestrator'
+import { aiRuntimeSnapshot } from '@/lib/ai/runtime-state'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { normalizeName } from '@/lib/teacher-scope'
 import { pageRange, paginationMeta, parsePage } from '@/lib/pagination'
@@ -44,7 +45,26 @@ function aiQueueStatus(row) {
 }
 
 function serializeJob(job) {
-  if (!job) return null
+  if (!job) {
+    return {
+      status: 'idle',
+      total: 0,
+      completed: 0,
+      failed: 0,
+      skipped: 0,
+      remaining: 0,
+      currentState: null,
+      startedAt: null,
+      finishedAt: null,
+      error: null,
+      queue: {
+        active: getAiEvaluationLoad().active,
+        limit: getAiEvaluationLoad().limit,
+      },
+      metrics: aiRuntimeSnapshot({ queueDepth: 0 }),
+    }
+  }
+
   return {
     id: job.id,
     status: job.status,
@@ -54,9 +74,15 @@ function serializeJob(job) {
     failed: job.failed,
     skipped: job.skipped,
     remaining: Math.max(job.total - job.completed - job.failed - job.skipped, 0),
+    currentState: job.currentState || null,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
     error: job.error || null,
+    queue: {
+      active: getAiEvaluationLoad().active,
+      limit: getAiEvaluationLoad().limit,
+    },
+    metrics: aiRuntimeSnapshot({ queueDepth: Math.max(job.total - job.completed - job.failed - job.skipped, 0) }),
   }
 }
 
@@ -145,6 +171,7 @@ async function loadQueuePage(request) {
     trainers: trainerNames,
     counts,
     pagination: paginationMeta(page, count),
+    metrics: aiRuntimeSnapshot({ queueDepth: counts.pending || 0 }),
     submissions: (data || []).map(row => ({
       id: row.id,
       studentName: row.student_name || 'Student',
@@ -229,17 +256,39 @@ function escapePostgrestValue(value) {
 }
 
 async function runBulkJob(job) {
-  for (const submissionId of job.submissionIds) {
+  const attempts = new Map()
+
+  while (job.submissionIds.length) {
+    const submissionId = job.submissionIds.shift()
     if (activeSubmissionIds.has(submissionId)) {
-      job.skipped += 1
+      const attempt = attempts.get(submissionId) || 0
+      if (attempt < 2) {
+        attempts.set(submissionId, attempt + 1)
+        job.currentState = 'Queued'
+        job.submissionIds.push(submissionId)
+        await sleep(queueItemCooldownMs())
+      } else {
+        job.skipped += 1
+      }
       continue
     }
 
     activeSubmissionIds.add(submissionId)
+    job.currentState = 'Generating'
     try {
       const result = await evaluateSubmission(submissionId, { allowRegenerate: false })
       if (result.status === AI_STATUS.READY) job.completed += 1
-      else if (result.status === AI_STATUS.PROCESSING) job.skipped += 1
+      else if (result.status === AI_STATUS.PROCESSING) {
+        const attempt = attempts.get(submissionId) || 0
+        if (attempt < 2) {
+          attempts.set(submissionId, attempt + 1)
+          job.currentState = 'Delayed provider response'
+          job.submissionIds.push(submissionId)
+          await sleep(queueItemCooldownMs() * 2)
+        } else {
+          job.skipped += 1
+        }
+      }
       else job.failed += 1
     } catch (err) {
       job.failed += 1
@@ -247,9 +296,11 @@ async function runBulkJob(job) {
     } finally {
       activeSubmissionIds.delete(submissionId)
     }
+    await sleep(queueItemCooldownMs())
   }
 
   job.status = 'complete'
+  job.currentState = null
   job.finishedAt = new Date().toISOString()
 }
 
@@ -292,6 +343,7 @@ export async function POST(request) {
       failed: 0,
       skipped: 0,
       submissionIds,
+      currentState: submissionIds.length ? 'Queued' : null,
       startedAt: new Date().toISOString(),
       finishedAt: submissionIds.length ? null : new Date().toISOString(),
     }
@@ -317,4 +369,14 @@ export async function POST(request) {
     console.error('[admin-bulk-ai] start failed', err?.message)
     return jsonNoStore({ error: 'Could not queue AI draft generation' }, { status: 500 })
   }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function queueItemCooldownMs() {
+  const configured = Number.parseInt(process.env.AI_QUEUE_ITEM_COOLDOWN_MS || '', 10)
+  if (Number.isFinite(configured) && configured >= 0) return Math.min(configured, 5_000)
+  return AI_QUEUE_ITEM_COOLDOWN_MS
 }

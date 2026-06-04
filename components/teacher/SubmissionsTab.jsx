@@ -82,7 +82,7 @@ function CopyButton({ text }) {
 }
 
 function isAiGeneratingUi(status, generatingIds, id) {
-  return generatingIds.includes(String(id)) || status === "processing"
+  return generatingIds.includes(String(id)) || status === "processing" || status === "pending"
 }
 
 function isMissingAiFeedback(row) {
@@ -512,7 +512,11 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       })
       const data = await res.json().catch(() => ({}))
       if (res.status === 202) {
-        success("AI draft is already generating.")
+        setData(prev => prev.map(row => String(row.id) === submissionId
+          ? { ...row, ai_status: data.status || "pending", ai_error: data.message || "AI draft queued.", ai_feedback_at: new Date().toISOString() }
+          : row
+        ))
+        success(data.message || "AI draft queued. You can keep reviewing.")
         await load({ silent: true })
         return
       }
@@ -698,6 +702,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                 {bulkActive ? "Generating AI feedback..." : bulkJob.status === "failed" ? "Bulk AI generation stopped" : "Bulk AI generation complete"}
               </p>
               <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                {bulkJob.currentState ? `${bulkJob.currentState} - ` : ""}
                 {bulkJob.completed} / {bulkJob.total} completed
                 {bulkJob.failed ? ` - ${bulkJob.failed} failed` : ""}
                 {bulkJob.remaining ? ` - ${bulkJob.remaining} remaining` : ""}
@@ -780,7 +785,16 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                 <span><b>Date:</b> {formatDate(r.submitted_at)}</span>
               </div>
 
-              {!hasFb && <div className="mb-3"><AiStatusBadge status={r.ai_status} error={r.ai_error} /></div>}
+              {!hasFb && (
+                <div className="mb-3">
+                  <AiStatusBadge
+                    status={r.ai_status}
+                    error={r.ai_error}
+                    queuedAt={r.ai_feedback_at}
+                    diagnostics={r.ai_evaluation?.diagnostics?.ai_provider}
+                  />
+                </div>
+              )}
               {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "rgba(245,166,35,0.06)", color: "var(--text-secondary)" }}>Student note: {r.comment}</p>}
               {r.file_url && r.file_name && (
                 <div className="flex gap-2 mb-3 flex-wrap items-center">
@@ -797,7 +811,12 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                   <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>AI Draft</p>
-                      <AiStatusBadge status={r.ai_status || "ready"} error={r.ai_error} />
+                      <AiStatusBadge
+                        status={r.ai_status || "ready"}
+                        error={r.ai_error}
+                        queuedAt={r.ai_feedback_at}
+                        diagnostics={r.ai_evaluation?.diagnostics?.ai_provider}
+                      />
                     </div>
                     <div className="flex gap-2 flex-wrap">
                       <button className="btn btn-primary btn-xs" disabled={isAiGeneratingUi(r.ai_status, aiGeneratingIds, r.id) || feedbackSavingId === r.id} onClick={() => saveFeedback(r, r.ai_feedback)}>

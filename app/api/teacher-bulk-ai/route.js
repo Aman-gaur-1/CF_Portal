@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
-import { AI_STATUS } from '@/lib/ai/constants'
-import { evaluateSubmission } from '@/lib/ai/orchestrator'
+import { AI_QUEUE_ITEM_COOLDOWN_MS, AI_STATUS } from '@/lib/ai/constants'
+import { evaluateSubmission, getAiEvaluationLoad } from '@/lib/ai/orchestrator'
+import { aiRuntimeSnapshot } from '@/lib/ai/runtime-state'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { getTeacherScope, normalizeName } from '@/lib/teacher-scope'
@@ -44,8 +45,14 @@ function serializeJob(job) {
       skipped: 0,
       remaining: 0,
       currentSubmissionId: null,
+      currentState: null,
       startedAt: null,
       finishedAt: null,
+      queue: {
+        active: getAiEvaluationLoad().active,
+        limit: getAiEvaluationLoad().limit,
+      },
+      metrics: aiRuntimeSnapshot({ queueDepth: 0 }),
     }
   }
 
@@ -58,9 +65,15 @@ function serializeJob(job) {
     skipped: job.skipped,
     remaining: Math.max(job.total - job.completed - job.failed - job.skipped, 0),
     currentSubmissionId: job.currentSubmissionId,
+    currentState: job.currentState || null,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
     error: job.error || null,
+    queue: {
+      active: getAiEvaluationLoad().active,
+      limit: getAiEvaluationLoad().limit,
+    },
+    metrics: aiRuntimeSnapshot({ queueDepth: Math.max(job.total - job.completed - job.failed - job.skipped, 0) }),
   }
 }
 
@@ -85,21 +98,41 @@ function cleanupOldJobs() {
 }
 
 async function runBulkJob(job) {
-  for (const submissionId of job.submissionIds) {
+  const attempts = new Map()
+
+  while (job.submissionIds.length) {
+    const submissionId = job.submissionIds.shift()
     if (activeSubmissionIds.has(submissionId)) {
-      job.skipped += 1
+      const attempt = attempts.get(submissionId) || 0
+      if (attempt < 2) {
+        attempts.set(submissionId, attempt + 1)
+        job.currentState = 'Queued'
+        job.submissionIds.push(submissionId)
+        await sleep(queueItemCooldownMs())
+      } else {
+        job.skipped += 1
+      }
       continue
     }
 
     activeSubmissionIds.add(submissionId)
     job.currentSubmissionId = submissionId
+    job.currentState = 'Generating'
 
     try {
       const result = await evaluateSubmission(submissionId, { allowRegenerate: false })
       if (result.status === AI_STATUS.READY) {
         job.completed += 1
       } else if (result.status === AI_STATUS.PROCESSING) {
-        job.skipped += 1
+        const attempt = attempts.get(submissionId) || 0
+        if (attempt < 2) {
+          attempts.set(submissionId, attempt + 1)
+          job.currentState = 'Delayed provider response'
+          job.submissionIds.push(submissionId)
+          await sleep(queueItemCooldownMs() * 2)
+        } else {
+          job.skipped += 1
+        }
       } else {
         job.failed += 1
       }
@@ -110,9 +143,11 @@ async function runBulkJob(job) {
       activeSubmissionIds.delete(submissionId)
       job.currentSubmissionId = null
     }
+    await sleep(queueItemCooldownMs())
   }
 
   job.status = 'complete'
+  job.currentState = null
   job.finishedAt = new Date().toISOString()
 }
 
@@ -167,6 +202,7 @@ export async function POST(request) {
         skipped: 0,
         submissionIds: [],
         currentSubmissionId: null,
+        currentState: null,
         startedAt: new Date().toISOString(),
         finishedAt: new Date().toISOString(),
       }
@@ -183,6 +219,7 @@ export async function POST(request) {
       skipped: 0,
       submissionIds,
       currentSubmissionId: null,
+      currentState: 'Queued',
       startedAt: new Date().toISOString(),
       finishedAt: null,
     }
@@ -200,4 +237,14 @@ export async function POST(request) {
     console.error('[teacher-bulk-ai] start failed', err?.message)
     return jsonNoStore({ error: 'Could not start bulk AI generation' }, { status: 500 })
   }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function queueItemCooldownMs() {
+  const configured = Number.parseInt(process.env.AI_QUEUE_ITEM_COOLDOWN_MS || '', 10)
+  if (Number.isFinite(configured) && configured >= 0) return Math.min(configured, 5_000)
+  return AI_QUEUE_ITEM_COOLDOWN_MS
 }
