@@ -16,6 +16,19 @@ function jsonNoStore(body, init) {
   })
 }
 
+function confirmedReviewedIds(params) {
+  return new Set(
+    String(params.get('confirmedReviewedIds') || '')
+      .split(',')
+      .map(id => id.trim())
+      .filter(id => /^\d+$/.test(id))
+  )
+}
+
+function isReviewedSubmission(row, confirmedIds = new Set()) {
+  return Boolean(confirmedIds.has(String(row?.id)) || String(row?.feedback || '').trim() || row?.feedback_at)
+}
+
 function dateKey(date) {
   return date.toISOString().slice(0, 10)
 }
@@ -51,9 +64,18 @@ export async function GET(request) {
       .order('submitted_at', { ascending: false })
     if (rowsResult.error) throw new Error(rowsResult.error.message)
     const rows = rowsResult.data || []
+    const confirmedIds = confirmedReviewedIds(request.nextUrl.searchParams)
+    const staleConfirmed = rows.filter(row => confirmedIds.has(String(row.id)) && !isReviewedSubmission(row))
+    if (staleConfirmed.length) {
+      console.warn('[teacher-analytics] confirmed published rows arrived stale from Supabase', {
+        teacherName: scope.teacherName,
+        staleIds: staleConfirmed.map(row => row.id).slice(0, 20),
+        staleCount: staleConfirmed.length,
+      })
+    }
     const total = rows.length
-    const pending = rows.filter(row => !row.feedback && !row.feedback_at).length
-    const reviewed = rows.filter(row => row.feedback || row.feedback_at).length
+    const pending = rows.filter(row => !isReviewedSubmission(row, confirmedIds)).length
+    const reviewed = rows.filter(row => isReviewedSubmission(row, confirmedIds)).length
 
     const aiHealth = {
       ready: rows.filter(row => row.ai_status === 'ready').length,
@@ -86,7 +108,7 @@ export async function GET(request) {
       const batch = row.batch || 'Unassigned'
       const current = batchMap.get(batch) || { batch, submissions: 0, pending: 0 }
       current.submissions += 1
-      if (!row.feedback && !row.feedback_at) current.pending += 1
+      if (!isReviewedSubmission(row, confirmedIds)) current.pending += 1
       batchMap.set(batch, current)
     }
     const batchDistribution = Array.from(batchMap.values())

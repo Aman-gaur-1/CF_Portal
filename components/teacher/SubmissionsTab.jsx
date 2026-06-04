@@ -192,6 +192,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   const activeSubmissionIdRef = useRef(null)
   const reviewInactivityTimerRef = useRef(null)
   const reviewSessionActiveRef = useRef(false)
+  const confirmedPublishedRef = useRef(new Map())
   const submissionRefs = useRef({})
   const feedbackEditorRefs = useRef({})
   const { toasts, success, error: showError } = useToast()
@@ -211,9 +212,11 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         batch: batchFilter,
         search,
       })
+      const confirmedReviewedIds = Array.from(confirmedPublishedRef.current.keys())
+      if (confirmedReviewedIds.length) params.set("confirmedReviewedIds", confirmedReviewedIds.join(","))
       const [res, analyticsRes] = await Promise.all([
         fetch(`/api/teacher-data?${params}`, { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal }),
-        fetch("/api/teacher-analytics", { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal }),
+        fetch(`/api/teacher-analytics?${new URLSearchParams(confirmedReviewedIds.length ? { confirmedReviewedIds: confirmedReviewedIds.join(",") } : {})}`, { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal }),
       ])
       const scoped = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(scoped.error || "Could not load reviews.")
@@ -233,7 +236,12 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         })
       }
 
-      const rows = scoped.submissions || []
+      const rows = (scoped.submissions || [])
+        .map(row => {
+          const confirmed = confirmedPublishedRef.current.get(String(row.id))
+          return confirmed && !isReviewedSubmission(row) ? { ...row, ...confirmed } : row
+        })
+        .filter(row => !(statusFilter === "Pending Feedback" && confirmedPublishedRef.current.has(String(row.id))))
       setData(rows)
       setBatches(scoped.batches || [])
       const nextPagination = scoped.pagination || { page: 1, pageSize: 50, total: rows.length, totalPages: 1 }
@@ -475,6 +483,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       if (String(published.id) !== String(r.id)) {
         throw new Error("Feedback was saved to an unexpected submission. Please refresh and check the queue.")
       }
+      confirmedPublishedRef.current.set(String(r.id), published)
       const nextPendingId = nextPendingIdAfterApproval(r.id)
       setData(prev => {
         const nextRows = prev.map(row => String(row.id) === String(r.id) ? { ...row, ...published } : row)

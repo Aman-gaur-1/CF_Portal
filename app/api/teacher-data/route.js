@@ -18,6 +18,15 @@ function jsonNoStore(body, init) {
   })
 }
 
+function confirmedReviewedIds(params) {
+  return new Set(
+    String(params.get('confirmedReviewedIds') || '')
+      .split(',')
+      .map(id => id.trim())
+      .filter(id => /^\d+$/.test(id))
+  )
+}
+
 export async function GET(request) {
   try {
     const teacher = getTeacherFromRequest(request)
@@ -54,7 +63,16 @@ async function loadReviewPage(request, teacherName) {
     .order('submitted_at', { ascending: false })
   if (error) throw new Error(error.message)
 
-  const filtered = filterReviewRows(rows || [], request.nextUrl.searchParams, scope.teacherName)
+  const confirmedIds = confirmedReviewedIds(request.nextUrl.searchParams)
+  const filtered = filterReviewRows(rows || [], request.nextUrl.searchParams, scope.teacherName, confirmedIds)
+  const staleConfirmed = (rows || []).filter(row => confirmedIds.has(String(row.id)) && !isReviewedSubmission(row))
+  if (staleConfirmed.length) {
+    console.warn('[teacher-data] confirmed published rows arrived stale from Supabase', {
+      teacherName: scope.teacherName,
+      staleIds: staleConfirmed.map(row => row.id).slice(0, 20),
+      staleCount: staleConfirmed.length,
+    })
+  }
 
   return {
     ...scope,
@@ -63,24 +81,24 @@ async function loadReviewPage(request, teacherName) {
   }
 }
 
-function isReviewedSubmission(row) {
-  return Boolean(String(row?.feedback || '').trim() || row?.feedback_at)
+function isReviewedSubmission(row, confirmedIds = new Set()) {
+  return Boolean(confirmedIds.has(String(row?.id)) || String(row?.feedback || '').trim() || row?.feedback_at)
 }
 
-function filterReviewRows(rows, params, teacherName) {
+function filterReviewRows(rows, params, teacherName, confirmedIds = new Set()) {
   const status = params.get('status') || 'All'
   const aiStatus = params.get('aiStatus') || 'All'
   const batch = params.get('batch') || 'All Batches'
   let search = normalizeSearchText(params.get('search'))
 
   return rows.filter(row => {
-    if (status === 'Pending Feedback' && isReviewedSubmission(row)) return false
-    if (status === 'Feedback Done' && !isReviewedSubmission(row)) return false
+    if (status === 'Pending Feedback' && isReviewedSubmission(row, confirmedIds)) return false
+    if (status === 'Feedback Done' && !isReviewedSubmission(row, confirmedIds)) return false
     if (status === 'Failed AI' && row.ai_status !== 'failed') return false
     if (aiStatus !== 'All' && row.ai_status !== aiStatus) return false
     if (batch !== 'All Batches' && row.batch !== batch) return false
 
-    const rowSearch = applyReviewStatusSearchToRow(row, search)
+    const rowSearch = applyReviewStatusSearchToRow(row, search, confirmedIds)
     if (rowSearch === null) return false
 
     const haystack = normalizeSearchText([
@@ -99,7 +117,7 @@ function filterReviewRows(rows, params, teacherName) {
   })
 }
 
-function applyReviewStatusSearchToRow(row, search) {
+function applyReviewStatusSearchToRow(row, search, confirmedIds = new Set()) {
   if (search.includes('ai failed')) {
     if (row.ai_status !== 'failed') return null
     search = search.replace('ai failed', '')
@@ -109,11 +127,11 @@ function applyReviewStatusSearchToRow(row, search) {
     search = search.replace('ai ready', '')
   }
   if (search.includes('reviewed')) {
-    if (!isReviewedSubmission(row)) return null
+    if (!isReviewedSubmission(row, confirmedIds)) return null
     search = search.replace('reviewed', '')
   }
   if (search.includes('needs review')) {
-    if (isReviewedSubmission(row)) return null
+    if (isReviewedSubmission(row, confirmedIds)) return null
     search = search.replace('needs review', '')
   }
   return search
