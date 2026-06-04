@@ -5,7 +5,7 @@ import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { assertSubmissionInTeacherScope } from '@/lib/teacher-scope'
 
-export const maxDuration = 60
+export const maxDuration = 90
 
 function jsonNoStore(body, init) {
   return NextResponse.json(body, {

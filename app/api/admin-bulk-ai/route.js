@@ -11,7 +11,7 @@ import { appendActivity } from '@/lib/activity-log'
 import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 90
 
 const JOB_RETENTION_MS = 15 * 60 * 1000
 const activeSubmissionIds = globalThis.__cfBulkAiActiveSubmissionIds || new Set()

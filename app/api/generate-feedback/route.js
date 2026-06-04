@@ -3,7 +3,7 @@ import { evaluateSubmission } from '@/lib/ai/orchestrator'
 import { AI_STATUS } from '@/lib/ai/constants'
 import { guardEvaluateRequest } from '@/lib/ai/api-guard'
 
-export const maxDuration = 60
+export const maxDuration = 90
 
 /**
  * Legacy endpoint — delegates to the shared evaluation orchestrator.

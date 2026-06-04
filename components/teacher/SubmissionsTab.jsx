@@ -162,7 +162,7 @@ function aiStatusView(row, generatingIds = []) {
     return {
       status: "failed",
       title: "Failed",
-      message: row?.ai_error || "AI draft failed. You can retry.",
+      message: publicAiError(row?.ai_error) || "AI draft failed. You can retry.",
       tone: "failed",
     }
   }
@@ -222,12 +222,21 @@ function AiGenerationNotice({ row, generatingIds }) {
       </div>
       <AiStatusBadge
         status={view.status}
-        error={row?.ai_error}
+        error={publicAiError(row?.ai_error)}
         queuedAt={row?.ai_feedback_at}
         diagnostics={aiProviderDiagnostics(row)}
       />
     </div>
   )
+}
+
+function publicAiError(message) {
+  const text = String(message || "").trim()
+  if (!text) return ""
+  if (/processing timed out|timed out after|timeout/i.test(text)) {
+    return "AI service took too long. Please retry."
+  }
+  return text
 }
 
 function aiGenerationButtonLabel(row, generatingIds, regenerate = false) {
@@ -634,8 +643,15 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         return
       }
       if (!res.ok) throw new Error(data.error || "AI draft generation failed.")
-      success("AI draft ready.")
+      if (data.status !== "ready" || !data.ai_feedback?.trim()) {
+        throw new Error(data.error || "AI draft was not confirmed ready. Please retry.")
+      }
+      setData(prev => prev.map(row => String(row.id) === submissionId
+        ? { ...row, ai_status: "ready", ai_error: null, ai_feedback: data.ai_feedback, ai_feedback_at: new Date().toISOString() }
+        : row
+      ))
       await load({ silent: true })
+      success(data.message || "AI draft ready.")
     } catch (err) {
       showError(err.message || "AI draft generation failed.")
       await load({ silent: true })
@@ -919,7 +935,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                       <p className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>AI Draft</p>
                       <AiStatusBadge
                         status={r.ai_status || "ready"}
-                        error={r.ai_error}
+                        error={publicAiError(r.ai_error)}
                         queuedAt={r.ai_feedback_at}
                         diagnostics={r.ai_evaluation?.diagnostics?.ai_provider}
                       />
@@ -958,7 +974,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                     {aiGenerationButtonLabel(r, aiGeneratingIds)}
                   </button>
                   {(r.ai_status === "failed" || r.ai_status === "pending") && r.ai_error && (
-                    <span className="text-xs" style={{ color: "var(--danger)" }} title={r.ai_error}>{r.ai_error}</span>
+                    <span className="text-xs" style={{ color: "var(--danger)" }} title={publicAiError(r.ai_error)}>{publicAiError(r.ai_error)}</span>
                   )}
                 </div>
               )}
