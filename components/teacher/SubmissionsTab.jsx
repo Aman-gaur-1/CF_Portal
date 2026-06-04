@@ -130,6 +130,115 @@ function ReviewStatusPill({ state }) {
   return <span className={`review-status-pill review-status-${state.tone}`}>{state.label}</span>
 }
 
+function aiProviderDiagnostics(row) {
+  return row?.ai_evaluation?.diagnostics?.ai_provider || null
+}
+
+function aiStatusView(row, generatingIds = []) {
+  const status = String(row?.ai_status || "").toLowerCase()
+  const diagnostics = aiProviderDiagnostics(row)
+  const queuedAt = row?.ai_feedback_at
+  const elapsedMs = queuedAt ? Date.now() - new Date(queuedAt).getTime() : 0
+  const locallyQueued = generatingIds.includes(String(row?.id))
+
+  if (status === "ready" || row?.ai_feedback) {
+    if (diagnostics?.fallback_used) {
+      return {
+        status: "ready",
+        title: "Fallback Active",
+        message: "Draft ready. A backup provider was used.",
+        tone: "ready",
+      }
+    }
+    return {
+      status: "ready",
+      title: "Ready",
+      message: "Draft ready for review.",
+      tone: "ready",
+    }
+  }
+
+  if (status === "failed") {
+    return {
+      status: "failed",
+      title: "Failed",
+      message: row?.ai_error || "AI draft failed. You can retry.",
+      tone: "failed",
+    }
+  }
+
+  if (status === "processing") {
+    if (Number.isFinite(elapsedMs) && elapsedMs > 45_000) {
+      return {
+        status: "processing",
+        title: "Delayed",
+        message: "Provider response is taking longer than usual. This will keep updating automatically.",
+        tone: "delayed",
+      }
+    }
+    return {
+      status: "processing",
+      title: "Generating",
+      message: "Generation in progress. You can continue reviewing other submissions.",
+      tone: "active",
+    }
+  }
+
+  if (status === "pending" || locallyQueued) {
+    return {
+      status: "pending",
+      title: "Queued",
+      message: row?.ai_error || "Queued successfully. Generation will start shortly.",
+      tone: "queued",
+    }
+  }
+
+  return null
+}
+
+function AiGenerationNotice({ row, generatingIds }) {
+  const view = aiStatusView(row, generatingIds)
+  if (!view) return null
+
+  const styles = {
+    queued: { background: "rgba(245,166,35,0.08)", borderColor: "rgba(245,166,35,0.26)" },
+    active: { background: "rgba(59,130,246,0.08)", borderColor: "rgba(59,130,246,0.24)" },
+    delayed: { background: "rgba(245,166,35,0.12)", borderColor: "rgba(245,166,35,0.34)" },
+    ready: { background: "rgba(34,197,94,0.08)", borderColor: "rgba(34,197,94,0.24)" },
+    failed: { background: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.24)" },
+  }
+
+  return (
+    <div
+      className="mb-3 rounded-lg px-3 py-2 flex items-center justify-between gap-3 flex-wrap"
+      style={{
+        ...(styles[view.tone] || styles.queued),
+        border: `1px solid ${(styles[view.tone] || styles.queued).borderColor}`,
+      }}
+    >
+      <div className="min-w-0">
+        <p className="text-sm font-semibold">{view.title}</p>
+        <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{view.message}</p>
+      </div>
+      <AiStatusBadge
+        status={view.status}
+        error={row?.ai_error}
+        queuedAt={row?.ai_feedback_at}
+        diagnostics={aiProviderDiagnostics(row)}
+      />
+    </div>
+  )
+}
+
+function aiGenerationButtonLabel(row, generatingIds, regenerate = false) {
+  const view = aiStatusView(row, generatingIds)
+  if (view?.title === "Queued") return "Queued"
+  if (view?.title === "Delayed") return "Provider delayed"
+  if (view?.title === "Generating") return regenerate ? "Regenerating..." : "Generating draft..."
+  if (String(row?.ai_status || "").toLowerCase() === "failed") return "Retry AI draft"
+  return regenerate ? "Regenerate draft" : "Generate AI draft"
+}
+
 function submissionReviewActivity(submission) {
   if (!isReviewActivityFresh(submission)) return null
   return {
@@ -504,6 +613,10 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   async function generateAiDraft(r) {
     const submissionId = String(r.id)
     setAiGeneratingIds(prev => [...prev, submissionId])
+    setData(prev => prev.map(row => String(row.id) === submissionId
+      ? { ...row, ai_status: "pending", ai_error: "Queued successfully. Generation will start shortly.", ai_feedback_at: new Date().toISOString() }
+      : row
+    ))
     try {
       const res = await fetch("/api/teacher-generate-feedback", {
         method: "POST",
@@ -513,7 +626,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       const data = await res.json().catch(() => ({}))
       if (res.status === 202) {
         setData(prev => prev.map(row => String(row.id) === submissionId
-          ? { ...row, ai_status: data.status || "pending", ai_error: data.message || "AI draft queued.", ai_feedback_at: new Date().toISOString() }
+          ? { ...row, ai_status: data.status || "pending", ai_error: data.message || "Queued successfully. Generation will start shortly.", ai_feedback_at: row.ai_feedback_at || new Date().toISOString() }
           : row
         ))
         success(data.message || "AI draft queued. You can keep reviewing.")
@@ -786,14 +899,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
               </div>
 
               {!hasFb && (
-                <div className="mb-3">
-                  <AiStatusBadge
-                    status={r.ai_status}
-                    error={r.ai_error}
-                    queuedAt={r.ai_feedback_at}
-                    diagnostics={r.ai_evaluation?.diagnostics?.ai_provider}
-                  />
-                </div>
+                <AiGenerationNotice row={r} generatingIds={aiGeneratingIds} />
               )}
               {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "rgba(245,166,35,0.06)", color: "var(--text-secondary)" }}>Student note: {r.comment}</p>}
               {r.file_url && r.file_name && (
@@ -823,7 +929,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                         Approve draft
                       </button>
                       <button className="btn btn-secondary btn-xs" disabled={isAiGeneratingUi(r.ai_status, aiGeneratingIds, r.id)} onClick={() => generateAiDraft(r)}>
-                        {isAiGeneratingUi(r.ai_status, aiGeneratingIds, r.id) ? "Regenerating..." : "Regenerate draft"}
+                        {aiGenerationButtonLabel(r, aiGeneratingIds, true)}
                       </button>
                       <button className="btn btn-secondary btn-xs" disabled={isAiGeneratingUi(r.ai_status, aiGeneratingIds, r.id)} onClick={() => {
                         setDraftEdits(prev => ({ ...prev, [r.id]: r.ai_feedback }))
@@ -849,7 +955,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
               {!r.ai_feedback && !hasFb && (
                 <div className="mb-4 flex flex-wrap items-center gap-2">
                   <button className="btn btn-secondary btn-sm" disabled={isAiGeneratingUi(r.ai_status, aiGeneratingIds, r.id)} onClick={() => generateAiDraft(r)}>
-                    {isAiGeneratingUi(r.ai_status, aiGeneratingIds, r.id) ? "Generating draft..." : r.ai_status === "failed" ? "Retry AI draft" : "Generate AI draft"}
+                    {aiGenerationButtonLabel(r, aiGeneratingIds)}
                   </button>
                   {(r.ai_status === "failed" || r.ai_status === "pending") && r.ai_error && (
                     <span className="text-xs" style={{ color: "var(--danger)" }} title={r.ai_error}>{r.ai_error}</span>

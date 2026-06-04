@@ -45,7 +45,7 @@ export default function AiStatusBadge({ status, error, showReady = true, neutral
       }}
       title={title}
     >
-      {status === 'pending' && <span aria-hidden>•</span>}
+      {status === 'pending' && <span aria-hidden>.</span>}
       {status === 'processing' && <span aria-hidden>~</span>}
       {status === 'ready' && <span aria-hidden>*</span>}
       {status === 'failed' && <span aria-hidden>!</span>}
