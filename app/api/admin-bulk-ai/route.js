@@ -11,7 +11,7 @@ import { appendActivity } from '@/lib/activity-log'
 import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 90
+export const maxDuration = 55
 
 const JOB_RETENTION_MS = 15 * 60 * 1000
 const activeSubmissionIds = globalThis.__cfBulkAiActiveSubmissionIds || new Set()
@@ -308,6 +308,7 @@ export async function GET(request) {
   try {
     const admin = getAdminFromRequest(request)
     if (!admin) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
+    await recoverStaleAiDrafts(getSupabaseAdmin(), { context: 'admin-bulk-ai-load' })
     return jsonNoStore({ success: true, ...await loadQueuePage(request) })
   } catch (err) {
     console.error('[admin-bulk-ai] load failed', err?.message)

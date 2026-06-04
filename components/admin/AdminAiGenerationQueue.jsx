@@ -15,7 +15,9 @@ const EMPTY_QUEUE_DATA = {
 }
 
 function QueueStatus({ status }) {
-  return <span className={status === "AI Failed" ? "badge-failed" : "badge-pending"}>{status}</span>
+  if (status === "AI Failed") return <span className="badge-failed">AI Failed</span>
+  if (status === "Processing") return <span className="badge-pending" title="Auto-resets if stuck > 3 min">Processing</span>
+  return <span className="badge-pending">{status}</span>
 }
 
 export default function AdminAiGenerationQueue({ adminToken, success, showError, onQueued }) {

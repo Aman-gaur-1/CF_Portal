@@ -27,6 +27,9 @@ export async function POST(request) {
     const supabase = getSupabaseAdmin()
     const { scoped, submission } = await assertSubmissionInTeacherScope(supabase, teacher.name, submissionId)
     const trainerName = scoped.teacherName || teacher.name
+    if (submission?.feedback || submission?.reviewed_at) {
+      return jsonNoStore({ success: true, skipped: true, activity: null })
+    }
 
     if (action === 'clear') {
       const { error } = await supabase

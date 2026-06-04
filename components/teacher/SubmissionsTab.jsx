@@ -3,7 +3,7 @@ import dynamic from "next/dynamic"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getPoints, BROWSER_RENDERABLE, formatDate } from "@/lib/utils"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
-import { isReviewActivityFresh, REVIEW_ACTIVITY_TTL_MS } from "@/lib/review-activity"
+import { REVIEW_ACTIVITY_TTL_MS, serializeReviewActivity } from "@/lib/review-activity"
 import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
 import AiStatusBadge from "@/components/ui/AiStatusBadge"
@@ -248,13 +248,8 @@ function aiGenerationButtonLabel(row, generatingIds, regenerate = false) {
   return regenerate ? "Regenerate draft" : "Generate AI draft"
 }
 
-function submissionReviewActivity(submission) {
-  if (!isReviewActivityFresh(submission)) return null
-  return {
-    submissionId: submission.id,
-    trainerName: submission.review_active_by,
-    openedAt: submission.review_active_at,
-  }
+function submissionReviewActivity(submission, currentTeacherName) {
+  return serializeReviewActivity(submission, currentTeacherName)
 }
 
 function formatReviewActivityAge(value) {
@@ -750,8 +745,8 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     if (activeSubmissionId !== null && !activeSubmission) setActiveSubmissionId(null)
   }, [activeSubmission, activeSubmissionId])
 
-  const activeReviewActivity = reviewActivity || submissionReviewActivity(activeSubmission)
-  const otherReviewActivity = activeReviewActivity && normalizeName(activeReviewActivity.trainerName) !== normalizeName(teacherName)
+  const activeReviewActivity = reviewActivity || submissionReviewActivity(activeSubmission, teacherName)
+  const otherReviewActivity = activeReviewActivity && activeReviewActivity.isCurrentTeacher === false
     ? activeReviewActivity
     : null
   const previousPendingId = adjacentPendingId(activeSubmissionId, -1)
