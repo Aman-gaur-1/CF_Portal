@@ -6,13 +6,20 @@ import PaginationControls from "@/components/ui/PaginationControls"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
 
 const SEARCH_DEBOUNCE_MS = 250
+const EMPTY_QUEUE_DATA = {
+  trainers: [],
+  counts: {},
+  submissions: [],
+  job: null,
+  pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 },
+}
 
 function QueueStatus({ status }) {
   return <span className={status === "AI Failed" ? "badge-failed" : "badge-pending"}>{status}</span>
 }
 
 export default function AdminAiGenerationQueue({ adminToken, success, showError, onQueued }) {
-  const [data, setData] = useState({ trainers: [], counts: {}, submissions: [], job: null, pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 } })
+  const [data, setData] = useState(EMPTY_QUEUE_DATA)
   const [trainerName, setTrainerName] = useState("")
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
@@ -36,7 +43,7 @@ export default function AdminAiGenerationQueue({ adminToken, success, showError,
       })
       const next = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(next.error || "Could not load AI generation queue.")
-      setData(next)
+      setData(normalizeQueueData(next))
     } catch (err) {
       if (err.name !== "AbortError") showError(err.message || "Could not load AI generation queue.")
     } finally {
@@ -92,6 +99,10 @@ export default function AdminAiGenerationQueue({ adminToken, success, showError,
 
   const jobRunning = data.job?.status === "running"
   const selectedLabel = trainerName || "all trainers"
+  const counts = data.counts || EMPTY_QUEUE_DATA.counts
+  const pagination = data.pagination || EMPTY_QUEUE_DATA.pagination
+  const trainers = Array.isArray(data.trainers) ? data.trainers : []
+  const submissions = Array.isArray(data.submissions) ? data.submissions : []
 
   return (
     <div className="card admin-panel">
@@ -106,10 +117,10 @@ export default function AdminAiGenerationQueue({ adminToken, success, showError,
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
-        <div className="admin-queue-metric"><span>Total pending AI drafts</span><b>{data.counts.pending || 0}</b></div>
-        <div className="admin-queue-metric"><span>Processing</span><b>{data.counts.processing || 0}</b></div>
-        <div className="admin-queue-metric"><span>AI failures</span><b>{data.counts.failed || 0}</b></div>
-        <div className="admin-queue-metric"><span>Ready for review</span><b>{data.counts.ready || 0}</b></div>
+        <div className="admin-queue-metric"><span>Total pending AI drafts</span><b>{counts.pending || 0}</b></div>
+        <div className="admin-queue-metric"><span>Processing</span><b>{counts.processing || 0}</b></div>
+        <div className="admin-queue-metric"><span>AI failures</span><b>{counts.failed || 0}</b></div>
+        <div className="admin-queue-metric"><span>Ready for review</span><b>{counts.ready || 0}</b></div>
       </div>
 
       {jobRunning && (
@@ -125,7 +136,7 @@ export default function AdminAiGenerationQueue({ adminToken, success, showError,
       <div className="grid gap-2 mt-4 md:grid-cols-[minmax(0,260px)_auto]">
         <select className="select" value={trainerName} onChange={e => { setTrainerName(e.target.value); setPage(1) }}>
           <option value="">All Trainers</option>
-          {data.trainers.map(name => <option key={name} value={name}>{name}</option>)}
+          {trainers.map(name => <option key={name} value={name}>{name}</option>)}
         </select>
         <button className="btn btn-secondary btn-sm" onClick={() => generatePending(trainerName)} disabled={!trainerName || starting || jobRunning}>
           Generate Pending For Selected Trainer
@@ -138,15 +149,15 @@ export default function AdminAiGenerationQueue({ adminToken, success, showError,
 
       <div className="mt-4">
         <p className="text-xs font-semibold mb-2" style={{ color: "var(--text-muted)" }}>
-          {data.pagination.total} pending for {trainerName || "all trainers"}
+          {pagination.total} pending for {trainerName || "all trainers"}
         </p>
         {loading ? (
           <div className="flex justify-center py-8"><Spinner /></div>
-        ) : data.submissions.length === 0 ? (
+        ) : submissions.length === 0 ? (
           <p className="text-sm py-4" style={{ color: "var(--text-secondary)" }}>{search ? "No submissions matched your search." : `No pending AI drafts for ${selectedLabel}.`}</p>
         ) : (
           <div className="grid gap-2">
-            {data.submissions.map(row => (
+            {submissions.map(row => (
               <div className="admin-row" key={row.id}>
                 <div className="min-w-0">
                   <p className="font-semibold truncate">{row.studentName} - {row.topic}</p>
@@ -158,7 +169,21 @@ export default function AdminAiGenerationQueue({ adminToken, success, showError,
           </div>
         )}
       </div>
-      <PaginationControls {...data.pagination} page={page} onPageChange={setPage} />
+      <PaginationControls {...pagination} page={page} onPageChange={setPage} />
     </div>
   )
+}
+
+function normalizeQueueData(next = {}) {
+  return {
+    ...EMPTY_QUEUE_DATA,
+    ...next,
+    trainers: Array.isArray(next.trainers) ? next.trainers : [],
+    counts: next.counts && typeof next.counts === "object" ? next.counts : {},
+    submissions: Array.isArray(next.submissions) ? next.submissions : [],
+    job: next.job || null,
+    pagination: next.pagination && typeof next.pagination === "object"
+      ? { ...EMPTY_QUEUE_DATA.pagination, ...next.pagination }
+      : EMPTY_QUEUE_DATA.pagination,
+  }
 }
