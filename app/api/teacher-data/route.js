@@ -47,65 +47,74 @@ async function loadReviewPage(request, teacherName) {
     return { ...scope, submissions: [], pagination: paginationMeta(page, 0) }
   }
 
-  let query = supabase
+  const { data: rows, error } = await supabase
     .from('submissions')
-    .select('*', { count: 'exact' })
+    .select('*')
     .in('batch', scope.batchNames)
-
-  query = applyReviewFilters(query, request.nextUrl.searchParams, scope.teacherName)
-  const { data, count, error } = await query.order('submitted_at', { ascending: false }).range(from, to)
+    .order('submitted_at', { ascending: false })
   if (error) throw new Error(error.message)
+
+  const filtered = filterReviewRows(rows || [], request.nextUrl.searchParams, scope.teacherName)
 
   return {
     ...scope,
-    submissions: data || [],
-    pagination: paginationMeta(page, count),
+    submissions: filtered.slice(from, to + 1),
+    pagination: paginationMeta(page, filtered.length),
   }
 }
 
-function applyReviewFilters(query, params, teacherName) {
+function isReviewedSubmission(row) {
+  return Boolean(String(row?.feedback || '').trim() || row?.feedback_at)
+}
+
+function filterReviewRows(rows, params, teacherName) {
   const status = params.get('status') || 'All'
   const aiStatus = params.get('aiStatus') || 'All'
   const batch = params.get('batch') || 'All Batches'
   let search = normalizeSearchText(params.get('search'))
 
-  if (status === 'Pending Feedback') query = query.is('feedback', null).is('feedback_at', null)
-  if (status === 'Feedback Done') query = query.or('feedback.not.is.null,feedback_at.not.is.null')
-  if (status === 'Failed AI') query = query.eq('ai_status', 'failed')
-  if (aiStatus !== 'All') query = query.eq('ai_status', aiStatus)
-  if (batch !== 'All Batches') query = query.eq('batch', batch)
+  return rows.filter(row => {
+    if (status === 'Pending Feedback' && isReviewedSubmission(row)) return false
+    if (status === 'Feedback Done' && !isReviewedSubmission(row)) return false
+    if (status === 'Failed AI' && row.ai_status !== 'failed') return false
+    if (aiStatus !== 'All' && row.ai_status !== aiStatus) return false
+    if (batch !== 'All Batches' && row.batch !== batch) return false
 
-  ;({ query, search } = applyReviewStatusSearch(query, search))
+    const rowSearch = applyReviewStatusSearchToRow(row, search)
+    if (rowSearch === null) return false
 
-  for (const term of search.split(' ').filter(Boolean)) {
-    if (normalizeSearchText(teacherName).includes(term)) continue
-    const pattern = `*${escapePostgrestValue(term)}*`
-    query = query.or(`student_name.ilike.${pattern},topic.ilike.${pattern},batch.ilike.${pattern},ai_status.ilike.${pattern}`)
-  }
+    const haystack = normalizeSearchText([
+      row.student_name,
+      row.topic,
+      row.batch,
+      row.ai_status,
+    ].filter(Boolean).join(' '))
 
-  return query
+    for (const term of rowSearch.split(' ').filter(Boolean)) {
+      if (normalizeSearchText(teacherName).includes(term)) continue
+      if (!haystack.includes(term)) return false
+    }
+
+    return true
+  })
 }
 
-function applyReviewStatusSearch(query, search) {
+function applyReviewStatusSearchToRow(row, search) {
   if (search.includes('ai failed')) {
-    query = query.eq('ai_status', 'failed')
+    if (row.ai_status !== 'failed') return null
     search = search.replace('ai failed', '')
   }
   if (search.includes('ai ready')) {
-    query = query.eq('ai_status', 'ready')
+    if (row.ai_status !== 'ready') return null
     search = search.replace('ai ready', '')
   }
   if (search.includes('reviewed')) {
-    query = query.or('feedback.not.is.null,feedback_at.not.is.null')
+    if (!isReviewedSubmission(row)) return null
     search = search.replace('reviewed', '')
   }
   if (search.includes('needs review')) {
-    query = query.is('feedback', null).is('feedback_at', null)
+    if (isReviewedSubmission(row)) return null
     search = search.replace('needs review', '')
   }
-  return { query, search }
-}
-
-function escapePostgrestValue(value) {
-  return String(value || '').replace(/[,%()]/g, '')
+  return search
 }

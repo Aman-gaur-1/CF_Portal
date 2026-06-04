@@ -16,12 +16,6 @@ function jsonNoStore(body, init) {
   })
 }
 
-async function countRows(supabase, query) {
-  const { count, error } = await query
-  if (error) throw new Error(error.message)
-  return count || 0
-}
-
 function dateKey(date) {
   return date.toISOString().slice(0, 10)
 }
@@ -50,19 +44,16 @@ export async function GET(request) {
       })
     }
 
-    const [total, pending, reviewed, rowsResult] = await Promise.all([
-      countRows(supabase, supabase.from('submissions').select('id', { count: 'exact', head: true }).in('batch', scope.batchNames)),
-      countRows(supabase, supabase.from('submissions').select('id', { count: 'exact', head: true }).in('batch', scope.batchNames).is('feedback', null).is('feedback_at', null)),
-      countRows(supabase, supabase.from('submissions').select('id', { count: 'exact', head: true }).in('batch', scope.batchNames).or('feedback.not.is.null,feedback_at.not.is.null')),
-      supabase
-        .from('submissions')
-        .select('id,batch,submitted_at,feedback,feedback_at,ai_status')
-        .in('batch', scope.batchNames)
-        .order('submitted_at', { ascending: false }),
-    ])
-
+    const rowsResult = await supabase
+      .from('submissions')
+      .select('id,batch,submitted_at,feedback,feedback_at,ai_status')
+      .in('batch', scope.batchNames)
+      .order('submitted_at', { ascending: false })
     if (rowsResult.error) throw new Error(rowsResult.error.message)
     const rows = rowsResult.data || []
+    const total = rows.length
+    const pending = rows.filter(row => !row.feedback && !row.feedback_at).length
+    const reviewed = rows.filter(row => row.feedback || row.feedback_at).length
 
     const aiHealth = {
       ready: rows.filter(row => row.ai_status === 'ready').length,

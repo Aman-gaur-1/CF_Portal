@@ -196,7 +196,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   const feedbackEditorRefs = useRef({})
   const { toasts, success, error: showError } = useToast()
 
-  const load = useCallback(async ({ silent = false } = {}) => {
+  const load = useCallback(async ({ silent = false, requireAnalytics = false, throwOnError = false } = {}) => {
     if (loadAbortRef.current) loadAbortRef.current.abort()
     const controller = new AbortController()
     loadAbortRef.current = controller
@@ -219,6 +219,9 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       if (!res.ok) throw new Error(scoped.error || "Could not load reviews.")
 
       const analytics = await analyticsRes.json().catch(() => ({}))
+      if (requireAnalytics && !analyticsRes.ok) {
+        throw new Error(analytics.error || "Could not refresh review counts.")
+      }
       if (analyticsRes.ok) {
         setGlobalStats({
           totalSubmissions: analytics.totalSubmissions || 0,
@@ -254,8 +257,12 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       setSubmissionPhases(phases)
       setPhaseOptions(Array.from(allPhases))
     } catch (err) {
-      if (isAbortError(err)) return
+      if (isAbortError(err)) {
+        if (throwOnError) throw err
+        return
+      }
       showError(err.message || "Could not load reviews.")
+      if (throwOnError) throw err
     } finally {
       if (loadAbortRef.current === controller) {
         loadAbortRef.current = null
@@ -461,22 +468,23 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not save feedback.")
-      const published = data.submission || {
-        id: r.id,
-        feedback,
-        feedback_at: new Date().toISOString(),
-        feedback_by: teacherName,
+      if (!data.success || !data.persisted || !data.submission?.feedback?.trim()) {
+        throw new Error(data.error || "Feedback was not confirmed saved. Please refresh and try again.")
       }
+      const published = data.submission
+      if (String(published.id) !== String(r.id)) {
+        throw new Error("Feedback was saved to an unexpected submission. Please refresh and check the queue.")
+      }
+      const nextPendingId = nextPendingIdAfterApproval(r.id)
       setData(prev => {
         const nextRows = prev.map(row => String(row.id) === String(r.id) ? { ...row, ...published } : row)
         return statusFilter === "Pending Feedback"
           ? nextRows.filter(row => String(row.id) !== String(r.id) && !isReviewedSubmission(row))
           : nextRows
       })
-      const nextPendingId = nextPendingIdAfterApproval(r.id)
+      await load({ silent: true, requireAnalytics: true, throwOnError: true })
       success(nextPendingId === null ? "Feedback published." : "Feedback published. Opening next pending review.")
       setActiveSubmissionId(nextPendingId)
-      await load({ silent: true })
     } catch (err) {
       showError(err.message || "Could not save feedback.")
     } finally {
