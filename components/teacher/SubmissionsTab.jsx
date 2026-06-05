@@ -115,15 +115,21 @@ function resolveSubmissionReviewState(row) {
     return { label: "REVIEWED", tone: "reviewed" }
   }
 
-  if (row?.ai_status === "failed") {
-    return { label: "AI FAILED", tone: "failed" }
-  }
-
   if (row?.ai_feedback || row?.ai_status === "ready" || row?.ai_status === "completed") {
     return { label: "AI READY", tone: "ready" }
   }
 
+  if (row?.ai_status === "failed") {
+    return { label: "AI FAILED", tone: "failed" }
+  }
+
   return { label: "NEEDS REVIEW", tone: "pending" }
+}
+
+function normalizeAiDraftState(row) {
+  return row?.ai_feedback && row.ai_status === "failed"
+    ? { ...row, ai_status: "ready", ai_error: null }
+    : row
 }
 
 function ReviewStatusPill({ state }) {
@@ -352,7 +358,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       const rows = (scoped.submissions || [])
         .map(row => {
           const confirmed = confirmedPublishedRef.current.get(String(row.id))
-          return confirmed && !isReviewedSubmission(row) ? { ...row, ...confirmed } : row
+          return normalizeAiDraftState(confirmed && !isReviewedSubmission(row) ? { ...row, ...confirmed } : row)
         })
         .filter(row => !(statusFilter === "Pending Feedback" && confirmedPublishedRef.current.has(String(row.id))))
       setData(rows)
@@ -929,7 +935,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>AI Draft</p>
                       <AiStatusBadge
-                        status={r.ai_status || "ready"}
+                        status={r.ai_feedback ? "ready" : r.ai_status || "ready"}
                         error={publicAiError(r.ai_error)}
                         queuedAt={r.ai_feedback_at}
                         diagnostics={r.ai_evaluation?.diagnostics?.ai_provider}
