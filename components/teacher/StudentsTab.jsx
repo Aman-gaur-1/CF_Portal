@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { formatDate } from "@/lib/utils"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
+import { isReviewedSubmission } from "@/lib/review-state"
 import Spinner from "@/components/ui/Spinner"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
 
@@ -68,7 +69,7 @@ export default function StudentsTab({ teacherToken }) {
   const reviewedMap = useMemo(() => {
     const map = {}
     for (const sub of submissions) {
-      if (sub.feedback) map[sub.student_id] = (map[sub.student_id] || 0) + 1
+      if (isReviewedSubmission(sub)) map[sub.student_id] = (map[sub.student_id] || 0) + 1
     }
     return map
   }, [submissions])

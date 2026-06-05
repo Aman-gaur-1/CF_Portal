@@ -4,6 +4,7 @@ import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
 import { formatDate } from "@/lib/utils"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
+import { isReviewedSubmission } from "@/lib/review-state"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
 
 const SCOPE_REFRESH_MS = 5000
@@ -106,7 +107,7 @@ export default function BatchesTab({ teacherName, teacherToken }) {
         batches.map(batch => {
           const batchStudents = stuByBatch[batch.name] || []
           const batchSubmissions = batchStudents.flatMap(student => subByStudent[student.id] || [])
-          const pending = batchSubmissions.filter(submission => !submission.feedback).length
+          const pending = batchSubmissions.filter(submission => !isReviewedSubmission(submission)).length
           const reviewed = batchSubmissions.length - pending
 
           return (
@@ -125,7 +126,7 @@ export default function BatchesTab({ teacherName, teacherToken }) {
               ) : (
                 batchStudents.map(student => {
                   const studentSubmissions = subByStudent[student.id] || []
-                  const studentReviewed = studentSubmissions.filter(submission => submission.feedback).length
+                  const studentReviewed = studentSubmissions.filter(isReviewedSubmission).length
                   return (
                     <div key={student.id} className="card p-4 mb-2">
                       <div className="flex items-center justify-between flex-wrap gap-2">

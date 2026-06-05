@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server'
+import { unstable_noStore as noStore } from 'next/cache'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { getTeacherScope } from '@/lib/teacher-scope'
 import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
+import {
+  decorateSubmissionReviewState,
+  isReviewedSubmission,
+  summarizeReviewRows,
+} from '@/lib/review-state'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,6 +22,25 @@ function jsonNoStore(body, init) {
   })
 }
 
+function jsonNoStoreWithPayloadLog(body, meta = {}, init) {
+  logPayloadSize('teacher-analytics', body, meta)
+  return jsonNoStore(body, init)
+}
+
+function logPayloadSize(context, body, meta = {}) {
+  try {
+    const bytes = Buffer.byteLength(JSON.stringify(body), 'utf8')
+    console.info(`[${context}] payload`, {
+      ...meta,
+      bytes,
+      kb: Math.round(bytes / 1024),
+      overTarget: bytes > 200 * 1024,
+    })
+  } catch (err) {
+    console.warn(`[${context}] payload measurement failed`, { error: err?.message })
+  }
+}
+
 function confirmedReviewedIds(params) {
   return new Set(
     String(params.get('confirmedReviewedIds') || '')
@@ -23,10 +48,6 @@ function confirmedReviewedIds(params) {
       .map(id => id.trim())
       .filter(id => /^\d+$/.test(id))
   )
-}
-
-function isReviewedSubmission(row, confirmedIds = new Set()) {
-  return Boolean(confirmedIds.has(String(row?.id)) || String(row?.feedback || '').trim() || row?.feedback_at)
 }
 
 function dateKey(date) {
@@ -39,6 +60,7 @@ function shortDateLabel(key) {
 
 export async function GET(request) {
   try {
+    noStore()
     const teacher = getTeacherFromRequest(request)
     if (!teacher) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
 
@@ -46,7 +68,7 @@ export async function GET(request) {
     await recoverStaleAiDrafts(supabase, { context: 'teacher-analytics' })
     const scope = await getTeacherScope(supabase, teacher.name)
     if (!scope.batchNames.length) {
-      return jsonNoStore({
+      return jsonNoStoreWithPayloadLog({
         success: true,
         totalSubmissions: 0,
         totalPending: 0,
@@ -54,17 +76,17 @@ export async function GET(request) {
         aiHealth: { ready: 0, failed: 0, processing: 0, pending: 0 },
         sevenDayTrend: [],
         batchDistribution: [],
-      })
+      }, { teacherName: teacher.name, emptyScope: true })
     }
 
     const rowsResult = await supabase
       .from('submissions')
-      .select('id,batch,submitted_at,feedback,feedback_at,ai_status')
+      .select('id,batch,submitted_at,feedback,feedback_at,ai_status,ai_feedback')
       .in('batch', scope.batchNames)
       .order('submitted_at', { ascending: false })
     if (rowsResult.error) throw new Error(rowsResult.error.message)
-    const rows = rowsResult.data || []
     const confirmedIds = confirmedReviewedIds(request.nextUrl.searchParams)
+    const rows = (rowsResult.data || []).map(row => decorateSubmissionReviewState(row, confirmedIds))
     const staleConfirmed = rows.filter(row => confirmedIds.has(String(row.id)) && !isReviewedSubmission(row))
     if (staleConfirmed.length) {
       console.warn('[teacher-analytics] confirmed published rows arrived stale from Supabase', {
@@ -76,13 +98,20 @@ export async function GET(request) {
     const total = rows.length
     const pending = rows.filter(row => !isReviewedSubmission(row, confirmedIds)).length
     const reviewed = rows.filter(row => isReviewedSubmission(row, confirmedIds)).length
+    const unreviewedRows = rows.filter(row => !isReviewedSubmission(row, confirmedIds))
 
     const aiHealth = {
-      ready: rows.filter(row => row.ai_status === 'ready').length,
-      failed: rows.filter(row => row.ai_status === 'failed').length,
-      processing: rows.filter(row => row.ai_status === 'processing').length,
-      pending: rows.filter(row => row.ai_status === 'pending').length,
+      ready: unreviewedRows.filter(row => row.ai_status === 'ready' || row.ai_feedback).length,
+      failed: unreviewedRows.filter(row => row.ai_status === 'failed').length,
+      processing: unreviewedRows.filter(row => row.ai_status === 'processing').length,
+      pending: unreviewedRows.filter(row => row.ai_status === 'pending').length,
     }
+    console.info('[teacher-analytics] review state summary', {
+      teacherName: scope.teacherName,
+      confirmedCount: confirmedIds.size,
+      summary: summarizeReviewRows(rows, confirmedIds),
+      aiHealth,
+    })
 
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -115,7 +144,7 @@ export async function GET(request) {
       .sort((a, b) => b.submissions - a.submissions)
       .slice(0, 8)
 
-    return jsonNoStore({
+    return jsonNoStoreWithPayloadLog({
       success: true,
       totalSubmissions: total,
       totalPending: pending,
@@ -123,7 +152,7 @@ export async function GET(request) {
       aiHealth,
       sevenDayTrend,
       batchDistribution,
-    })
+    }, { teacherName: scope.teacherName, rows: rows.length })
   } catch (err) {
     console.error('[teacher-analytics] failed', err?.message)
     return jsonNoStore({ error: 'Could not load analytics' }, { status: 500 })

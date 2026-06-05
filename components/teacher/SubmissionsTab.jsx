@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getPoints, BROWSER_RENDERABLE, formatDate } from "@/lib/utils"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
 import { REVIEW_ACTIVITY_TTL_MS, serializeReviewActivity } from "@/lib/review-activity"
+import { decorateSubmissionReviewState, deriveReviewStatus, describeConfirmedIds, isReviewedSubmission, REVIEW_STATUS } from "@/lib/review-state"
 import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
 import AiStatusBadge from "@/components/ui/AiStatusBadge"
@@ -86,17 +87,7 @@ function isAiGeneratingUi(status, generatingIds, id) {
 }
 
 function isMissingAiFeedback(row) {
-  return row && !row.feedback && !row.ai_feedback && row.ai_status !== "processing"
-}
-
-function isReviewedSubmission(row) {
-  return Boolean(
-    row?.feedback ||
-    row?.feedback_at ||
-    row?.reviewed ||
-    row?.reviewed_at ||
-    ["reviewed", "finalized", "completed"].includes(String(row?.status || row?.review_status || "").toLowerCase())
-  )
+  return row && !isReviewedSubmission(row) && !row.ai_feedback && row.ai_status !== "processing"
 }
 
 function isBulkJobActive(job) {
@@ -111,15 +102,16 @@ function isEditableTarget(target) {
 }
 
 function resolveSubmissionReviewState(row) {
-  if (isReviewedSubmission(row)) {
+  const status = deriveReviewStatus(row)
+  if (status === REVIEW_STATUS.PUBLISHED || status === REVIEW_STATUS.REVIEWED) {
     return { label: "REVIEWED", tone: "reviewed" }
   }
 
-  if (row?.ai_feedback || row?.ai_status === "ready" || row?.ai_status === "completed") {
+  if (status === REVIEW_STATUS.AI_READY) {
     return { label: "AI READY", tone: "ready" }
   }
 
-  if (row?.ai_status === "failed") {
+  if (status === REVIEW_STATUS.FAILED) {
     return { label: "AI FAILED", tone: "failed" }
   }
 
@@ -143,7 +135,7 @@ function ReviewStatusPill({ state }) {
 }
 
 function aiProviderDiagnostics(row) {
-  return row?.ai_evaluation?.diagnostics?.ai_provider || null
+  return row?.ai_provider_diagnostics || row?.ai_evaluation?.diagnostics?.ai_provider || null
 }
 
 function aiStatusView(row, generatingIds = []) {
@@ -276,6 +268,54 @@ function normalizeName(value) {
   return String(value || "").trim().toLowerCase()
 }
 
+function logConfirmedIdsShape(label, value, extra = {}) {
+  console.info("[teacher-review-state] confirmedIds shape", {
+    label,
+    ...describeConfirmedIds(value),
+    ...extra,
+  })
+}
+
+function ensureConfirmedPublishedMap(ref) {
+  if (ref.current instanceof Map) return ref.current
+
+  const normalized = new Map()
+  const value = ref.current
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const id = typeof item === "object" && item !== null ? item.id : item
+      if (id != null) normalized.set(String(id), item)
+    }
+  } else if (value && typeof value === "object") {
+    for (const [id, item] of Object.entries(value)) {
+      normalized.set(String(id), item)
+    }
+  }
+
+  console.warn("[teacher-review-state] normalized confirmedPublishedRef", {
+    before: describeConfirmedIds(value),
+    afterSize: normalized.size,
+  })
+  ref.current = normalized
+  return normalized
+}
+
+function mergeRowsWithLoadedDetails(rows, previousRows) {
+  const previousById = new Map(previousRows.map(row => [String(row.id), row]))
+  const mergedRows = rows.map(row => {
+    const previous = previousById.get(String(row.id))
+    if (!previous?.detailsLoaded) return row
+    return { ...previous, ...row, detailsLoaded: true }
+  })
+  console.info("[teacher-review-state] polling merge output", {
+    incomingRows: rows.length,
+    previousRows: previousRows.length,
+    preservedDetails: mergedRows.filter(row => row.detailsLoaded).length,
+    outputRows: mergedRows.length,
+  })
+  return mergedRows
+}
+
 export default function SubmissionsTab({ teacherName, teacherToken }) {
   const [data, setData] = useState([])
   const [batches, setBatches] = useState([])
@@ -308,6 +348,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   const [bulkStarting, setBulkStarting] = useState(false)
   const [bulkJob, setBulkJob] = useState(null)
   const [activeSubmissionId, setActiveSubmissionId] = useState(null)
+  const [detailLoadingIds, setDetailLoadingIds] = useState([])
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState({ page: 1, pageSize: 50, total: 0, totalPages: 1 })
   const [reviewActivity, setReviewActivity] = useState(null)
@@ -338,7 +379,16 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         batch: batchFilter,
         search,
       })
-      const confirmedReviewedIds = Array.from(confirmedPublishedRef.current.keys())
+      const confirmedPublished = ensureConfirmedPublishedMap(confirmedPublishedRef)
+      const confirmedReviewedIds = Array.from(confirmedPublished.keys())
+      logConfirmedIdsShape("hydration ref map", confirmedPublished, {
+        statusFilter,
+        aiStatusFilter,
+        page,
+      })
+      logConfirmedIdsShape("hydration serialized ids", confirmedReviewedIds, {
+        idsPreview: confirmedReviewedIds.slice(0, 5),
+      })
       if (confirmedReviewedIds.length) params.set("confirmedReviewedIds", confirmedReviewedIds.join(","))
       const [res, analyticsRes] = await Promise.all([
         fetch(`/api/teacher-data?${params}`, { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal }),
@@ -364,15 +414,25 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
 
       const rows = (scoped.submissions || [])
         .map(row => {
-          const confirmed = confirmedPublishedRef.current.get(String(row.id))
-          const withConfirmedReview = confirmed && !isReviewedSubmission(row) ? { ...row, ...confirmed } : row
+          const normalizedRow = decorateSubmissionReviewState(row)
+          const confirmed = confirmedPublished.get(String(row.id))
+          const withConfirmedReview = confirmed && !isReviewedSubmission(normalizedRow) ? { ...normalizedRow, ...decorateSubmissionReviewState(confirmed) } : normalizedRow
           const confirmedDraft = confirmedAiDraftsRef.current.get(String(row.id))
           if (isReviewedSubmission(withConfirmedReview)) confirmedAiDraftsRef.current.delete(String(row.id))
           if (withConfirmedReview?.ai_feedback) confirmedAiDraftsRef.current.delete(String(row.id))
           return mergeConfirmedAiDraft(withConfirmedReview, confirmedDraft)
         })
-        .filter(row => !(statusFilter === "Pending Feedback" && confirmedPublishedRef.current.has(String(row.id))))
-      setData(rows)
+        .filter(row => !(statusFilter === "Pending Feedback" && confirmedPublished.has(String(row.id))))
+      console.info("[teacher-review-state] hydration", {
+        receivedRows: scoped.submissions?.length || 0,
+        total: rows.length,
+        reviewed: rows.filter(isReviewedSubmission).length,
+        pending: rows.filter(row => !isReviewedSubmission(row)).length,
+        confirmed: confirmedReviewedIds.length,
+        statusFilter,
+        aiStatusFilter,
+      })
+      setData(prev => mergeRowsWithLoadedDetails(rows, prev))
       setBatches(scoped.batches || [])
       const nextPagination = scoped.pagination || { page: 1, pageSize: 50, total: rows.length, totalPages: 1 }
       setPagination(nextPagination)
@@ -420,6 +480,36 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     () => load({ silent: true }),
     { enabled: Boolean(teacherToken), activeMs: REVIEW_REFRESH_MS }
   )
+
+  const loadSubmissionDetail = useCallback(async (submissionId) => {
+    if (!submissionId || detailLoadingIds.includes(String(submissionId))) return
+    const row = data.find(item => String(item.id) === String(submissionId))
+    if (row?.detailsLoaded) return
+
+    setDetailLoadingIds(prev => prev.includes(String(submissionId)) ? prev : [...prev, String(submissionId)])
+    try {
+      const params = new URLSearchParams({ mode: "detail", submissionId: String(submissionId) })
+      const res = await fetch(`/api/teacher-data?${params}`, {
+        headers: authHeaders(teacherToken),
+        cache: "no-store",
+      })
+      const detail = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(detail.error || "Could not load submission details.")
+      if (!detail.submission?.id) throw new Error("Submission details were empty.")
+      setData(prev => prev.map(item => String(item.id) === String(submissionId)
+        ? decorateSubmissionReviewState({ ...item, ...detail.submission, detailsLoaded: true })
+        : item
+      ))
+    } catch (err) {
+      showError(err.message || "Could not load submission details.")
+    } finally {
+      setDetailLoadingIds(prev => prev.filter(id => id !== String(submissionId)))
+    }
+  }, [data, detailLoadingIds, teacherToken])
+
+  useEffect(() => {
+    if (activeSubmissionId !== null) loadSubmissionDetail(activeSubmissionId)
+  }, [activeSubmissionId, loadSubmissionDetail])
 
   useEffect(() => {
     const searchTimer = setTimeout(() => {
@@ -613,11 +703,15 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       if (String(published.id) !== String(r.id)) {
         throw new Error("Feedback was saved to an unexpected submission. Please refresh and check the queue.")
       }
-      confirmedPublishedRef.current.set(String(r.id), published)
+      const normalizedPublished = decorateSubmissionReviewState(published)
+      if (!isReviewedSubmission(normalizedPublished)) {
+        throw new Error("Published feedback did not return a reviewed state. Please refresh and try again.")
+      }
+      ensureConfirmedPublishedMap(confirmedPublishedRef).set(String(r.id), normalizedPublished)
       confirmedAiDraftsRef.current.delete(String(r.id))
       const nextPendingId = nextPendingIdAfterApproval(r.id)
       setData(prev => {
-        const nextRows = prev.map(row => String(row.id) === String(r.id) ? { ...row, ...published } : row)
+        const nextRows = prev.map(row => String(row.id) === String(r.id) ? decorateSubmissionReviewState({ ...row, ...normalizedPublished }) : row)
         return statusFilter === "Pending Feedback"
           ? nextRows.filter(row => String(row.id) !== String(r.id) && !isReviewedSubmission(row))
           : nextRows
@@ -790,15 +884,15 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         event.preventDefault()
         navigatePending(-1)
       }
-      if (key === "a" && activeSubmission?.ai_feedback && !activeSubmission.feedback && feedbackSavingId !== activeSubmission.id) {
+      if (key === "a" && activeSubmission?.ai_feedback && !isReviewedSubmission(activeSubmission) && feedbackSavingId !== activeSubmission.id) {
         event.preventDefault()
         saveFeedback(activeSubmission, activeSubmission.ai_feedback)
       }
-      if (key === "r" && activeSubmission && !activeSubmission.feedback && !isAiGeneratingUi(activeSubmission.ai_status, aiGeneratingIds, activeSubmission.id)) {
+      if (key === "r" && activeSubmission && !isReviewedSubmission(activeSubmission) && !isAiGeneratingUi(activeSubmission.ai_status, aiGeneratingIds, activeSubmission.id)) {
         event.preventDefault()
         generateAiDraft(activeSubmission)
       }
-      if (key === "e" && activeSubmission && !activeSubmission.feedback) {
+      if (key === "e" && activeSubmission && !isReviewedSubmission(activeSubmission)) {
         event.preventDefault()
         feedbackEditorRefs.current[activeSubmission.id]?.focus()
       }
@@ -927,6 +1021,12 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                 </div>
               </div>
 
+              {!r.detailsLoaded && String(activeSubmissionId) === String(r.id) ? (
+                <div className="flex justify-center py-10">
+                  <Spinner size="lg" />
+                </div>
+              ) : (
+              <>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm mb-3">
                 <span><b>Student:</b> {r.student_name}</span>
                 <span><b>Batch:</b> {r.batch || "N/A"}</span>
@@ -957,7 +1057,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                         status={r.ai_feedback ? "ready" : r.ai_status || "ready"}
                         error={publicAiError(r.ai_error)}
                         queuedAt={r.ai_feedback_at}
-                        diagnostics={r.ai_evaluation?.diagnostics?.ai_provider}
+                        diagnostics={aiProviderDiagnostics(r)}
                       />
                     </div>
                     <div className="flex gap-2 flex-wrap">
@@ -1057,6 +1157,8 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                   )}
                 </div>
               </div>
+              </>
+              )}
               </Expander>
             </div>
           )

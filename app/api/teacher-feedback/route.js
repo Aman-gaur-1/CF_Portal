@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server'
+import { unstable_noStore as noStore } from 'next/cache'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { assertSubmissionInTeacherScope } from '@/lib/teacher-scope'
 import { sanitizeStudentText } from '@/lib/ai/sanitize'
 import { appendActivity } from '@/lib/activity-log'
+import { AI_STATUS } from '@/lib/ai/constants'
+import { decorateSubmissionReviewState, deriveReviewStatus } from '@/lib/review-state'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,11 +35,16 @@ function logPublishDiagnostic(level, message, details) {
     verifiedPersisted: details.verifiedPersisted,
     supabaseCode: details.supabaseCode,
     supabaseMessage: details.supabaseMessage,
+    reviewStatusBefore: details.reviewStatusBefore,
+    reviewStatusAfter: details.reviewStatusAfter,
+    aiStatusBefore: details.aiStatusBefore,
+    aiStatusAfter: details.aiStatusAfter,
   }
   console[level](`[teacher-feedback] ${message}`, safeDetails)
 }
 
 export async function PATCH(request) {
+  noStore()
   const diagnosticId = createDiagnosticId()
   try {
     const teacher = getTeacherFromRequest(request)
@@ -53,16 +61,23 @@ export async function PATCH(request) {
     }
 
     const supabase = getSupabaseAdmin()
-    const { submission } = await assertSubmissionInTeacherScope(supabase, teacher.name, submissionId)
+    const { scoped, submission } = await assertSubmissionInTeacherScope(supabase, teacher.name, submissionId)
+    const trainerName = scoped.teacherName || teacher.name
     const wasPending = !submission.feedback && !submission.feedback_at
+    const reviewStatusBefore = deriveReviewStatus(submission)
+    const aiStatusBefore = submission.ai_status || null
 
     const feedbackAt = new Date().toISOString()
     const update = {
       feedback,
-      feedback_by: teacher.name,
+      feedback_by: trainerName,
       feedback_at: feedbackAt,
       review_active_by: null,
       review_active_at: null,
+    }
+    if (submission.ai_feedback) {
+      update.ai_status = AI_STATUS.READY
+      update.ai_error = null
     }
     if (body?.submission_type) update.submission_type = String(body.submission_type)
     if (body?.phase) update.phase = String(body.phase)
@@ -71,7 +86,7 @@ export async function PATCH(request) {
       .from('submissions')
       .update(update)
       .eq('id', submissionId)
-      .select('id, feedback, feedback_at, feedback_by, submission_type, phase')
+      .select('*')
       .maybeSingle()
     if (error) {
       logPublishDiagnostic('error', 'supabase update failed', {
@@ -80,6 +95,8 @@ export async function PATCH(request) {
         teacherName: teacher.name,
         feedbackLength: feedback.length,
         wasPending,
+        reviewStatusBefore,
+        aiStatusBefore,
         supabaseCode: error.code,
         supabaseMessage: error.message,
       })
@@ -89,7 +106,7 @@ export async function PATCH(request) {
     if (!updated) {
       const { data: current, error: verifyError } = await supabase
         .from('submissions')
-        .select('id, feedback, feedback_at, feedback_by')
+        .select('*')
         .eq('id', submissionId)
         .maybeSingle()
       if (verifyError) throw new Error(verifyError.message)
@@ -102,13 +119,17 @@ export async function PATCH(request) {
         wasPending,
         updateReturnedRow: false,
         verifiedPersisted: Boolean(current?.feedback === feedback && current?.feedback_at),
+        reviewStatusBefore,
+        reviewStatusAfter: current ? deriveReviewStatus(current) : null,
+        aiStatusBefore,
+        aiStatusAfter: current?.ai_status || null,
       })
       return jsonNoStore({ error: 'Feedback was not saved. Please refresh and try again.', diagnosticId }, { status: 409 })
     }
 
     const { data: verified, error: verifyError } = await supabase
       .from('submissions')
-      .select('id, feedback, feedback_at, feedback_by, submission_type, phase')
+      .select('*')
       .eq('id', submissionId)
       .maybeSingle()
     if (verifyError) throw new Error(verifyError.message)
@@ -117,8 +138,11 @@ export async function PATCH(request) {
       verified?.id &&
       verified.feedback === feedback &&
       verified.feedback_at &&
-      verified.feedback_by === teacher.name
+      verified.feedback_by === trainerName
     )
+    const decoratedSubmission = decorateSubmissionReviewState(verified)
+    const reviewStatusAfter = decoratedSubmission?.review_status || null
+    const aiStatusAfter = verified?.ai_status || null
 
     if (!persisted) {
       logPublishDiagnostic('error', 'post-update persistence verification failed', {
@@ -129,6 +153,10 @@ export async function PATCH(request) {
         wasPending,
         updateReturnedRow: true,
         verifiedPersisted: false,
+        reviewStatusBefore,
+        reviewStatusAfter,
+        aiStatusBefore,
+        aiStatusAfter,
       })
       return jsonNoStore({ error: 'Feedback was not confirmed saved. Please refresh and try again.', diagnosticId }, { status: 409 })
     }
@@ -164,20 +192,17 @@ export async function PATCH(request) {
       wasPending,
       updateReturnedRow: true,
       verifiedPersisted: true,
+      reviewStatusBefore,
+      reviewStatusAfter,
+      aiStatusBefore,
+      aiStatusAfter,
     })
 
     return jsonNoStore({
       success: true,
       persisted: true,
       diagnosticId,
-      submission: {
-        id: verified.id,
-        feedback: verified.feedback,
-        feedback_at: verified.feedback_at,
-        feedback_by: verified.feedback_by,
-        submission_type: verified.submission_type,
-        phase: verified.phase,
-      },
+      submission: decoratedSubmission,
     })
   } catch (err) {
     const status = err?.status || 500
