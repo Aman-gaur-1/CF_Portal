@@ -132,6 +132,12 @@ function normalizeAiDraftState(row) {
     : row
 }
 
+function mergeConfirmedAiDraft(row, confirmedDraft) {
+  if (!confirmedDraft || isReviewedSubmission(row)) return normalizeAiDraftState(row)
+  if (row?.ai_feedback) return normalizeAiDraftState(row)
+  return normalizeAiDraftState({ ...row, ...confirmedDraft })
+}
+
 function ReviewStatusPill({ state }) {
   return <span className={`review-status-pill review-status-${state.tone}`}>{state.label}</span>
 }
@@ -312,6 +318,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   const reviewInactivityTimerRef = useRef(null)
   const reviewSessionActiveRef = useRef(false)
   const confirmedPublishedRef = useRef(new Map())
+  const confirmedAiDraftsRef = useRef(new Map())
   const submissionRefs = useRef({})
   const feedbackEditorRefs = useRef({})
   const { toasts, success, error: showError } = useToast()
@@ -358,7 +365,11 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       const rows = (scoped.submissions || [])
         .map(row => {
           const confirmed = confirmedPublishedRef.current.get(String(row.id))
-          return normalizeAiDraftState(confirmed && !isReviewedSubmission(row) ? { ...row, ...confirmed } : row)
+          const withConfirmedReview = confirmed && !isReviewedSubmission(row) ? { ...row, ...confirmed } : row
+          const confirmedDraft = confirmedAiDraftsRef.current.get(String(row.id))
+          if (isReviewedSubmission(withConfirmedReview)) confirmedAiDraftsRef.current.delete(String(row.id))
+          if (withConfirmedReview?.ai_feedback) confirmedAiDraftsRef.current.delete(String(row.id))
+          return mergeConfirmedAiDraft(withConfirmedReview, confirmedDraft)
         })
         .filter(row => !(statusFilter === "Pending Feedback" && confirmedPublishedRef.current.has(String(row.id))))
       setData(rows)
@@ -603,6 +614,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         throw new Error("Feedback was saved to an unexpected submission. Please refresh and check the queue.")
       }
       confirmedPublishedRef.current.set(String(r.id), published)
+      confirmedAiDraftsRef.current.delete(String(r.id))
       const nextPendingId = nextPendingIdAfterApproval(r.id)
       setData(prev => {
         const nextRows = prev.map(row => String(row.id) === String(r.id) ? { ...row, ...published } : row)
@@ -647,8 +659,15 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       if (data.status !== "ready" || !data.ai_feedback?.trim()) {
         throw new Error(data.error || "AI draft was not confirmed ready. Please retry.")
       }
+      const confirmedDraft = {
+        ai_status: "ready",
+        ai_error: null,
+        ai_feedback: data.ai_feedback,
+        ai_feedback_at: new Date().toISOString(),
+      }
+      confirmedAiDraftsRef.current.set(submissionId, confirmedDraft)
       setData(prev => prev.map(row => String(row.id) === submissionId
-        ? { ...row, ai_status: "ready", ai_error: null, ai_feedback: data.ai_feedback, ai_feedback_at: new Date().toISOString() }
+        ? { ...row, ...confirmedDraft }
         : row
       ))
       await load({ silent: true })
