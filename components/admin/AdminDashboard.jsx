@@ -20,7 +20,7 @@ const EMPTY_AI_SETTING = {
   id: null,
   provider: "qwen",
   provider_label: "Qwen",
-  model: "qwen/qwen3-14b",
+  model: "nvidia/llama-3.1-nemotron-nano-8b-v1",
   base_url: "https://integrate.api.nvidia.com/v1",
   infrastructure: "NVIDIA",
   api_key: "",
@@ -668,7 +668,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           </div>
           <div>
             <label className="label">Model</label>
-            <input className="input" value={setting.model || ""} onChange={e => editProviderSlot(slot, "model", e.target.value)} placeholder={slot === "primary" ? "qwen/qwen3-14b" : "openrouter model id"} />
+            <input className="input" value={setting.model || ""} onChange={e => editProviderSlot(slot, "model", e.target.value)} placeholder={slot === "primary" ? "nvidia/llama-3.1-nemotron-nano-8b-v1" : "openrouter model id"} />
           </div>
         </div>
 
