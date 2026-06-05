@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { ingestGitBookPythonCurriculum } from '@/lib/ai/ingestion'
+import { DEFAULT_GITBOOK_DATA_ANALYTICS_INDEX_URL } from '@/lib/ai/ingestion/constants'
 
 /**
  * Server-only GitBook curriculum ingestion (no frontend dependency).
@@ -32,7 +33,8 @@ export async function POST(req) {
 
     const supabase = getSupabaseAdmin()
     const report = await ingestGitBookPythonCurriculum(supabase, {
-      indexUrl: body.indexUrl || process.env.GITBOOK_PYTHON_INDEX_URL,
+      indexUrl: body.indexUrl,
+      indexUrls: resolveIndexUrls(body),
       phase: body.phase,
       pruneOrphans: body.pruneOrphans !== false,
     })
@@ -47,6 +49,19 @@ export async function POST(req) {
 export async function GET() {
   return NextResponse.json({
     message: 'POST to run GitBook ingestion',
-    defaultIndex: process.env.GITBOOK_PYTHON_INDEX_URL || 'see lib/ai/ingestion/constants.js',
+    defaultIndexes: resolveIndexUrls({}) || 'see lib/ai/ingestion/constants.js',
   })
+}
+
+function resolveIndexUrls(body) {
+  if (body.indexUrls) return body.indexUrls
+  if (process.env.GITBOOK_INDEX_URLS) return process.env.GITBOOK_INDEX_URLS
+  if (body.indexUrl) return undefined
+  if (process.env.GITBOOK_PYTHON_INDEX_URL) {
+    return [
+      process.env.GITBOOK_PYTHON_INDEX_URL,
+      process.env.GITBOOK_DATA_ANALYTICS_INDEX_URL || DEFAULT_GITBOOK_DATA_ANALYTICS_INDEX_URL,
+    ]
+  }
+  return undefined
 }
