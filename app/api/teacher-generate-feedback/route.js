@@ -44,6 +44,7 @@ export async function POST(request) {
       status: result.status,
       draft: result.draft,
       ai_feedback: result.ai_feedback,
+      ai_score: normalizeAiScore(result.evaluation?.score),
       message: 'AI draft ready.',
     })
   } catch (err) {
@@ -51,4 +52,9 @@ export async function POST(request) {
     console.error('[teacher-generate-feedback] failed', err?.message)
     return jsonNoStore({ error: status === 403 ? err.message : 'AI generation failed' }, { status })
   }
+}
+
+function normalizeAiScore(score) {
+  const value = Number(score)
+  return Number.isFinite(value) ? value : null
 }

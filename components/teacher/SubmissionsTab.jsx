@@ -138,6 +138,31 @@ function aiProviderDiagnostics(row) {
   return row?.ai_provider_diagnostics || row?.ai_evaluation?.diagnostics?.ai_provider || null
 }
 
+function aiScoreValue(row) {
+  const score = Number(row?.ai_score)
+  return Number.isFinite(score) ? score : null
+}
+
+function aiScoreTone(score) {
+  if (score >= 8) return { color: "var(--success)", background: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.35)" }
+  if (score >= 5) return { color: "var(--warning)", background: "rgba(245,166,35,0.12)", border: "rgba(245,166,35,0.35)" }
+  return { color: "var(--danger)", background: "rgba(239,68,68,0.1)", border: "rgba(239,68,68,0.3)" }
+}
+
+function AiScoreBadge({ score }) {
+  if (score === null) return null
+  const tone = aiScoreTone(score)
+  return (
+    <span
+      className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+      style={{ color: tone.color, background: tone.background, border: `1px solid ${tone.border}` }}
+      title="Internal AI score for trainer review"
+    >
+      {Number.isInteger(score) ? score : score.toFixed(1)}/10
+    </span>
+  )
+}
+
 function aiStatusView(row, generatingIds = []) {
   const status = String(row?.ai_status || "").toLowerCase()
   const diagnostics = aiProviderDiagnostics(row)
@@ -757,6 +782,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         ai_status: "ready",
         ai_error: null,
         ai_feedback: data.ai_feedback,
+        ai_score: typeof data.ai_score === "number" ? data.ai_score : null,
         ai_feedback_at: new Date().toISOString(),
       }
       confirmedAiDraftsRef.current.set(submissionId, confirmedDraft)
@@ -1053,6 +1079,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                   <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>AI Draft</p>
+                      <AiScoreBadge score={aiScoreValue(r)} />
                       <AiStatusBadge
                         status={r.ai_feedback ? "ready" : r.ai_status || "ready"}
                         error={publicAiError(r.ai_error)}

@@ -191,9 +191,15 @@ function toDetailSubmission(row) {
   return {
     ...decorated,
     detailsLoaded: true,
+    ai_score: normalizeAiScore(row.ai_evaluation?.score),
     ai_provider_diagnostics: row.ai_evaluation?.diagnostics?.ai_provider || null,
     ai_evaluation: undefined,
   }
+}
+
+function normalizeAiScore(score) {
+  const value = Number(score)
+  return Number.isFinite(value) ? value : null
 }
 
 function trimSubmissionForList(row) {
