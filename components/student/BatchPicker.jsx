@@ -28,32 +28,23 @@ export default function BatchPicker({ value, onChange, batches, label = "Batch" 
     const rect = triggerRef.current?.getBoundingClientRect()
     if (!rect) return
 
-    const gap = 10
+    const gap = 8
     const viewportPadding = 16
-    const width = Math.min(540, window.innerWidth - (viewportPadding * 2))
+    const isMobile = window.innerWidth < 640
     const maxHeight = Math.min(450, window.innerHeight - (viewportPadding * 2))
-    const sideTop = Math.max(viewportPadding, Math.min(rect.top, window.innerHeight - maxHeight - viewportPadding))
-    const rightSpace = window.innerWidth - rect.right - gap - viewportPadding
-    const leftSpace = rect.left - gap - viewportPadding
+    const openBelow = isMobile || window.innerHeight - rect.bottom >= Math.min(maxHeight, rect.top)
+    const availableHeight = openBelow
+      ? window.innerHeight - rect.bottom - gap - viewportPadding
+      : rect.top - gap - viewportPadding
 
-    if (rightSpace >= width) {
-      setPanelPosition({ left: rect.right + gap, top: sideTop, width, maxHeight, placement: "side" })
-    } else if (leftSpace >= width) {
-      setPanelPosition({ left: rect.left - gap - width, top: sideTop, width, maxHeight, placement: "side" })
-    } else {
-      const openBelow = window.innerHeight - rect.bottom >= rect.top
-      setPanelPosition({
-        left: Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - width - viewportPadding)),
-        top: openBelow
-          ? rect.bottom + 8
-          : Math.max(viewportPadding, rect.top - maxHeight - 8),
-        width,
-        maxHeight: openBelow
-          ? Math.min(maxHeight, window.innerHeight - rect.bottom - 8 - viewportPadding)
-          : Math.min(maxHeight, rect.top - 8 - viewportPadding),
-        placement: "below",
-      })
-    }
+    setPanelPosition({
+      top: openBelow ? `calc(100% + ${gap}px)` : "auto",
+      bottom: openBelow ? "auto" : `calc(100% + ${gap}px)`,
+      right: 0,
+      width: "100%",
+      maxHeight: Math.max(220, Math.min(maxHeight, availableHeight)),
+      placement: openBelow ? "below" : "above",
+    })
   }, [])
 
   useEffect(() => {
@@ -167,8 +158,9 @@ export default function BatchPicker({ value, onChange, batches, label = "Batch" 
         <div
           className={`batch-picker-panel is-${panelPosition.placement}`}
           style={{
-            left: panelPosition.left,
             top: panelPosition.top,
+            right: panelPosition.right,
+            bottom: panelPosition.bottom,
             width: panelPosition.width,
             maxHeight: panelPosition.maxHeight,
           }}

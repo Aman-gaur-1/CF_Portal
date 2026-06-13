@@ -307,7 +307,7 @@ textarea.input { resize: vertical; min-height: 100px; }
 .batch-picker-placeholder, .batch-picker-chevron { color: var(--text-muted); }
 .batch-picker-chevron { flex: 0 0 auto; font-size: 13px; transition: transform 0.18s ease; }
 .batch-picker-trigger.is-open .batch-picker-chevron { transform: rotate(180deg); }
-.batch-picker-panel { position: fixed; z-index: 999; display: flex; max-height: 450px; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); box-shadow: var(--shadow); backdrop-filter: blur(18px); animation: batch-picker-in 170ms ease; }
+.batch-picker-panel { position: absolute; z-index: 999; display: flex; max-height: 450px; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); box-shadow: var(--shadow); backdrop-filter: blur(18px); animation: batch-picker-in 170ms ease; }
 .batch-picker-search-wrap { padding: 9px; border-bottom: 1px solid var(--border); }
 .batch-picker-search { width: 100%; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); padding: 8px 10px; color: var(--text-primary); font-size: 0.82rem; outline: none; }
 .batch-picker-search:focus { border-color: var(--primary); box-shadow: 0 0 0 4px var(--focus-ring); }
