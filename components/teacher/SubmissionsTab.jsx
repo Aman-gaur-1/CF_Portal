@@ -53,8 +53,8 @@ function KpiCard({ id, label, value, active, onClick, tone = "var(--primary)" })
       style={{
         width: "100%",
         borderColor: active ? tone : "var(--stat-border)",
-        background: active ? "linear-gradient(135deg,rgba(124,58,237,0.18),rgba(6,182,212,0.08))" : "var(--stat-bg)",
-        boxShadow: active ? "0 18px 44px rgba(124,58,237,0.22)" : undefined,
+        background: active ? "linear-gradient(135deg,rgba(37,99,235,0.18),rgba(56,189,248,0.08))" : "var(--stat-bg)",
+        boxShadow: active ? "var(--shadow-focus)" : undefined,
       }}
     >
       <div className="stat-num">{value}</div>
@@ -145,7 +145,7 @@ function aiScoreValue(row) {
 
 function aiScoreTone(score) {
   if (score >= 8) return { color: "var(--success)", background: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.35)" }
-  if (score >= 5) return { color: "var(--warning)", background: "rgba(245,166,35,0.12)", border: "rgba(245,166,35,0.35)" }
+  if (score >= 5) return { color: "var(--warning)", background: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.35)" }
   return { color: "var(--danger)", background: "rgba(239,68,68,0.1)", border: "rgba(239,68,68,0.3)" }
 }
 
@@ -230,9 +230,9 @@ function AiGenerationNotice({ row, generatingIds }) {
   if (!view) return null
 
   const styles = {
-    queued: { background: "rgba(245,166,35,0.08)", borderColor: "rgba(245,166,35,0.26)" },
+    queued: { background: "rgba(59,130,246,0.08)", borderColor: "rgba(59,130,246,0.24)" },
     active: { background: "rgba(59,130,246,0.08)", borderColor: "rgba(59,130,246,0.24)" },
-    delayed: { background: "rgba(245,166,35,0.12)", borderColor: "rgba(245,166,35,0.34)" },
+    delayed: { background: "rgba(245,158,11,0.12)", borderColor: "rgba(245,158,11,0.34)" },
     ready: { background: "rgba(34,197,94,0.08)", borderColor: "rgba(34,197,94,0.24)" },
     failed: { background: "rgba(239,68,68,0.08)", borderColor: "rgba(239,68,68,0.24)" },
   }
@@ -1063,7 +1063,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
               {!hasFb && (
                 <AiGenerationNotice row={r} generatingIds={aiGeneratingIds} />
               )}
-              {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "rgba(245,166,35,0.06)", color: "var(--text-secondary)" }}>Student note: {r.comment}</p>}
+              {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "var(--surface)", color: "var(--text-secondary)" }}>Student note: {r.comment}</p>}
               {r.file_url && r.file_name && (
                 <div className="flex gap-2 mb-3 flex-wrap items-center">
                   <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{r.original_file_name || r.file_name}</span>
@@ -1126,7 +1126,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3 mb-4 p-3 rounded-xl" style={{ background: "rgba(245,166,35,0.05)", border: "1px solid var(--border)" }}>
+              <div className="grid grid-cols-2 gap-3 mb-4 p-3 rounded-xl" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                 <div>
                   <label className="label text-xs">Points</label>
                   <select className="select text-xs" value={newType} onChange={e => {

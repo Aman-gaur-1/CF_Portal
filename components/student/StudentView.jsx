@@ -250,7 +250,7 @@ export default function StudentView({ student, onLogout }) {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="rounded-xl p-4" style={{ border: "1px dashed var(--border)", background: "rgba(245,166,35,0.03)" }}>
+                <div className="rounded-xl p-4" style={{ border: "1px dashed var(--border)", background: "var(--surface)" }}>
                   <p className="text-xs font-semibold mb-2" style={{ color: "var(--text-muted)" }}>📁 Option 1: Upload File</p>
                   <label className="label">File (max {MAX_MB}MB)</label>
                   <input id="fileInput" type="file" accept=".py,.txt,.md,.json,.html,.ipynb,.js,.ts,.jsx,.tsx,.csv,.zip,.pdf"
@@ -260,7 +260,7 @@ export default function StudentView({ student, onLogout }) {
                   />
                   {file && <p className="text-xs mt-1" style={{ color: "var(--primary)" }}>✅ {file.name}</p>}
                 </div>
-                <div className="rounded-xl p-4" style={{ border: "1px dashed var(--border)", background: "rgba(245,166,35,0.03)" }}>
+                <div className="rounded-xl p-4" style={{ border: "1px dashed var(--border)", background: "var(--surface)" }}>
                   <p className="text-xs font-semibold mb-2" style={{ color: "var(--text-muted)" }}>💻 Option 2: Paste Code</p>
                   <label className="label">Paste Code Here</label>
                   <textarea className="input font-mono text-xs" rows={5} value={code} onChange={e => setCode(e.target.value)} placeholder="# Paste your Python code here..." />
@@ -318,7 +318,7 @@ export default function StudentView({ student, onLogout }) {
                         <span><b>Type:</b> {typeEmoji} {typeLabel} &nbsp;<span className="text-xs" style={{ color: "var(--primary)" }}>+{pts}pts</span></span>
                         <span><b>Phase:</b> {r.phase || "Python"}</span>
                       </div>
-                      {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "rgba(245,166,35,0.06)", color: "var(--text-secondary)" }}>💬 {r.comment}</p>}
+                      {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "var(--surface)", color: "var(--text-secondary)" }}>💬 {r.comment}</p>}
                       {r.file_url && r.file_name && (
                         <div className="flex gap-2 mb-3 flex-wrap">
                           <span className="text-sm" style={{ color: "var(--text-secondary)" }}>📎 {shownFileName}</span>

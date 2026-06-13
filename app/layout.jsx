@@ -1,4 +1,25 @@
 import './globals.css'
+import { DM_Mono, Inter, Sora } from 'next/font/google'
+
+const inter = Inter({
+  subsets: ['latin'],
+  variable: '--font-ui',
+  display: 'swap',
+})
+
+const dmMono = DM_Mono({
+  subsets: ['latin'],
+  variable: '--font-mono',
+  weight: ['400', '500'],
+  display: 'swap',
+})
+
+const sora = Sora({
+  subsets: ['latin'],
+  variable: '--font-display',
+  weight: ['500', '600', '700', '800'],
+  display: 'swap',
+})
 
 export const metadata = {
   title: 'ConsoleFlare Assignment Portal',
@@ -24,7 +45,7 @@ export default function RootLayout({ children }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body>{children}</body>
+      <body className={`${inter.variable} ${dmMono.variable} ${sora.variable}`}>{children}</body>
     </html>
   )
 }

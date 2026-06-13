@@ -39,7 +39,7 @@ export default function AiStatusBadge({ status, error, showReady = true, neutral
     <span
       className={`text-xs font-medium px-2 py-1 rounded-full inline-flex items-center gap-1 ${item.pulse ? 'animate-pulse' : ''}`}
       style={{
-        background: 'rgba(245,166,35,0.08)',
+        background: 'var(--surface)',
         color: item.color,
         border: '1px solid var(--border)',
       }}

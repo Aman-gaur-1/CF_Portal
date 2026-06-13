@@ -1,6 +1,6 @@
 "use client"
 import { useEffect, useRef, useState } from "react"
-import { Line, LineChart, Tooltip, XAxis, YAxis } from "recharts"
+import { CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts"
 
 function toNumber(value) {
   const parsed = Number(value)
@@ -10,7 +10,7 @@ function toNumber(value) {
 function ChartTooltip({ active, payload, label }) {
   if (!active || !Array.isArray(payload) || payload.length === 0) return null
   return (
-    <div className="rounded-xl px-3 py-2 text-xs" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)", boxShadow: "var(--shadow-sm)" }}>
+    <div className="rounded-xl px-3 py-2 text-xs" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-primary)", boxShadow: "var(--shadow-sm)", backdropFilter: "blur(16px)" }}>
       {label ? <p className="font-semibold mb-1">{label}</p> : null}
       {payload.map(item => (
         <p key={`${item.dataKey || item.name}-${item.value}`} style={{ color: item.color || "var(--text-secondary)" }}>
@@ -66,7 +66,7 @@ export default function TeacherAnalyticsCharts({ globalStats }) {
   const trendRows = normalizeTrend(globalStats?.sevenDayTrend)
 
   return (
-    <div className="card p-5 min-w-0 mb-5">
+    <div className="card chart-card p-5 min-w-0 mb-5">
       <div className="flex items-center justify-between mb-4 gap-3">
         <div>
           <p className="text-sm font-semibold">7-Day Submission Trend</p>
@@ -74,18 +74,19 @@ export default function TeacherAnalyticsCharts({ globalStats }) {
         </div>
       </div>
       {trendRows.some(row => row.submissions > 0) ? (
-        <MeasuredChart height={180}>
+        <MeasuredChart height={196}>
           {(width, height) => (
-            <LineChart width={width} height={height} data={trendRows} margin={{ top: 10, right: 12, left: -20, bottom: 0 }}>
+            <LineChart width={width} height={height} data={trendRows} margin={{ top: 12, right: 14, left: -14, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="var(--chart-grid)" strokeDasharray="3 5" />
               <XAxis dataKey="label" tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={false} tickLine={false} />
               <YAxis allowDecimals={false} tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
-              <Line type="monotone" dataKey="submissions" name="Submissions" stroke="var(--accent)" strokeWidth={3} dot={{ r: 3, fill: "var(--primary)" }} activeDot={{ r: 5 }} />
+              <Line type="monotone" dataKey="submissions" name="Submissions" stroke="var(--accent)" strokeWidth={3} dot={{ r: 3, fill: "var(--bg-card)", stroke: "var(--accent)", strokeWidth: 2 }} activeDot={{ r: 5, fill: "var(--accent)", stroke: "var(--bg-card)", strokeWidth: 2 }} />
             </LineChart>
           )}
         </MeasuredChart>
       ) : (
-        <div style={{ height: 180 }}>
+        <div style={{ height: 196 }}>
           <EmptyChart />
         </div>
       )}

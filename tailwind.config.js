@@ -5,11 +5,10 @@ module.exports = {
     extend: {
       fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
       colors: {
-        gold: { DEFAULT: '#f5a623', light: '#ffc966', dark: '#d4891a' },
-        purple: { DEFAULT: '#6c5ce7', light: '#a29bfe' },
-        teal: { DEFAULT: '#00cec9', dark: '#00b894' },
-        navy: { 900: '#0a0a1a', 800: '#0d0d24', 700: '#12122a', 600: '#1a1a3e' },
-        slate: { text: '#e8e8f0', muted: '#aaaacc', dim: '#666688' },
+        blue: { DEFAULT: '#3B82F6', light: '#60A5FA', dark: '#2563EB' },
+        cyan: { DEFAULT: '#38BDF8', light: '#7DD3FC', dark: '#0284C7' },
+        navy: { 950: '#070B14', 900: '#0B1120', 800: '#111827', 700: '#131C2E' },
+        slate: { text: '#F8FAFC', muted: '#94A3B8', dim: '#64748B' },
         danger: '#ff6b6b',
       },
       animation: { pulse: 'pulse 2s ease-in-out infinite' },

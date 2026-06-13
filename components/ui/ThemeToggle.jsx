@@ -2,9 +2,9 @@
 import { useState, useEffect } from "react"
 
 const THEMES = [
-  { id: "auto",  label: "⚙️ Auto" },
-  { id: "dark",  label: "🌙 Dark" },
-  { id: "light", label: "☀️ Light" },
+  { id: "auto", label: "Auto" },
+  { id: "dark", label: "Dark" },
+  { id: "light", label: "Light" },
 ]
 
 export default function ThemeToggle() {

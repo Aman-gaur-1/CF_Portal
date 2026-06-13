@@ -114,7 +114,7 @@ export default function BatchesTab({ teacherName, teacherToken }) {
             <Expander key={batch.id} title={`${batch.name} - ${batchStudents.length} students - ${batchSubmissions.length} submissions`}>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
                 {[[batchStudents.length, "Students"], [batchSubmissions.length, "Submissions"], [pending, "To Review"], [reviewed, "Published"]].map(([n, label]) => (
-                  <div key={label} className="text-center p-3 rounded-xl" style={{ background: "rgba(245,166,35,0.06)", border: "1px solid var(--border)" }}>
+                  <div key={label} className="text-center p-3 rounded-xl" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                     <p className="text-xl font-black gradient-text">{n}</p>
                     <p className="text-xs" style={{ color: "var(--text-muted)" }}>{label}</p>
                   </div>

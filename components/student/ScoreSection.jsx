@@ -39,7 +39,7 @@ export default function ScoreSection({ submissions }) {
             const s = phaseScores[p] || 0
             const b = getBadge(s)
             return (
-              <div key={p} className="flex items-center gap-3 rounded-xl p-3 mb-2" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(124,58,237,0.18)" }}>
+              <div key={p} className="flex items-center gap-3 rounded-xl p-3 mb-2" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                 <span className="text-2xl">{b.icon}</span>
                 <div className="flex-1">
                   <p className="text-xs uppercase tracking-widest" style={{ color: "var(--accent-light)" }}>{p}</p>
@@ -52,7 +52,7 @@ export default function ScoreSection({ submissions }) {
           })}
         </>
       )}
-      <hr className="my-5" style={{ border: "none", height: "1px", background: "linear-gradient(90deg,transparent,var(--border),var(--primary-dark),var(--border),transparent)" }} />
+      <hr className="my-5" style={{ border: "none", height: "1px", background: "linear-gradient(90deg,transparent,var(--border),var(--divider-color),var(--border),transparent)" }} />
     </div>
   )
 }
