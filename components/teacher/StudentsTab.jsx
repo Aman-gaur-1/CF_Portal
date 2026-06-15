@@ -19,9 +19,9 @@ export default function StudentsTab({ teacherToken }) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [batchFilter, setBatchFilter] = useState("All Batches")
-  const [resetStudentId, setResetStudentId] = useState(null)
-  const [newPassword, setNewPassword] = useState("")
-  const [savingPassword, setSavingPassword] = useState(false)
+  const [editingStudent, setEditingStudent] = useState(null)
+  const [profileForm, setProfileForm] = useState({ name: "", password: "" })
+  const [savingProfile, setSavingProfile] = useState(false)
   const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
 
@@ -80,37 +80,48 @@ export default function StudentsTab({ teacherToken }) {
     (!search.trim() || student.name?.toLowerCase().includes(search.trim().toLowerCase()))
   )
 
-  function openPasswordReset(studentId) {
-    setResetStudentId(studentId)
-    setNewPassword("")
+  function openProfileEditor(student) {
+    setEditingStudent(student)
+    setProfileForm({ name: student.name || "", password: "" })
   }
 
-  function closePasswordReset() {
-    setResetStudentId(null)
-    setNewPassword("")
+  function closeProfileEditor() {
+    setEditingStudent(null)
+    setProfileForm({ name: "", password: "" })
   }
 
-  async function changeStudentPassword(studentId) {
-    if (newPassword.trim().length < 4) {
+  async function saveStudentProfile() {
+    if (!editingStudent?.id) return
+    const name = profileForm.name.trim().replace(/\s+/g, " ")
+    const password = profileForm.password.trim()
+    if (!name) {
+      showError("Student name is required.")
+      return
+    }
+    if (password && password.length < 4) {
       showError("Password must be at least 4 characters.")
       return
     }
 
-    setSavingPassword(true)
+    setSavingProfile(true)
     try {
       const res = await fetch("/api/teacher-student-password", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
-        body: JSON.stringify({ studentId, password: newPassword }),
+        body: JSON.stringify({ studentId: editingStudent.id, name, password }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Could not change student password.")
-      success("Student password changed.")
-      closePasswordReset()
+      if (!res.ok) throw new Error(data.error || "Could not update student profile.")
+      if (data.student) {
+        setStudents(prev => prev.map(student => String(student.id) === String(data.student.id) ? { ...student, ...data.student } : student))
+      }
+      success(password ? "Student profile and password updated." : "Student profile updated.")
+      closeProfileEditor()
+      load({ silent: true })
     } catch (err) {
-      showError(err.message || "Could not change student password.")
+      showError(err.message || "Could not update student profile.")
     } finally {
-      setSavingPassword(false)
+      setSavingProfile(false)
     }
   }
 
@@ -141,31 +152,50 @@ export default function StudentsTab({ teacherToken }) {
               <div className="flex gap-2 flex-wrap">
                 <span className="badge-pending">{subMap[student.id] || 0} submissions</span>
                 <span className="badge-done">{reviewedMap[student.id] || 0} reviewed</span>
-                <button className="btn btn-secondary btn-sm" onClick={() => openPasswordReset(student.id)}>
-                  Change Password
+                <button className="btn btn-secondary btn-sm" onClick={() => openProfileEditor(student)}>
+                  Edit Profile
                 </button>
               </div>
             </div>
-            {resetStudentId === student.id && (
-              <div className="mt-4 flex gap-2 flex-wrap">
-                <input
-                  type="password"
-                  className="input flex-1 min-w-[220px]"
-                  value={newPassword}
-                  onChange={e => setNewPassword(e.target.value)}
-                  placeholder="Enter new password"
-                  autoFocus
-                />
-                <button className="btn btn-primary btn-sm" onClick={() => changeStudentPassword(student.id)} disabled={savingPassword}>
-                  {savingPassword ? <Spinner /> : "Save Password"}
-                </button>
-                <button className="btn btn-secondary btn-sm" onClick={closePasswordReset} disabled={savingPassword}>
-                  Cancel
-                </button>
-              </div>
-            )}
           </div>
         ))
+      )}
+      {editingStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.42)" }} role="dialog" aria-modal="true" aria-label="Edit student profile">
+          <div className="card w-full max-w-md p-5">
+            <div className="mb-4">
+              <p className="font-semibold">Edit Student Profile</p>
+              <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{editingStudent.batch}</p>
+            </div>
+            <div className="grid gap-3">
+              <div>
+                <label className="label">Student Name</label>
+                <input
+                  className="input"
+                  value={profileForm.name}
+                  onChange={e => setProfileForm(prev => ({ ...prev, name: e.target.value }))}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="label">New Password</label>
+                <input
+                  type="password"
+                  className="input"
+                  value={profileForm.password}
+                  onChange={e => setProfileForm(prev => ({ ...prev, password: e.target.value }))}
+                  placeholder="Leave blank to keep current password"
+                />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2 flex-wrap">
+              <button className="btn btn-secondary btn-sm" onClick={closeProfileEditor} disabled={savingProfile}>Cancel</button>
+              <button className="btn btn-primary btn-sm" onClick={saveStudentProfile} disabled={savingProfile}>
+                {savingProfile ? <Spinner size="sm" /> : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       <ToastContainer toasts={toasts} />
     </div>

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { unstable_noStore as noStore } from 'next/cache'
 import { getAdminFromRequest } from '@/lib/admin-auth'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 
@@ -33,8 +34,34 @@ function parseTimezoneOffset(value) {
   return Number.isFinite(offset) && Math.abs(offset) <= 14 * 60 ? offset : 0
 }
 
+function reviewedFilter(query) {
+  return query.or('feedback.not.is.null,feedback_at.not.is.null')
+}
+
+async function countRows(query) {
+  const { count, error } = await query
+  if (error) throw error
+  return count || 0
+}
+
+async function mapLimit(items, limit, mapper) {
+  const results = new Array(items.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex++
+      results[index] = await mapper(items[index], index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
 export async function GET(request) {
   try {
+    noStore()
     const admin = getAdminFromRequest(request)
     if (!admin) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
 
@@ -47,19 +74,13 @@ export async function GET(request) {
     const [
       { data: trainers, error: trainerError },
       { data: batches, error: batchError },
-      { data: receivedSubmissions, error: receivedSubmissionError },
-      { data: reviewedSubmissions, error: reviewedSubmissionError },
     ] = await Promise.all([
       supabase.from('trainers').select('name').order('created_at'),
       supabase.from('batches').select('name, created_by').order('created_at'),
-      supabase.from('submissions').select('batch').gte('submitted_at', start),
-      supabase.from('submissions').select('batch').not('feedback', 'is', null).gte('feedback_at', start),
     ])
 
     if (trainerError) throw trainerError
     if (batchError) throw batchError
-    if (receivedSubmissionError) throw receivedSubmissionError
-    if (reviewedSubmissionError) throw reviewedSubmissionError
 
     const teachers = new Map()
     for (const name of [
@@ -76,24 +97,44 @@ export async function GET(request) {
       if (key) teacherByBatch.set(batch.name, key)
     }
 
-    for (const submission of receivedSubmissions || []) {
-      const teacher = teachers.get(teacherByBatch.get(submission.batch))
-      if (!teacher) continue
-      teacher.received += 1
-    }
+    const teacherRows = [...teachers.entries()].map(([key, teacher]) => ({
+      ...teacher,
+      batches: [...teacherByBatch.entries()]
+        .filter(([, teacherKey]) => teacherKey === key)
+        .map(([batch]) => batch),
+    }))
 
-    for (const submission of reviewedSubmissions || []) {
-      const teacher = teachers.get(teacherByBatch.get(submission.batch))
-      if (!teacher) continue
-      teacher.reviewed += 1
-    }
+    const progress = await mapLimit(teacherRows, 6, async (teacher) => {
+      if (!teacher.batches.length) {
+        return { ...teacher, pending: 0, progress: 0 }
+      }
 
-    const progress = [...teachers.values()].map(teacher => {
-      const pending = Math.max(teacher.received - teacher.reviewed, 0)
+      const [received, reviewed] = await Promise.all([
+        countRows(
+          supabase
+            .from('submissions')
+            .select('id', { count: 'exact', head: true })
+            .in('batch', teacher.batches)
+            .gte('submitted_at', start)
+        ),
+        countRows(
+          reviewedFilter(
+            supabase
+              .from('submissions')
+              .select('id', { count: 'exact', head: true })
+              .in('batch', teacher.batches)
+              .gte('feedback_at', start)
+          )
+        ),
+      ])
+
+      const pending = Math.max(received - reviewed, 0)
       return {
-        ...teacher,
+        name: teacher.name,
+        received,
+        reviewed,
         pending,
-        progress: teacher.received ? Math.min(Math.round((teacher.reviewed / teacher.received) * 100), 100) : 0,
+        progress: received ? Math.min(Math.round((reviewed / received) * 100), 100) : 0,
       }
     })
 

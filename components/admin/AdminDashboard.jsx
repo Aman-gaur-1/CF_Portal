@@ -52,6 +52,17 @@ const BACKUP_AI_SETTING = {
   priority: 2,
 }
 
+const EMPTY_ADMIN_METRICS = {
+  totalAssignments: 0,
+  totalReviewed: 0,
+  pendingReviews: 0,
+  reviewCompletionRate: 0,
+  aiReady: 0,
+  aiFailed: 0,
+  aiFinished: 0,
+  successRate: null,
+}
+
 function SectionTitle({ title, detail }) {
   return (
     <div className="section-divider">
@@ -124,9 +135,11 @@ function RowShell({ children }) {
 export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [tab, setTab] = useState("overview")
   const [students, setStudents] = useState([])
-  const [submissions, setSubmissions] = useState([])
   const [batches, setBatches] = useState([])
   const [trainers, setTrainers] = useState([])
+  const [metrics, setMetrics] = useState(EMPTY_ADMIN_METRICS)
+  const [batchStats, setBatchStats] = useState({})
+  const [studentSubmissionCounts, setStudentSubmissionCounts] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [aiRuntime, setAiRuntime] = useState(null)
@@ -154,28 +167,29 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   async function load({ silent = false } = {}) {
     if (!silent) setLoading(true)
 
-    const [studentRes, submissionRes, batchRes, trainerRes] = await Promise.all([
-      supabase.from("students").select("id, name, batch, created_at").order("created_at", { ascending: false }),
-      supabase.from("submissions").select("student_id, feedback, ai_status"),
-      supabase.from("batches").select("*").order("created_at", { ascending: false }),
-      supabase.from("trainers").select("*").order("created_at", { ascending: false }),
-    ])
+    try {
+      const res = await fetch("/api/admin-dashboard", {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        cache: "no-store",
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not load admin dashboard.")
 
-    if (studentRes.error) showError("Could not load students.")
-    if (submissionRes.error) showError("Could not load submissions.")
-    if (batchRes.error) showError("Could not load batches.")
-    if (trainerRes.error) showError("Could not load teachers.")
+      setStudents(data.students || [])
+      setBatches(data.batches || [])
+      setTrainers(data.trainers || [])
+      setMetrics({ ...EMPTY_ADMIN_METRICS, ...(data.metrics || {}) })
+      setBatchStats(data.batchStats || {})
+      setStudentSubmissionCounts(data.studentSubmissionCounts || {})
 
-    setStudents(studentRes.data || [])
-    setSubmissions(submissionRes.data || [])
-    setBatches(batchRes.data || [])
-    setTrainers(trainerRes.data || [])
-
-    const firstTrainer =
-      trainerRes.data?.[0]?.name ||
-      batchRes.data?.find(batch => batch.created_by)?.created_by ||
-      adminName
-    if (!batchTrainer && firstTrainer) setBatchTrainer(firstTrainer)
+      const firstTrainer =
+        data.trainers?.[0]?.name ||
+        data.batches?.find(batch => batch.created_by)?.created_by ||
+        adminName
+      if (!batchTrainer && firstTrainer) setBatchTrainer(firstTrainer)
+    } catch (err) {
+      showError(err.message || "Could not load admin dashboard.")
+    }
 
     setLoading(false)
     loadAiSettings()
@@ -210,31 +224,18 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
     ].filter(Boolean))]
   }, [adminName, trainers, batches])
 
-  const metrics = useMemo(() => {
-    const totalAssignments = submissions.length
-    const totalReviewed = submissions.filter(s => s.feedback).length
-    const pendingReviews = totalAssignments - totalReviewed
-    const reviewCompletionRate = totalAssignments ? Math.round((totalReviewed / totalAssignments) * 100) : 0
-    const aiReady = submissions.filter(s => s.ai_status === "ready").length
-    const aiFailed = submissions.filter(s => s.ai_status === "failed").length
-    const aiFinished = aiReady + aiFailed
-    const successRate = aiFinished ? Math.round((aiReady / aiFinished) * 100) : null
-    return { totalAssignments, totalReviewed, pendingReviews, reviewCompletionRate, aiReady, aiFailed, aiFinished, successRate }
-  }, [submissions])
-
   const batchRows = useMemo(() => {
     return batches.map(batch => {
       const batchStudents = students.filter(student => student.batch === batch.name)
-      const ids = new Set(batchStudents.map(student => student.id))
-      const batchSubmissions = submissions.filter(submission => ids.has(submission.student_id))
+      const stats = batchStats[batch.name] || {}
       return {
         ...batch,
         studentCount: batchStudents.length,
-        submissionCount: batchSubmissions.length,
-        pendingCount: batchSubmissions.filter(submission => !submission.feedback).length,
+        submissionCount: stats.submissionCount || 0,
+        pendingCount: stats.pendingCount || 0,
       }
     })
-  }, [batches, students, submissions])
+  }, [batchStats, batches, students])
 
   const filteredStudents = useMemo(() => {
     const search = studentSearch.trim().toLowerCase()
@@ -564,7 +565,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           {filteredStudents.length === 0 ? <EmptyState>No students found.</EmptyState> : (
             <div className="grid gap-2">
               {filteredStudents.slice(0, 100).map(student => {
-                const count = submissions.filter(submission => submission.student_id === student.id).length
+                const count = studentSubmissionCounts[String(student.id)] || 0
                 return (
                   <div key={student.id} className="admin-row">
                     <div className="min-w-0">

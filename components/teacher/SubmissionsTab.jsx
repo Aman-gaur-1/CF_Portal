@@ -369,6 +369,9 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   const [draftSavingId, setDraftSavingId] = useState(null)
   const [feedbackSavingId, setFeedbackSavingId] = useState(null)
   const [feedbackEdits, setFeedbackEdits] = useState({})
+  const [editingFeedbackId, setEditingFeedbackId] = useState(null)
+  const [deleteConfirmSubmission, setDeleteConfirmSubmission] = useState(null)
+  const [deletingSubmissionId, setDeletingSubmissionId] = useState(null)
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
   const [bulkStarting, setBulkStarting] = useState(false)
   const [bulkJob, setBulkJob] = useState(null)
@@ -706,6 +709,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   }, [activeSubmissionId])
 
   async function saveFeedback(r, textOverride) {
+    const wasReviewed = isReviewedSubmission(r)
     const rawType = submissionTypes[r.id] || r.submission_type || "assignment"
     const finalType = rawType === "custom" ? submissionCustomPoints[r.id] : rawType
     const phase = submissionPhases[r.id] || r.phase || "Python"
@@ -734,20 +738,53 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       }
       ensureConfirmedPublishedMap(confirmedPublishedRef).set(String(r.id), normalizedPublished)
       confirmedAiDraftsRef.current.delete(String(r.id))
-      const nextPendingId = nextPendingIdAfterApproval(r.id)
+      const nextPendingId = wasReviewed ? activeSubmissionId : nextPendingIdAfterApproval(r.id)
       setData(prev => {
         const nextRows = prev.map(row => String(row.id) === String(r.id) ? decorateSubmissionReviewState({ ...row, ...normalizedPublished }) : row)
-        return statusFilter === "Pending Feedback"
+        return !wasReviewed && statusFilter === "Pending Feedback"
           ? nextRows.filter(row => String(row.id) !== String(r.id) && !isReviewedSubmission(row))
           : nextRows
       })
+      setEditingFeedbackId(null)
       await load({ silent: true, requireAnalytics: true, throwOnError: true })
-      success(nextPendingId === null ? "Feedback published." : "Feedback published. Opening next pending review.")
+      success(wasReviewed ? "Feedback updated." : nextPendingId === null ? "Feedback published." : "Feedback published. Opening next pending review.")
       setActiveSubmissionId(nextPendingId)
     } catch (err) {
       showError(err.message || "Could not save feedback.")
     } finally {
       setFeedbackSavingId(null)
+    }
+  }
+
+  async function deleteSubmission(r) {
+    if (!r?.id) return
+    setDeletingSubmissionId(r.id)
+    try {
+      const res = await fetch("/api/teacher-submission", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
+        body: JSON.stringify({ submissionId: r.id }),
+      })
+      const result = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(result.error || "Could not delete submission.")
+
+      const id = String(r.id)
+      ensureConfirmedPublishedMap(confirmedPublishedRef).delete(id)
+      confirmedAiDraftsRef.current.delete(id)
+      setData(prev => prev.filter(row => String(row.id) !== id))
+      setFeedbackEdits(prev => {
+        const next = { ...prev }
+        delete next[r.id]
+        return next
+      })
+      if (String(activeSubmissionId) === id) setActiveSubmissionId(null)
+      setDeleteConfirmSubmission(null)
+      await load({ silent: true, requireAnalytics: true, throwOnError: true })
+      success("Submission deleted.")
+    } catch (err) {
+      showError(err.message || "Could not delete submission.")
+    } finally {
+      setDeletingSubmissionId(null)
     }
   }
 
@@ -1002,6 +1039,26 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         </div>
       )}
 
+      {deleteConfirmSubmission && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.42)" }} role="dialog" aria-modal="true" aria-label="Delete submission">
+          <div className="card p-5 w-full max-w-sm">
+            <p className="text-base font-semibold mb-2">Delete Submission</p>
+            <p className="text-sm mb-4" style={{ color: "var(--text-secondary)" }}>
+              This permanently removes {deleteConfirmSubmission.student_name || "this student's"} assignment and any linked uploaded file.
+            </p>
+            <div className="flex justify-end gap-2 flex-wrap">
+              <button className="btn btn-secondary btn-sm" disabled={deletingSubmissionId === deleteConfirmSubmission.id} onClick={() => setDeleteConfirmSubmission(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-danger btn-sm flex items-center gap-2" disabled={deletingSubmissionId === deleteConfirmSubmission.id} onClick={() => deleteSubmission(deleteConfirmSubmission)}>
+                {deletingSubmissionId === deleteConfirmSubmission.id ? <Spinner size="sm" /> : null}
+                Delete Submission
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-16"><Spinner size="lg" /></div>
       ) : filtered.length === 0 ? (
@@ -1044,6 +1101,9 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                 <div className="flex gap-2 flex-wrap">
                   <button className="btn btn-secondary btn-sm" type="button" onClick={() => navigatePending(-1)} disabled={previousPendingId === null}>{"← Previous"}</button>
                   <button className="btn btn-secondary btn-sm" type="button" onClick={() => navigatePending(1)} disabled={nextPendingId === null}>{"Next →"}</button>
+                  <button className="btn btn-secondary btn-sm" type="button" onClick={() => setDeleteConfirmSubmission(r)} disabled={deletingSubmissionId === r.id}>
+                    Delete
+                  </button>
                 </div>
               </div>
 
@@ -1163,10 +1223,42 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                     {hasFb ? "Published Feedback" : "Final Feedback"}
                   </p>
                   {hasFb ? (
+                    editingFeedbackId === r.id ? (
+                      <>
+                        <textarea
+                          ref={node => { feedbackEditorRefs.current[r.id] = node }}
+                          className="input text-sm mb-2"
+                          rows={5}
+                          value={feedbackEdits[r.id] ?? r.feedback ?? ""}
+                          onChange={e => setFeedbackEdits(prev => ({ ...prev, [r.id]: e.target.value }))}
+                          placeholder="Update final feedback for this assigned student..."
+                        />
+                        <div className="flex gap-2 flex-wrap">
+                          <button className="btn btn-primary btn-sm flex items-center justify-center gap-2" onClick={() => saveFeedback(r)} disabled={feedbackSavingId === r.id || !(feedbackEdits[r.id] ?? r.feedback ?? "").trim()}>
+                            {feedbackSavingId === r.id ? <Spinner size="sm" /> : "Save Feedback"}
+                          </button>
+                          <button className="btn btn-secondary btn-sm" onClick={() => {
+                            setEditingFeedbackId(null)
+                            setFeedbackEdits(prev => ({ ...prev, [r.id]: r.feedback || "" }))
+                          }} disabled={feedbackSavingId === r.id}>
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    ) : (
                     <div className="feedback-box">
-                      <p className="text-xs font-semibold mb-1" style={{ color: "var(--success)" }}>By {r.feedback_by || teacherName} {r.feedback_at ? "- " + formatDate(r.feedback_at) : ""}</p>
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <p className="text-xs font-semibold" style={{ color: "var(--success)" }}>By {r.feedback_by || teacherName} {r.feedback_at ? "- " + formatDate(r.feedback_at) : ""}</p>
+                        <button className="btn btn-secondary btn-xs" type="button" onClick={() => {
+                          setFeedbackEdits(prev => ({ ...prev, [r.id]: r.feedback || "" }))
+                          setEditingFeedbackId(r.id)
+                        }}>
+                          Edit Feedback
+                        </button>
+                      </div>
                       <p className="text-sm whitespace-pre-wrap">{r.feedback}</p>
                     </div>
+                    )
                   ) : (
                     <>
                       <textarea
