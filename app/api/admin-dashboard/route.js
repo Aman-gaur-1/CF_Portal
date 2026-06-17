@@ -6,7 +6,6 @@ import { getSupabaseAdmin } from '@/lib/supabase-server'
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 1000
-const COUNT_CONCURRENCY = 8
 const EMPTY_METRICS = {
   totalAssignments: 0,
   totalReviewed: 0,
@@ -28,10 +27,6 @@ function jsonNoStore(body, init) {
   })
 }
 
-function reviewedFilter(query) {
-  return query.or('feedback.not.is.null,feedback_at.not.is.null')
-}
-
 async function fetchAllRows(supabase, table, select, orderColumn) {
   const rows = []
   for (let from = 0; ; from += PAGE_SIZE) {
@@ -45,34 +40,21 @@ async function fetchAllRows(supabase, table, select, orderColumn) {
   return rows
 }
 
-async function countRows(query) {
-  const { count, error } = await query
-  if (error) throw error
-  return count || 0
+function isReviewedSubmission(row) {
+  return row?.feedback != null || row?.feedback_at != null
 }
 
-async function mapLimit(items, limit, mapper) {
-  const results = new Array(items.length)
-  let nextIndex = 0
+function loadMetricsFromSubmissionRows(submissions) {
+  const totalAssignments = submissions.length
+  let totalReviewed = 0
+  let aiReady = 0
+  let aiFailed = 0
 
-  async function worker() {
-    while (nextIndex < items.length) {
-      const index = nextIndex++
-      results[index] = await mapper(items[index], index)
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return results
-}
-
-async function loadMetrics(supabase) {
-  const [totalAssignments, totalReviewed, aiReady, aiFailed] = await Promise.all([
-    countRows(supabase.from('submissions').select('id', { count: 'exact', head: true })),
-    countRows(reviewedFilter(supabase.from('submissions').select('id', { count: 'exact', head: true }))),
-    countRows(supabase.from('submissions').select('id', { count: 'exact', head: true }).eq('ai_status', 'ready')),
-    countRows(supabase.from('submissions').select('id', { count: 'exact', head: true }).eq('ai_status', 'failed')),
-  ])
+  submissions.forEach((row) => {
+    if (isReviewedSubmission(row)) totalReviewed += 1
+    if (row.ai_status === 'ready') aiReady += 1
+    if (row.ai_status === 'failed') aiFailed += 1
+  })
 
   const pendingReviews = Math.max(totalAssignments - totalReviewed, 0)
   const aiFinished = aiReady + aiFailed
@@ -88,29 +70,47 @@ async function loadMetrics(supabase) {
   }
 }
 
-async function loadBatchStats(supabase, batches) {
-  const entries = await mapLimit(batches || [], COUNT_CONCURRENCY, async (batch) => {
+function loadBatchStatsFromSubmissionRows(batches, submissions) {
+  const stats = new Map()
+
+  ;(batches || []).forEach((batch) => {
     const name = String(batch?.name || '')
-    if (!name) return null
-    const [submissionCount, reviewedCount] = await Promise.all([
-      countRows(supabase.from('submissions').select('id', { count: 'exact', head: true }).eq('batch', name)),
-      countRows(reviewedFilter(supabase.from('submissions').select('id', { count: 'exact', head: true }).eq('batch', name))),
-    ])
-    return [name, { submissionCount, pendingCount: Math.max(submissionCount - reviewedCount, 0) }]
+    if (name) stats.set(name, { submissionCount: 0, reviewedCount: 0 })
   })
-  return Object.fromEntries(entries.filter(Boolean))
+
+  submissions.forEach((row) => {
+    const name = String(row?.batch || '')
+    if (!name || !stats.has(name)) return
+    const current = stats.get(name)
+    current.submissionCount += 1
+    if (isReviewedSubmission(row)) current.reviewedCount += 1
+  })
+
+  return Object.fromEntries(
+    [...stats.entries()].map(([name, value]) => [
+      name,
+      {
+        submissionCount: value.submissionCount,
+        pendingCount: Math.max(value.submissionCount - value.reviewedCount, 0),
+      },
+    ])
+  )
 }
 
-async function loadStudentSubmissionCounts(supabase, students) {
-  const entries = await mapLimit(students || [], COUNT_CONCURRENCY, async (student) => {
-    const id = student?.id
-    if (id == null) return null
-    const count = await countRows(
-      supabase.from('submissions').select('id', { count: 'exact', head: true }).eq('student_id', id)
-    )
-    return [String(id), count]
+function loadStudentSubmissionCountsFromSubmissionRows(students, submissions) {
+  const counts = new Map()
+
+  ;(students || []).forEach((student) => {
+    if (student?.id != null) counts.set(String(student.id), 0)
   })
-  return Object.fromEntries(entries.filter(Boolean))
+
+  submissions.forEach((row) => {
+    if (row?.student_id == null) return
+    const id = String(row.student_id)
+    if (counts.has(id)) counts.set(id, counts.get(id) + 1)
+  })
+
+  return Object.fromEntries(counts.entries())
 }
 
 export async function GET(request) {
@@ -120,17 +120,16 @@ export async function GET(request) {
     if (!admin) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
 
     const supabase = getSupabaseAdmin()
-    const [students, batches, trainers, metrics] = await Promise.all([
+    const [students, batches, trainers, submissions] = await Promise.all([
       fetchAllRows(supabase, 'students', 'id, name, batch, created_at', 'created_at'),
       fetchAllRows(supabase, 'batches', '*', 'created_at'),
       fetchAllRows(supabase, 'trainers', '*', 'created_at'),
-      loadMetrics(supabase),
+      fetchAllRows(supabase, 'submissions', 'student_id,batch,feedback,feedback_at,ai_status'),
     ])
 
-    const [batchStats, studentSubmissionCounts] = await Promise.all([
-      loadBatchStats(supabase, batches),
-      loadStudentSubmissionCounts(supabase, students),
-    ])
+    const metrics = loadMetricsFromSubmissionRows(submissions)
+    const batchStats = loadBatchStatsFromSubmissionRows(batches, submissions)
+    const studentSubmissionCounts = loadStudentSubmissionCountsFromSubmissionRows(students, submissions)
 
     return jsonNoStore({
       success: true,
