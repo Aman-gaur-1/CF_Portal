@@ -5,12 +5,13 @@ import { collectReviewsForProfiles } from '@/lib/moat/jobs/bulk-review-collectio
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-async function collectionOptions(request) {
+async function readOptions(request) {
   const { searchParams } = new URL(request.url)
   const body = await request.json().catch(() => ({}))
   return {
-    collectionMode: body.collection_mode || body.collectionMode || searchParams.get('collection_mode'),
-    reviewFilter: body.review_filter || body.reviewFilter || searchParams.get('review_filter'),
+    mode: body.mode || searchParams.get('mode') || 'all',
+    collectionMode: body.collection_mode || body.collectionMode || searchParams.get('collection_mode') || 'incremental',
+    reviewFilter: body.review_filter || body.reviewFilter || searchParams.get('review_filter') || 'all',
     competitorIds: body.competitor_ids || body.competitorIds || searchParams.get('competitor_ids'),
     sourceTypes: body.source_types || body.sourceTypes || searchParams.get('source_types'),
     startDate: body.start_date || body.startDate || searchParams.get('start_date'),
@@ -25,14 +26,14 @@ export async function POST(request) {
   if (!admin) return moatUnauthorized()
 
   try {
+    const options = await readOptions(request)
     const result = await collectReviewsForProfiles({
-      mode: 'all',
+      ...options,
       requestedBy: admin.name || 'admin',
-      ...(await collectionOptions(request)),
     })
     return moatJson(result)
   } catch (err) {
-    console.error('[moat-collect-all] failed', err?.message)
-    return moatJson({ error: safeMoatErrorMessage(err, 'Could not collect reviews') }, { status: 500 })
+    console.error('[moat-advanced-collect] failed', err?.message)
+    return moatJson({ error: safeMoatErrorMessage(err, 'Could not run advanced collection') }, { status: 500 })
   }
 }

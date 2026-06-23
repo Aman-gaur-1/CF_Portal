@@ -5,8 +5,18 @@ import { collectReviewsForProfiles } from '@/lib/moat/jobs/bulk-review-collectio
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-function collectionLimit(request) {
-  return new URL(request.url).searchParams.get('limit')
+async function collectionOptions(request) {
+  const { searchParams } = new URL(request.url)
+  const body = await request.json().catch(() => ({}))
+  return {
+    collectionMode: body.collection_mode || body.collectionMode || searchParams.get('collection_mode'),
+    reviewFilter: body.review_filter || body.reviewFilter || searchParams.get('review_filter'),
+    competitorIds: body.competitor_ids || body.competitorIds || searchParams.get('competitor_ids'),
+    sourceTypes: body.source_types || body.sourceTypes || searchParams.get('source_types'),
+    startDate: body.start_date || body.startDate || searchParams.get('start_date'),
+    endDate: body.end_date || body.endDate || searchParams.get('end_date'),
+    limit: body.limit || searchParams.get('limit'),
+  }
 }
 
 export async function POST(request) {
@@ -18,7 +28,7 @@ export async function POST(request) {
     const result = await collectReviewsForProfiles({
       mode: 'missing',
       requestedBy: admin.name || 'admin',
-      limit: collectionLimit(request),
+      ...(await collectionOptions(request)),
     })
     return moatJson(result)
   } catch (err) {
