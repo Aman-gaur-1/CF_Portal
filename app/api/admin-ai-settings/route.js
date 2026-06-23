@@ -4,8 +4,10 @@ import {
   listAiProviderSettings,
   deleteAiProviderSetting,
   getAiProviderHealth,
+  getAiGenerationMode,
   getAiProviderRuntimeState,
   setActiveAiProviderSetting,
+  setAiGenerationMode,
   upsertAiProviderSetting,
 } from '@/lib/ai/provider-settings'
 
@@ -18,9 +20,10 @@ export async function GET(request) {
 
   try {
     const settings = await listAiProviderSettings()
+    const generationMode = await getAiGenerationMode(settings)
     const runtime = await getAiProviderRuntimeState()
     const health = await getAiProviderHealth()
-    return NextResponse.json({ settings, runtime, health })
+    return NextResponse.json({ settings, generationMode, runtime, health })
   } catch (err) {
     return NextResponse.json({ error: err?.message || 'Could not load AI provider settings' }, { status: 500 })
   }
@@ -41,6 +44,11 @@ export async function POST(request) {
     if (action === 'delete') {
       const deleted = await deleteAiProviderSetting(body?.id)
       return NextResponse.json({ deleted })
+    }
+
+    if (action === 'generation_mode') {
+      const result = await setAiGenerationMode(body?.generationMode)
+      return NextResponse.json(result)
     }
 
     const setting = await upsertAiProviderSetting(body)

@@ -52,6 +52,12 @@ const BACKUP_AI_SETTING = {
   priority: 2,
 }
 
+const AI_GENERATION_MODES = [
+  { id: "auto", label: "Auto" },
+  { id: "primary", label: "Force Primary" },
+  { id: "backup", label: "Force Backup" },
+]
+
 const EMPTY_ADMIN_METRICS = {
   totalAssignments: 0,
   totalReviewed: 0,
@@ -146,6 +152,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [aiHealth, setAiHealth] = useState({ providers: [], unattributed_failures: 0 })
   const [primaryProviderForm, setPrimaryProviderForm] = useState(PRIMARY_AI_SETTING)
   const [backupProviderForm, setBackupProviderForm] = useState(BACKUP_AI_SETTING)
+  const [aiGenerationMode, setAiGenerationMode] = useState("auto")
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false)
   const [aiSettingsSaving, setAiSettingsSaving] = useState(false)
   const [aiTestingId, setAiTestingId] = useState(null)
@@ -207,6 +214,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
       const rows = data.settings || []
       setAiRuntime(data.runtime || null)
       setAiHealth(data.health || { providers: [], unattributed_failures: 0 })
+      setAiGenerationMode(data.generationMode || "auto")
       setPrimaryProviderForm({ ...PRIMARY_AI_SETTING, ...(rows.find(row => row.slot === "primary") || rows.find(row => row.is_active) || {}), api_key: "" })
       setBackupProviderForm({ ...BACKUP_AI_SETTING, ...(rows.find(row => row.slot === "backup") || rows.find(row => !row.is_active) || {}), api_key: "" })
     } catch (err) {
@@ -265,6 +273,16 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
     if (setting?.last_test_success) return "healthy"
     const message = String(setting?.last_test_message || "")
     return /timeout/i.test(message) ? "slow" : "failed"
+  }
+
+  function activeGenerationProviderLabel() {
+    if (aiGenerationMode === "backup") return providerLabel(backupProviderForm.provider)
+    if (aiGenerationMode === "primary") return providerLabel(primaryProviderForm.provider)
+    return providerLabel(primaryProviderForm.provider)
+  }
+
+  function generationModeLabel() {
+    return AI_GENERATION_MODES.find(mode => mode.id === aiGenerationMode)?.label || "Auto"
   }
 
   function healthTone(status) {
@@ -348,6 +366,35 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
       showError(err.message || "AI provider test failed.")
     } finally {
       setAiTestingId(null)
+    }
+  }
+
+  async function saveGenerationMode(mode) {
+    if (!adminToken) { showError("Please log in again to manage AI settings."); return }
+    if (mode === aiGenerationMode) return
+
+    const previousMode = aiGenerationMode
+    setAiGenerationMode(mode)
+    setAiSettingsSaving(true)
+    try {
+      const res = await fetch("/api/admin-ai-settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ action: "generation_mode", generationMode: mode }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not save AI generation mode.")
+      setAiGenerationMode(data.generationMode || mode)
+      success("AI generation mode updated.")
+      await loadAiSettings()
+    } catch (err) {
+      setAiGenerationMode(previousMode)
+      showError(err.message || "Could not save AI generation mode.")
+    } finally {
+      setAiSettingsSaving(false)
     }
   }
 
@@ -707,9 +754,33 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           {aiSettingsLoading ? (
             <div className="flex justify-center py-8"><Spinner /></div>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <ProviderSlotForm slot="primary" title="Primary Provider" setting={primaryProviderForm} badge="Primary" />
-              <ProviderSlotForm slot="backup" title="Backup Provider" setting={backupProviderForm} badge="Active Backup" />
+            <div className="grid gap-4">
+              <div className="admin-generation-mode">
+                <div className="min-w-0">
+                  <p className="font-semibold" style={{ color: "var(--text-primary)" }}>AI Generation Mode</p>
+                  <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                    Active: {activeGenerationProviderLabel()} ({generationModeLabel()})
+                  </p>
+                </div>
+                <div className="admin-segmented" role="group" aria-label="AI generation mode">
+                  {AI_GENERATION_MODES.map(mode => (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      className={mode.id === aiGenerationMode ? "is-active" : ""}
+                      onClick={() => saveGenerationMode(mode.id)}
+                      disabled={aiSettingsSaving}
+                    >
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <ProviderSlotForm slot="primary" title="Primary Provider" setting={primaryProviderForm} badge="Primary" />
+                <ProviderSlotForm slot="backup" title="Backup Provider" setting={backupProviderForm} badge="Active Backup" />
+              </div>
             </div>
           )}
 
