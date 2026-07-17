@@ -3,7 +3,6 @@ import { unstable_noStore as noStore } from 'next/cache'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { getTeacherScope } from '@/lib/teacher-scope'
-import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
 import {
   decorateSubmissionReviewState,
   isReviewedSubmission,
@@ -65,7 +64,6 @@ export async function GET(request) {
     if (!teacher) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
 
     const supabase = getSupabaseAdmin()
-    await recoverStaleAiDrafts(supabase, { context: 'teacher-analytics' })
     const scope = await getTeacherScope(supabase, teacher.name)
     if (!scope.batchNames.length) {
       return jsonNoStoreWithPayloadLog({
@@ -79,12 +77,38 @@ export async function GET(request) {
       }, { teacherName: teacher.name, emptyScope: true })
     }
 
-    const rowsResult = await supabase
+    const baseCount = () => supabase
       .from('submissions')
-      .select('id,batch,submitted_at,feedback,feedback_at,ai_status,ai_feedback')
+      .select('id', { count: 'exact', head: true })
       .in('batch', scope.batchNames)
-      .order('submitted_at', { ascending: false })
-    if (rowsResult.error) throw new Error(rowsResult.error.message)
+    const [
+      totalResult,
+      pendingResult,
+      reviewedResult,
+      readyResult,
+      failedResult,
+      processingResult,
+      pendingAiResult,
+      rowsResult,
+    ] = await Promise.all([
+      baseCount(),
+      baseCount().is('feedback', null).is('feedback_at', null),
+      baseCount().or('feedback.not.is.null,feedback_at.not.is.null'),
+      baseCount().is('feedback', null).is('feedback_at', null).or('ai_status.eq.ready,ai_feedback.not.is.null'),
+      baseCount().is('feedback', null).is('feedback_at', null).eq('ai_status', 'failed'),
+      baseCount().is('feedback', null).is('feedback_at', null).eq('ai_status', 'processing'),
+      baseCount().is('feedback', null).is('feedback_at', null).eq('ai_status', 'pending'),
+      supabase
+        .from('submissions')
+        .select('id,batch,submitted_at,feedback,feedback_at,ai_status,ai_feedback')
+        .in('batch', scope.batchNames)
+        .order('submitted_at', { ascending: false })
+        .limit(5000),
+    ])
+    for (const result of [totalResult, pendingResult, reviewedResult, readyResult, failedResult, processingResult, pendingAiResult, rowsResult]) {
+      if (result.error) throw new Error(result.error.message)
+    }
+
     const confirmedIds = confirmedReviewedIds(request.nextUrl.searchParams)
     const rows = (rowsResult.data || []).map(row => decorateSubmissionReviewState(row, confirmedIds))
     const staleConfirmed = rows.filter(row => confirmedIds.has(String(row.id)) && !isReviewedSubmission(row))
@@ -95,16 +119,14 @@ export async function GET(request) {
         staleCount: staleConfirmed.length,
       })
     }
-    const total = rows.length
-    const pending = rows.filter(row => !isReviewedSubmission(row, confirmedIds)).length
-    const reviewed = rows.filter(row => isReviewedSubmission(row, confirmedIds)).length
-    const unreviewedRows = rows.filter(row => !isReviewedSubmission(row, confirmedIds))
-
+    const total = totalResult.count || 0
+    const pending = pendingResult.count || 0
+    const reviewed = reviewedResult.count || 0
     const aiHealth = {
-      ready: unreviewedRows.filter(row => row.ai_status === 'ready' || row.ai_feedback).length,
-      failed: unreviewedRows.filter(row => row.ai_status === 'failed').length,
-      processing: unreviewedRows.filter(row => row.ai_status === 'processing').length,
-      pending: unreviewedRows.filter(row => row.ai_status === 'pending').length,
+      ready: readyResult.count || 0,
+      failed: failedResult.count || 0,
+      processing: processingResult.count || 0,
+      pending: pendingAiResult.count || 0,
     }
     console.info('[teacher-analytics] review state summary', {
       teacherName: scope.teacherName,

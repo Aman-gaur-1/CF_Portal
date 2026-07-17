@@ -48,7 +48,7 @@ function findTeacherCredential(credentials, username, password) {
 
 export async function POST(request) {
   try {
-    const rateLimit = consumeLoginAttempt(request, "teacher")
+    const rateLimit = await consumeLoginAttempt(request, "teacher")
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { success: false, error: "Too many login attempts. Please try again shortly." },
@@ -61,7 +61,7 @@ export async function POST(request) {
     const teacher = findTeacherCredential(teachers, username, password)
     if (teacher) {
       const teacherName = String(teacher.name || teacher.username || teacher.email || teacher.trainer_name || username).trim()
-      clearLoginAttempts(request, "teacher")
+      await clearLoginAttempts(request, "teacher")
       return NextResponse.json({ success: true, name: teacherName, token: createTeacherToken(teacherName) })
     }
     return NextResponse.json({ success: false }, { status: 401 })

@@ -31,6 +31,8 @@ function MiniSignal({ item, onOpen }) {
       <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>{item.description}</p>
       <div className="flex gap-2 flex-wrap mt-3">
         <span className="badge-pending">{item.demand_score} demand</span>
+        <span className="badge-pending">{item.trend || "Stable"} trend</span>
+        <span className="badge-pending">{item.growth || "Emerging"} growth</span>
         <span className="badge-pending">{item.evidence_count} evidence</span>
       </div>
     </button>
@@ -67,6 +69,9 @@ function DemandDrawer({ signal, onClose }) {
             <div className="admin-queue-metric"><span>Confidence</span><b>{Math.round(Number(signal.confidence_score || 0) * 100)}%</b></div>
             <div className="admin-queue-metric"><span>Priority</span><b>{signal.priority}</b></div>
             <div className="admin-queue-metric"><span>Evidence</span><b>{signal.evidence_count}</b></div>
+            <div className="admin-queue-metric"><span>Trend</span><b>{signal.trend || "Stable"}</b></div>
+            <div className="admin-queue-metric"><span>Rank</span><b>{signal.competitor_rank || "-"}</b></div>
+            <div className="admin-queue-metric"><span>Growth</span><b>{signal.growth || "Emerging"}</b></div>
           </section>
 
           <section>
@@ -116,6 +121,9 @@ function DemandCard({ signal, onOpen }) {
       <div className="flex gap-2 flex-wrap mt-4">
         <span className="badge-done">{signal.category}</span>
         <span className="badge-pending">{signal.demand_score} demand</span>
+        <span className="badge-pending">{signal.trend || "Stable"} trend</span>
+        <span className="badge-pending">Rank {signal.competitor_rank || "-"}</span>
+        <span className="badge-pending">{signal.growth || "Emerging"} growth</span>
         <span className="badge-pending">{Math.round(Number(signal.confidence_score || 0) * 100)}% confidence</span>
         <span className="badge-pending">{signal.evidence_count} evidence</span>
       </div>
@@ -186,6 +194,7 @@ export default function MoatMarketDemandExplorer({ adminToken }) {
 
   const categories = useMemo(() => filterOptions.categories || [], [filterOptions.categories])
   const priorities = useMemo(() => filterOptions.priorities || [], [filterOptions.priorities])
+  const lastUpdated = signals.length ? new Date().getTime() : null
 
   return (
     <div className="grid gap-5">
@@ -194,6 +203,14 @@ export default function MoatMarketDemandExplorer({ adminToken }) {
         <MoatKpiCard label="High Demand Signals" value={kpis.high_demand_signals} hint="Critical or high" />
         <MoatKpiCard label="Market Gaps" value={kpis.market_gaps} hint="Detected gaps" />
         <MoatKpiCard label="Competitors Covered" value={kpis.competitors_covered} hint="With demand signals" />
+      </section>
+
+      <section className="card admin-panel">
+        <div className="grid gap-2 text-sm md:grid-cols-3" style={{ color: "var(--text-secondary)" }}>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Last Updated</span><br />{lastUpdated ? new Date(lastUpdated).toLocaleString() : "-"}</div>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Generated At</span><br />{new Date().toLocaleString()}</div>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Data Freshness</span><br />{kpis.demand_signals} current demand signals</div>
+        </div>
       </section>
 
       <section className="card admin-panel">

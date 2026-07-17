@@ -21,7 +21,7 @@ export function getNextMilestone(points: number): number | null {
 export function calcPhaseScores(rows: Submission[]): Record<string, number> {
   const scores: Record<string, number> = {}
   for (const sub of rows) {
-    const phase = sub.phase || 'Python'
+    const phase = sub.phase || 'Unassigned'
     const pts = sub.submission_type === 'project' ? 200 : 100
     scores[phase] = (scores[phase] ?? 0) + pts
   }
@@ -32,7 +32,7 @@ export function getPhasesInOrder(rows: Submission[]): string[] {
   const seen = new Set<string>()
   const phases: string[] = []
   for (const sub of [...rows].reverse()) {
-    const p = sub.phase || 'Python'
+    const p = sub.phase || 'Unassigned'
     if (!seen.has(p)) { phases.push(p); seen.add(p) }
   }
   return phases

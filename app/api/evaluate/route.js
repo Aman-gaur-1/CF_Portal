@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { evaluateSubmission } from '@/lib/ai/orchestrator'
 import { AI_STATUS } from '@/lib/ai/constants'
 import { guardEvaluateRequest } from '@/lib/ai/api-guard'
+import { authorizeEvaluationRequest } from '@/lib/ai/evaluation-auth'
+import { getSupabaseAdmin } from '@/lib/supabase-server'
 
 export const maxDuration = 55
 
@@ -14,9 +16,14 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
-    const guard = guardEvaluateRequest(req, body)
+    const guard = await guardEvaluateRequest(req, body)
     if (guard.error) {
       return NextResponse.json({ error: guard.error }, { status: guard.status })
+    }
+
+    const auth = await authorizeEvaluationRequest(req, guard.submissionId, getSupabaseAdmin())
+    if (!auth.authorized) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status })
     }
 
     const result = await evaluateSubmission(guard.submissionId)

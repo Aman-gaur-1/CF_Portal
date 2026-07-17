@@ -18,6 +18,13 @@ const SECTIONS = [
   { key: "competitor_weaknesses", title: "Competitor Weaknesses" },
 ]
 
+const SORT_OPTIONS = [
+  { value: "evidence", label: "Evidence Count" },
+  { value: "confidence", label: "Confidence" },
+  { value: "updated", label: "Last Updated" },
+  { value: "trend", label: "Trend" },
+]
+
 function authHeaders(token) {
   return { "Content-Type": "application/json", Authorization: `Bearer ${token}` }
 }
@@ -48,19 +55,45 @@ function EvidenceList({ evidence }) {
   )
 }
 
-function InsightSection({ title, items }) {
+function formatDate(value) {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "-"
+  return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+}
+
+function sortedItems(items, sort) {
+  const rows = [...(items || [])]
+  if (sort === "confidence") return rows.sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0))
+  if (sort === "updated") return rows.sort((a, b) => new Date(b.last_updated || b.created_at || 0) - new Date(a.last_updated || a.created_at || 0))
+  if (sort === "trend") return rows.sort((a, b) => String(a.trend || "").localeCompare(String(b.trend || "")))
+  return rows.sort((a, b) => Number(b.evidence_count || 0) - Number(a.evidence_count || 0))
+}
+
+function InsightSection({ title, items, sort, onSort }) {
+  const rows = sortedItems(items, sort)
   return (
     <section className="card admin-panel">
-      <p className="font-semibold mb-3" style={{ color: "var(--text-primary)" }}>{title}</p>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+        <p className="font-semibold" style={{ color: "var(--text-primary)" }}>{title}</p>
+        <select className="select max-w-[220px]" value={sort} onChange={event => onSort(event.target.value)}>
+          {SORT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </div>
       <div className="grid gap-3">
-        {(items || []).map(item => (
+        {rows.map(item => (
           <div key={item.id} className="moat-insight-row">
             <div className="min-w-0">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <p className="font-semibold" style={{ color: "var(--text-primary)" }}>{item.competitor}</p>
-                <span className="badge-done">{Math.round(Number(item.confidence || 0) * 100)}% confidence</span>
+                <div className="flex gap-2 flex-wrap justify-end">
+                  <span className="badge-done">{Math.round(Number(item.confidence || 0) * 100)}% confidence</span>
+                  <span className="badge-pending">{item.evidence_count || 0} evidence</span>
+                  <span className="badge-pending">{item.trend || "Stable"}</span>
+                </div>
               </div>
               <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>{item.summary}</p>
+              <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>Last Updated {formatDate(item.last_updated || item.created_at)}</p>
               <EvidenceList evidence={item.evidence} />
             </div>
           </div>
@@ -77,6 +110,7 @@ export default function MoatInsightsManager({ adminToken }) {
   const [metrics, setMetrics] = useState(EMPTY_METRICS)
   const [sections, setSections] = useState({})
   const [categories, setCategories] = useState([])
+  const [sorts, setSorts] = useState(() => Object.fromEntries(SECTIONS.map(section => [section.key, "evidence"])))
   const [lastRun, setLastRun] = useState(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
@@ -137,6 +171,14 @@ export default function MoatInsightsManager({ adminToken }) {
       </section>
 
       <section className="card admin-panel">
+        <div className="grid gap-2 text-sm md:grid-cols-3" style={{ color: "var(--text-secondary)" }}>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Last Updated</span><br />{formatDate(Math.max(...Object.values(sections).flat().map(item => new Date(item.last_updated || item.created_at || 0).getTime()).filter(Number.isFinite)))}</div>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Generated At</span><br />{formatDate(new Date())}</div>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Data Freshness</span><br />Ready analysis rows: {metrics.reviews_analyzed}</div>
+        </div>
+      </section>
+
+      <section className="card admin-panel">
         <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] items-center">
           <div>
             <p className="font-semibold" style={{ color: "var(--text-primary)" }}>Review Intelligence Pipeline</p>
@@ -161,7 +203,13 @@ export default function MoatInsightsManager({ adminToken }) {
       {loading ? <div className="flex justify-center py-10"><Spinner size="lg" /></div> : (
         <div className="grid gap-5">
           {SECTIONS.map(section => (
-            <InsightSection key={section.key} title={section.title} items={sections[section.key] || []} />
+            <InsightSection
+              key={section.key}
+              title={section.title}
+              items={sections[section.key] || []}
+              sort={sorts[section.key] || "evidence"}
+              onSort={value => setSorts(prev => ({ ...prev, [section.key]: value }))}
+            />
           ))}
         </div>
       )}

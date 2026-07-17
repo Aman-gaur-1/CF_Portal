@@ -18,4 +18,4 @@ export const MAX_FILE_MB = 10
 export const BROWSER_RENDERABLE = new Set(['pdf', 'html', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'txt', 'py'])
 
 export const TYPE_OPTIONS = ['assignment', 'project'] as const
-export const PHASE_OPTIONS = ['Python', 'Data Analytics'] as const
+export const PHASE_OPTIONS = [] as const

@@ -7,8 +7,13 @@ import Spinner from "@/components/ui/Spinner"
 const SESSION_KEY = "cf_student"
 
 function safeStudentProfile(student) {
-  if (!student?.id || !student?.name || !student?.batch) return null
-  return { id: student.id, name: student.name, batch: student.batch }
+  if (!student?.id || !student?.name || !student?.batch || !student?.token) return null
+  return {
+    id: student.id,
+    name: student.name,
+    batch: student.batch,
+    token: typeof student.token === 'string' ? student.token : '',
+  }
 }
 
 export default function HomePage() {

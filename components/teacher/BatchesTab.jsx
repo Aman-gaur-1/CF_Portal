@@ -2,10 +2,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
+import RefreshButton from "@/components/ui/RefreshButton"
 import { formatDate } from "@/lib/utils"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
 import { isReviewedSubmission } from "@/lib/review-state"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
+import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const SCOPE_REFRESH_MS = 5000
 
@@ -19,7 +21,7 @@ export default function BatchesTab({ teacherName, teacherToken }) {
   const [submissions, setSubmissions] = useState([])
   const [loading, setLoading] = useState(true)
   const loadAbortRef = useRef(null)
-  const { toasts, error: showError } = useToast()
+  const { toasts, success, error: showError } = useToast()
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (loadAbortRef.current) loadAbortRef.current.abort()
@@ -43,6 +45,12 @@ export default function BatchesTab({ teacherName, teacherToken }) {
       }
     }
   }, [teacherToken])
+
+  const refreshAction = useRefreshAction({
+    onRefresh: () => load({ silent: true }),
+    onSuccess: success,
+    onError: showError,
+  })
 
   useEffect(() => {
     load()
@@ -95,6 +103,12 @@ export default function BatchesTab({ teacherName, teacherToken }) {
       <div className="section-divider mb-4">
         <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Assigned Batch Analytics</span>
         <div className="line" />
+        <RefreshButton
+          onClick={refreshAction.refresh}
+          refreshing={refreshAction.refreshing}
+          updatedLabel={refreshAction.updatedLabel}
+          disabled={loading}
+        />
       </div>
 
       {loading ? (

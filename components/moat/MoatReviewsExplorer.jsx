@@ -11,7 +11,17 @@ const EMPTY_FILTERS = {
   start_date: "",
   end_date: "",
   search: "",
+  sort: "newest",
 }
+
+const SORT_OPTIONS = [
+  { value: "newest", label: "Newest" },
+  { value: "oldest", label: "Oldest" },
+  { value: "highest_rating", label: "Highest Rating" },
+  { value: "lowest_rating", label: "Lowest Rating" },
+  { value: "longest_review", label: "Longest Review" },
+  { value: "shortest_review", label: "Shortest Review" },
+]
 
 function authHeaders(token) {
   return { Authorization: `Bearer ${token}` }
@@ -122,6 +132,7 @@ export default function MoatReviewsExplorer({ adminToken }) {
   const [loading, setLoading] = useState(true)
   const [reviews, setReviews] = useState([])
   const [metrics, setMetrics] = useState(null)
+  const [globalKpis, setGlobalKpis] = useState(null)
   const [filterOptions, setFilterOptions] = useState({ competitors: [], sources: [], ratings: [5, 4, 3, 2, 1] })
   const [pagination, setPagination] = useState({ page: 1, page_size: PAGE_SIZE, total: 0, total_pages: 1 })
   const [selectedReview, setSelectedReview] = useState(null)
@@ -144,6 +155,7 @@ export default function MoatReviewsExplorer({ adminToken }) {
       if (!res.ok) throw new Error(data.error || "Could not load reviews.")
       setReviews(data.reviews || [])
       setMetrics(data.metrics || null)
+      setGlobalKpis(data.global_kpis || null)
       setFilterOptions(data.filters || { competitors: [], sources: [], ratings: [5, 4, 3, 2, 1] })
       setPagination(data.pagination || { page: 1, page_size: PAGE_SIZE, total: 0, total_pages: 1 })
     } catch (err) {
@@ -185,14 +197,21 @@ export default function MoatReviewsExplorer({ adminToken }) {
   return (
     <div className="grid gap-5">
       <section className="grid gap-3 md:grid-cols-4">
-        <KpiCard label="Total Reviews" value={metrics?.total_reviews ?? 0} hint="Matching filters" />
+        <KpiCard label="Collected Reviews" value={globalKpis?.collected_reviews ?? metrics?.total_reviews ?? 0} hint="Canonical total" />
+        <KpiCard label="Analyzed Reviews" value={globalKpis?.analyzed_reviews ?? 0} hint="Ready analysis rows" />
+        <KpiCard label="Pending Analysis" value={globalKpis?.pending_analysis ?? 0} hint="Collected minus analyzed" />
+        <KpiCard label="Review Coverage" value={`${globalKpis?.health?.review_coverage ?? 0}%`} hint="Analyzed coverage" />
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-4">
+        <KpiCard label="Filtered Reviews" value={metrics?.total_reviews ?? 0} hint="Matching filters" />
         <KpiCard label="Average Rating" value={metrics?.average_rating ? metrics.average_rating.toFixed(2) : "-"} hint="Known ratings" />
         <KpiCard label="Competitors Covered" value={metrics?.competitors_covered ?? 0} hint="With reviews" />
         <KpiCard label="Sources Covered" value={metrics?.sources_covered ?? 0} hint="With reviews" />
       </section>
 
       <section className="card admin-panel">
-        <form onSubmit={applyFilters} className="grid gap-3 lg:grid-cols-[1fr_1fr_140px_145px_145px]">
+        <form onSubmit={applyFilters} className="grid gap-3 lg:grid-cols-[1fr_1fr_140px_170px_145px_145px]">
           <select className="select" value={filters.competitor_id} onChange={event => updateFilter("competitor_id", event.target.value)}>
             <option value="all">All competitors</option>
             {filterOptions.competitors.map(competitor => (
@@ -209,9 +228,12 @@ export default function MoatReviewsExplorer({ adminToken }) {
             <option value="all">All ratings</option>
             {filterOptions.ratings.map(rating => <option key={rating} value={rating}>{rating} stars</option>)}
           </select>
+          <select className="select" value={filters.sort} onChange={event => updateFilter("sort", event.target.value)}>
+            {SORT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
           <input className="input" type="date" value={filters.start_date} onChange={event => updateFilter("start_date", event.target.value)} />
           <input className="input" type="date" value={filters.end_date} onChange={event => updateFilter("end_date", event.target.value)} />
-          <input className="input lg:col-span-3" value={filters.search} onChange={event => updateFilter("search", event.target.value)} placeholder="Search review text" />
+          <input className="input lg:col-span-4" value={filters.search} onChange={event => updateFilter("search", event.target.value)} placeholder="Search review text" />
           <button className="btn btn-primary btn-sm" disabled={loading}>{loading ? <Spinner /> : "Apply"}</button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={resetFilters} disabled={loading}>Reset</button>
         </form>

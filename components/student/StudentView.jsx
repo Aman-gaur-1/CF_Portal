@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { supabase } from "@/lib/supabase"
 import { getPoints, BROWSER_RENDERABLE, formatDate, getTypeLabel, getTypeEmoji, getFileValidationError, isFileAllowed } from "@/lib/utils"
 import { triggerAiEvaluation } from "@/lib/ai/trigger-evaluation"
@@ -8,8 +8,10 @@ import Tabs from "@/components/ui/Tabs"
 import Expander from "@/components/ui/Expander"
 import Spinner from "@/components/ui/Spinner"
 import ScoreSection from "@/components/student/ScoreSection"
+import StudentQueryPanel from "@/components/student/StudentQueryPanel"
 import ThemeToggle from "@/components/ui/ThemeToggle"
 import AiStatusBadge from "@/components/ui/AiStatusBadge"
+import NotificationBell from "@/components/ui/NotificationBell"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
 
 const TABS = [{ id: "submit", label: "📤 Submit Assignment" }, { id: "feedback", label: "📋 My Feedback" }]
@@ -25,7 +27,7 @@ function isReviewedSubmission(row) {
   return Boolean(row?.feedback || row?.feedback_at || row?.reviewed || row?.reviewed_at)
 }
 
-function FeedbackTranslation({ feedback, onError }) {
+function FeedbackTranslation({ feedback, authToken, onError }) {
   const [activeLanguage, setActiveLanguage] = useState("english")
   const [translations, setTranslations] = useState({
     english: feedback,
@@ -51,7 +53,7 @@ function FeedbackTranslation({ feedback, onError }) {
     try {
       const res = await fetch("/api/translate-feedback", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken || ""}` },
         body: JSON.stringify({ feedback, targetLanguage: language }),
       })
       const data = await res.json()
@@ -101,8 +103,12 @@ export default function StudentView({ student, onLogout }) {
   const [submissions, setSubmissions] = useState([])
   const [loadingSubs, setLoadingSubs] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [defaultPhaseName, setDefaultPhaseName] = useState("")
+  const [studentQueryEnabled, setStudentQueryEnabled] = useState(false)
+  const [assignmentQueries, setAssignmentQueries] = useState([])
   const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
+  const showErrorRef = useRef(showError)
 
   const [topic, setTopic] = useState("")
   const [file, setFile] = useState(null)
@@ -113,41 +119,109 @@ export default function StudentView({ student, onLogout }) {
     return submission.original_file_name || submission.file_name
   }
 
+  useEffect(() => {
+    showErrorRef.current = showError
+  }, [showError])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/assignment-phases", { cache: "no-store" })
+      .then(res => res.ok ? res.json() : {})
+      .then(data => {
+        if (!cancelled && data.defaultPhaseName) setDefaultPhaseName(data.defaultPhaseName)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  const loadQueries = useCallback(async () => {
+    const res = await fetch("/api/student-queries", {
+      headers: { Authorization: `Bearer ${student.token || ""}` },
+      cache: "no-store",
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || "Could not load queries.")
+    setStudentQueryEnabled(Boolean(data.enabled))
+    setAssignmentQueries(data.queries || [])
+  }, [student.token])
+
   const loadSubmissions = useCallback(async ({ silent = false } = {}) => {
     if (loadAbortRef.current) loadAbortRef.current.abort()
     const controller = new AbortController()
     loadAbortRef.current = controller
 
     if (!silent) setLoadingSubs(true)
-    const { data } = await supabase
-      .from("submissions")
-      .select("*")
-      .eq("student_id", student.id)
-      .order("submitted_at", { ascending: false })
-      .abortSignal(controller.signal)
+    try {
+      const res = await fetch("/api/student-submissions", {
+        headers: { Authorization: `Bearer ${student.token || ""}` },
+        cache: "no-store",
+        signal: controller.signal,
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not load submissions.")
 
-    if (!controller.signal.aborted) setSubmissions(data || [])
-    if (loadAbortRef.current === controller) {
-      loadAbortRef.current = null
-      if (!silent) setLoadingSubs(false)
+      if (!controller.signal.aborted) setSubmissions(data.submissions || [])
+    } catch (err) {
+      if (err.name !== "AbortError") showErrorRef.current(err.message || "Could not load submissions.")
+    } finally {
+      if (loadAbortRef.current === controller) {
+        loadAbortRef.current = null
+        if (!silent) setLoadingSubs(false)
+      }
     }
-  }, [student.id])
+  }, [student.token])
 
   useEffect(() => {
-    if (tab === "feedback") loadSubmissions()
+    if (tab === "feedback") {
+      loadSubmissions()
+      loadQueries().catch(() => {})
+    }
     return () => {
       if (loadAbortRef.current) loadAbortRef.current.abort()
     }
-  }, [tab, loadSubmissions])
+  }, [tab, loadSubmissions, loadQueries])
 
   const needsSubmissionPolling = tab === "feedback" && submissions.some(
     s => !s.feedback && (s.ai_status === "pending" || s.ai_status === "processing")
   )
 
   useAdaptivePolling(
-    () => loadSubmissions({ silent: true }),
+    () => {
+      loadSubmissions({ silent: true })
+    },
     { enabled: needsSubmissionPolling, activeMs: 5000 }
   )
+
+  useAdaptivePolling(
+    () => loadQueries().catch(() => {}),
+    { enabled: tab === "feedback" && studentQueryEnabled, activeMs: 15000 }
+  )
+
+  function handleQueryCreated(query) {
+    if (!query?.id) return
+    setAssignmentQueries(prev => [query, ...prev.filter(item => item.id !== query.id)])
+  }
+
+  const querySummaryBySubmission = useMemo(() => {
+    const summary = new Map()
+    for (const query of assignmentQueries) {
+      const key = String(query.submission_id)
+      const current = summary.get(key) || { open: 0, resolved: 0 }
+      if (query.status === "resolved") current.resolved += 1
+      else current.open += 1
+      summary.set(key, current)
+    }
+    return summary
+  }, [assignmentQueries])
+
+  function queryBadgeForSubmission(submissionId) {
+    if (!studentQueryEnabled) return null
+    const summary = querySummaryBySubmission.get(String(submissionId))
+    if (!summary) return null
+    if (summary.open > 0) return <span className="badge-query-open">{summary.open} Open Query</span>
+    if (summary.resolved > 0) return <span className="badge-query-resolved">{summary.resolved} Resolved Query</span>
+    return null
+  }
 
     async function handleSubmit(e) {
     e.preventDefault()
@@ -186,21 +260,37 @@ export default function StudentView({ student, onLogout }) {
         const { error: uploadErr } = await supabase.storage.from("assignments").upload(storedName, file, { contentType: prepareData.upload.mimeType })
         if (uploadErr) throw uploadErr
       }
-      const { data: inserted, error: dbErr } = await supabase.from("submissions").insert({
-        student_id: student.id, student_name: student.name, batch: student.batch,
+      let resolvedPhaseName = defaultPhaseName
+      if (!resolvedPhaseName) {
+        try {
+          const phaseRes = await fetch("/api/assignment-phases", { cache: "no-store" })
+          const phaseData = phaseRes.ok ? await phaseRes.json() : {}
+          resolvedPhaseName = phaseData.defaultPhaseName || ""
+          if (resolvedPhaseName) setDefaultPhaseName(resolvedPhaseName)
+        } catch {
+          resolvedPhaseName = ""
+        }
+      }
+
+      const submissionPayload = {
         topic: topic.trim(), file_name: storedName, original_file_name: originalFileName, file_url: fileUrl,
         code_text: code.trim() || null, comment: comment.trim(),
-        submitted_at: new Date().toISOString(), submission_type: "assignment", phase: "Python",
-        ai_status: "pending"
-      }).select("id").single()
-      if (dbErr) {
-        if (storedName) await supabase.storage.from("assignments").remove([storedName]).catch(() => {})
-        throw dbErr
+      }
+      if (resolvedPhaseName) submissionPayload.phase = resolvedPhaseName
+
+      const submitRes = await fetch("/api/student-submissions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${student.token || ""}` },
+        body: JSON.stringify(submissionPayload),
+      })
+      const submitData = await submitRes.json().catch(() => ({}))
+      if (!submitRes.ok || !submitData.submission) {
+        throw new Error(submitData.error || "Could not submit assignment.")
       }
       success("Assignment submitted! Your trainer review has started.")
 
-      if (inserted?.id) {
-        triggerAiEvaluation(inserted.id).then(result => {
+      if (submitData.submission?.id) {
+        triggerAiEvaluation(submitData.submission.id, { token: student.token }).then(result => {
           if (!result.ok) {
             console.warn("AI evaluation trigger failed:", result.error)
           }
@@ -228,6 +318,7 @@ export default function StudentView({ student, onLogout }) {
             <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>👤 {student.name} &nbsp;•&nbsp; 📚 {student.batch}</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            <NotificationBell userType="student" student={student} />
             <ThemeToggle />
             <button className="btn btn-secondary btn-sm text-xs" onClick={onLogout}>🚪 Logout</button>
           </div>
@@ -306,17 +397,23 @@ export default function StudentView({ student, onLogout }) {
                   const typeLabel = getTypeLabel(rawType)
                   const typeEmoji = getTypeEmoji(rawType)
                   const shownFileName = displayFileName(r)
+                  const queryBadge = queryBadgeForSubmission(r.id)
                   return (
                     <Expander
                       key={r.id}
                       title={`${hasFb ? "✅" : "⏳"} ${r.topic} • ${formatDate(r.submitted_at)} • +${pts}pts`}
-                      badge={hasFb ? <span className="badge-done">DONE</span> : <span className="badge-pending animate-pulse">PENDING</span>}
+                      badge={(
+                        <span className="flex items-center gap-2 flex-wrap">
+                          {queryBadge}
+                          {hasFb ? <span className="badge-done">DONE</span> : <span className="badge-pending animate-pulse">PENDING</span>}
+                        </span>
+                      )}
                     >
                       <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm mb-3">
                         <span><b>Topic:</b> {r.topic}</span>
                         <span><b>Date:</b> {formatDate(r.submitted_at)}</span>
                         <span><b>Type:</b> {typeEmoji} {typeLabel} &nbsp;<span className="text-xs" style={{ color: "var(--primary)" }}>+{pts}pts</span></span>
-                        <span><b>Phase:</b> {r.phase || "Python"}</span>
+                        <span><b>Phase:</b> {r.phase || "Unassigned"}</span>
                       </div>
                       {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "var(--surface)", color: "var(--text-secondary)" }}>💬 {r.comment}</p>}
                       {r.file_url && r.file_name && (
@@ -337,7 +434,16 @@ export default function StudentView({ student, onLogout }) {
                       {hasFb ? (
                         <div className="feedback-box">
                           <p className="text-xs mb-1 font-semibold" style={{ color: "var(--success)" }}>Feedback by {r.feedback_by || "Teacher"} {r.feedback_at ? "• " + formatDate(r.feedback_at) : ""}</p>
-                          <FeedbackTranslation feedback={r.feedback} onError={showError} />
+                          <FeedbackTranslation feedback={r.feedback} authToken={student.token} onError={showError} />
+                          <StudentQueryPanel
+                            enabled={studentQueryEnabled}
+                            student={student}
+                            submissionId={r.id}
+                            queries={assignmentQueries}
+                            onCreated={handleQueryCreated}
+                            onError={showError}
+                            onSuccess={success}
+                          />
                         </div>
                       ) : (
                         <div className="flex flex-col gap-2 text-sm py-2">

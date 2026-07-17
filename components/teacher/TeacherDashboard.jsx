@@ -5,6 +5,7 @@ import SubmissionsTab from "@/components/teacher/SubmissionsTab"
 import StudentsTab from "@/components/teacher/StudentsTab"
 import BatchesTab from "@/components/teacher/BatchesTab"
 import ThemeToggle from "@/components/ui/ThemeToggle"
+import NotificationBell from "@/components/ui/NotificationBell"
 
 const TABS = [
   { id: "reviews", label: "My Reviews" },
@@ -28,6 +29,7 @@ export default function TeacherDashboard({ teacherName, teacherToken, onLogout }
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            <NotificationBell userType="teacher" authToken={teacherToken} />
             <ThemeToggle />
             <button className="btn btn-secondary btn-sm" onClick={onLogout}>Logout</button>
           </div>

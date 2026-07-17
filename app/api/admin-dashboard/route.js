@@ -15,6 +15,10 @@ const EMPTY_METRICS = {
   aiFailed: 0,
   aiFinished: 0,
   successRate: null,
+  todayRequests: 0,
+  generatedToday: 0,
+  failedToday: 0,
+  pendingQueue: 0,
 }
 
 function jsonNoStore(body, init) {
@@ -49,11 +53,26 @@ function loadMetricsFromSubmissionRows(submissions) {
   let totalReviewed = 0
   let aiReady = 0
   let aiFailed = 0
+  let todayRequests = 0
+  let generatedToday = 0
+  let failedToday = 0
+  let pendingQueue = 0
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
 
   submissions.forEach((row) => {
     if (isReviewedSubmission(row)) totalReviewed += 1
     if (row.ai_status === 'ready') aiReady += 1
     if (row.ai_status === 'failed') aiFailed += 1
+    if (!isReviewedSubmission(row) && !row.ai_feedback) pendingQueue += 1
+
+    const aiTimestamp = row.ai_feedback_at || row.submitted_at
+    const aiTime = aiTimestamp ? new Date(aiTimestamp).getTime() : 0
+    if (aiTime >= startOfToday.getTime()) {
+      if (row.ai_status) todayRequests += 1
+      if (row.ai_status === 'ready') generatedToday += 1
+      if (row.ai_status === 'failed') failedToday += 1
+    }
   })
 
   const pendingReviews = Math.max(totalAssignments - totalReviewed, 0)
@@ -67,6 +86,10 @@ function loadMetricsFromSubmissionRows(submissions) {
     aiFailed,
     aiFinished,
     successRate: aiFinished ? Math.round((aiReady / aiFinished) * 100) : null,
+    todayRequests,
+    generatedToday,
+    failedToday,
+    pendingQueue,
   }
 }
 
@@ -124,7 +147,7 @@ export async function GET(request) {
       fetchAllRows(supabase, 'students', 'id, name, batch, created_at', 'created_at'),
       fetchAllRows(supabase, 'batches', '*', 'created_at'),
       fetchAllRows(supabase, 'trainers', '*', 'created_at'),
-      fetchAllRows(supabase, 'submissions', 'student_id,batch,feedback,feedback_at,ai_status'),
+      fetchAllRows(supabase, 'submissions', 'student_id,batch,submitted_at,feedback,feedback_at,ai_feedback,ai_feedback_at,ai_status'),
     ])
 
     const metrics = loadMetricsFromSubmissionRows(submissions)

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { unstable_noStore as noStore } from 'next/cache'
 import { AI_QUEUE_ITEM_COOLDOWN_MS, AI_STATUS } from '@/lib/ai/constants'
 import { evaluateSubmission, getAiEvaluationLoad } from '@/lib/ai/orchestrator'
 import { aiRuntimeSnapshot } from '@/lib/ai/runtime-state'
@@ -6,6 +7,8 @@ import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { getTeacherScope, normalizeName } from '@/lib/teacher-scope'
 import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
+import { isReviewedSubmission } from '@/lib/review-state'
+import { getSetting, setSetting } from '@/lib/system-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 55
@@ -17,11 +20,8 @@ const BULK_MAX_ITEMS_PER_TICK = 3
 const BULK_DEFAULT_RETRY_LIMIT = 2
 const BULK_MAX_RETRY_LIMIT = 4
 const BULK_RETRY_BASE_MS = 1_500
-const activeSubmissionIds = globalThis.__cfBulkAiActiveSubmissionIds || new Set()
-const bulkJobs = globalThis.__cfTeacherBulkAiJobs || new Map()
-
-globalThis.__cfBulkAiActiveSubmissionIds = activeSubmissionIds
-globalThis.__cfTeacherBulkAiJobs = bulkJobs
+const TEACHER_BULK_AI_SETTING_PREFIX = 'TEACHER_BULK_AI_JOB'
+const TEACHER_BULK_AI_LOCK_LEASE_SECONDS = 50
 
 function jsonNoStore(body, init) {
   return NextResponse.json(body, {
@@ -33,8 +33,31 @@ function jsonNoStore(body, init) {
   })
 }
 
+function jsonNoStoreWithPayloadLog(body, meta = {}, init) {
+  logPayloadSize('teacher-bulk-ai', body, meta)
+  return jsonNoStore(body, init)
+}
+
+function logPayloadSize(context, body, meta = {}) {
+  try {
+    const bytes = Buffer.byteLength(JSON.stringify(body), 'utf8')
+    console.info(`[${context}] payload`, {
+      ...meta,
+      bytes,
+      kb: Math.round(bytes / 1024),
+      overTarget: bytes > 200 * 1024,
+    })
+  } catch (err) {
+    console.warn(`[${context}] payload measurement failed`, { error: err?.message })
+  }
+}
+
 function getTeacherJobKey(name) {
   return normalizeName(name) || 'unknown-teacher'
+}
+
+function teacherJobSettingKey(name) {
+  return `${TEACHER_BULK_AI_SETTING_PREFIX}:${getTeacherJobKey(name)}`
 }
 
 function isJobActive(job) {
@@ -90,27 +113,42 @@ function serializeJob(job) {
 function isMissingAiFeedback(row) {
   return (
     row &&
-    !row.feedback &&
+    !isReviewedSubmission(row) &&
     !row.ai_feedback &&
     row.ai_status !== AI_STATUS.PROCESSING
   )
 }
 
-function cleanupOldJobs() {
-  const now = Date.now()
-  for (const [key, job] of bulkJobs.entries()) {
-    if (job.status === 'running') continue
-    const finishedAt = job.finishedAt ? new Date(job.finishedAt).getTime() : 0
-    if (finishedAt && now - finishedAt > JOB_RETENTION_MS) {
-      bulkJobs.delete(key)
-    }
+async function getTeacherJob(name, supabase = getSupabaseAdmin()) {
+  const job = await getSetting(teacherJobSettingKey(name), null, { supabase })
+  if (!job || typeof job !== 'object') return null
+  if (job.status === 'running') return normalizeJob(job)
+  const finishedAt = job.finishedAt ? new Date(job.finishedAt).getTime() : 0
+  if (finishedAt && Date.now() - finishedAt > JOB_RETENTION_MS) return null
+  return normalizeJob(job)
+}
+
+async function saveTeacherJob(name, job, supabase = getSupabaseAdmin()) {
+  await setSetting(teacherJobSettingKey(name), normalizeJob(job), 'Teacher bulk AI generation job state.', { supabase })
+}
+
+function normalizeJob(job) {
+  return {
+    ...job,
+    submissionIds: Array.isArray(job?.submissionIds) ? job.submissionIds.map(String) : [],
+    failures: Array.isArray(job?.failures) ? job.failures : [],
+    attemptsBySubmissionId: job?.attemptsBySubmissionId && typeof job.attemptsBySubmissionId === 'object' ? job.attemptsBySubmissionId : {},
+    retryAfterBySubmissionId: job?.retryAfterBySubmissionId && typeof job.retryAfterBySubmissionId === 'object' ? job.retryAfterBySubmissionId : {},
   }
 }
 
-async function runBulkJob(job) {
+async function runBulkJob(job, { teacherName, supabase = getSupabaseAdmin() } = {}) {
   if (!job || job.status !== 'running') return
-  if (job.processingTick) {
-    console.info('[teacher-bulk-ai] queue tick skipped: already running', {
+  const owner = `${process.pid || 'server'}-${Date.now()}`
+  const lockName = `teacher_bulk_ai_job:${getTeacherJobKey(teacherName)}`
+  const acquired = await tryAcquireTeacherBulkLock({ lockName, owner, supabase })
+  if (!acquired) {
+    console.info('[teacher-bulk-ai] queue tick skipped: lock busy', {
       jobId: job.id,
       remaining: job.submissionIds?.length || 0,
       completed: job.completed,
@@ -120,7 +158,6 @@ async function runBulkJob(job) {
     return
   }
 
-  job.processingTick = true
   job.lastProgressAt = new Date().toISOString()
 
   const tickStartedAt = Date.now()
@@ -141,21 +178,6 @@ async function runBulkJob(job) {
       }
 
       const [submissionId] = job.submissionIds.splice(nextIndex, 1)
-      if (activeSubmissionIds.has(submissionId)) {
-        const retry = incrementAttempt(job, submissionId)
-        if (retry <= bulkRetryLimit()) {
-          requeueSubmission(job, submissionId, retryBackoffMs(retry))
-          job.currentState = 'Queued behind active generation'
-          logQueueProgress(job, 'duplicate-active-requeued', { submissionId, retry })
-        } else {
-          job.skipped += 1
-          recordFailure(job, submissionId, 'Already being generated elsewhere', retry)
-          logQueueProgress(job, 'duplicate-active-skipped', { submissionId, retry })
-        }
-        continue
-      }
-
-      activeSubmissionIds.add(submissionId)
       job.currentSubmissionId = submissionId
       job.currentState = 'Generating'
       const attempt = currentAttempt(job, submissionId) + 1
@@ -269,7 +291,6 @@ async function runBulkJob(job) {
           })
         }
       } finally {
-        activeSubmissionIds.delete(submissionId)
         job.currentSubmissionId = null
       }
 
@@ -295,21 +316,25 @@ async function runBulkJob(job) {
       })
     }
   } finally {
-    job.processingTick = false
+    await saveTeacherJob(teacherName, job, supabase)
+    await releaseTeacherBulkLock({ lockName, owner, supabase }).catch(err => {
+      console.warn('[teacher-bulk-ai] lock release failed', err?.message)
+    })
   }
 }
 
 export async function GET(request) {
   try {
-    cleanupOldJobs()
+    noStore()
     const teacher = getTeacherFromRequest(request)
     if (!teacher) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
 
-    const job = bulkJobs.get(getTeacherJobKey(teacher.name))
+    const supabase = getSupabaseAdmin()
+    const job = await getTeacherJob(teacher.name, supabase)
     if (isJobActive(job)) {
-      await runBulkJob(job)
+      await runBulkJob(job, { teacherName: teacher.name, supabase })
     }
-    return jsonNoStore({ success: true, job: serializeJob(job) })
+    return jsonNoStoreWithPayloadLog({ success: true, job: serializeJob(job) }, { mode: 'status' })
   } catch (err) {
     console.error('[teacher-bulk-ai] status failed', err?.message)
     return jsonNoStore({ error: 'Could not load bulk AI status' }, { status: 500 })
@@ -318,23 +343,24 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    cleanupOldJobs()
+    noStore()
     const teacher = getTeacherFromRequest(request)
     if (!teacher) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
 
     const jobKey = getTeacherJobKey(teacher.name)
-    const existingJob = bulkJobs.get(jobKey)
+    const supabase = getSupabaseAdmin()
+    const existingJob = await getTeacherJob(teacher.name, supabase)
     if (isJobActive(existingJob)) {
-      return jsonNoStore({ success: true, job: serializeJob(existingJob) }, { status: 202 })
+      await runBulkJob(existingJob, { teacherName: teacher.name, supabase })
+      return jsonNoStoreWithPayloadLog({ success: true, job: serializeJob(existingJob) }, { mode: 'existing-job' }, { status: 202 })
     }
 
-    const supabase = getSupabaseAdmin()
     await recoverStaleAiDrafts(supabase, { context: 'teacher-bulk-ai-start' })
     const scope = await getTeacherScope(supabase, teacher.name)
     const { data: submissions, error: submissionError } = scope.batchNames.length
       ? await supabase
         .from('submissions')
-        .select('id, feedback, ai_feedback, ai_status')
+        .select('id, feedback, feedback_at, ai_feedback, ai_status')
         .in('batch', scope.batchNames)
       : { data: [], error: null }
     if (submissionError) throw new Error(submissionError.message)
@@ -357,8 +383,8 @@ export async function POST(request) {
         startedAt: new Date().toISOString(),
         finishedAt: new Date().toISOString(),
       }
-      bulkJobs.set(jobKey, emptyJob)
-      return jsonNoStore({ success: true, job: serializeJob(emptyJob) })
+      await saveTeacherJob(teacher.name, emptyJob, supabase)
+      return jsonNoStoreWithPayloadLog({ success: true, job: serializeJob(emptyJob) }, { mode: 'empty-job' })
     }
 
     const job = {
@@ -379,7 +405,7 @@ export async function POST(request) {
       finishedAt: null,
     }
 
-    bulkJobs.set(jobKey, job)
+    await saveTeacherJob(teacher.name, job, supabase)
     console.info('[teacher-bulk-ai] job queued', {
       jobId: job.id,
       teacher: jobKey,
@@ -388,7 +414,7 @@ export async function POST(request) {
       itemsPerTick: bulkItemsPerTick(),
       retryLimit: bulkRetryLimit(),
     })
-    return jsonNoStore({ success: true, job: serializeJob(job) }, { status: 202 })
+    return jsonNoStoreWithPayloadLog({ success: true, job: serializeJob(job) }, { mode: 'start', total: job.total }, { status: 202 })
   } catch (err) {
     console.error('[teacher-bulk-ai] start failed', err?.message)
     return jsonNoStore({ error: 'Could not start bulk AI generation' }, { status: 500 })
@@ -501,4 +527,22 @@ function logQueueProgress(job, event, details = {}) {
     concurrencyLimit: getAiEvaluationLoad().limit,
     ...details,
   })
+}
+
+async function tryAcquireTeacherBulkLock({ lockName, owner, supabase }) {
+  const { data, error } = await supabase.rpc('cf_acquire_cron_lock', {
+    p_lock_name: lockName,
+    p_lock_owner: owner,
+    p_lease_seconds: TEACHER_BULK_AI_LOCK_LEASE_SECONDS,
+  })
+  if (error) throw new Error(error.message)
+  return data === true
+}
+
+async function releaseTeacherBulkLock({ lockName, owner, supabase }) {
+  const { error } = await supabase.rpc('cf_release_cron_lock', {
+    p_lock_name: lockName,
+    p_lock_owner: owner,
+  })
+  if (error) throw new Error(error.message)
 }

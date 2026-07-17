@@ -1,6 +1,8 @@
 "use client"
 import { useCallback, useEffect, useState } from "react"
 import Spinner from "@/components/ui/Spinner"
+import RefreshButton from "@/components/ui/RefreshButton"
+import { useRefreshAction } from "@/lib/use-refresh-action"
 
 function relativeTime(value) {
   const timestamp = new Date(value).getTime()
@@ -15,7 +17,7 @@ function relativeTime(value) {
   return `${days} day${days === 1 ? "" : "s"} ago`
 }
 
-export default function RecentActivity({ adminToken, refreshKey = 0 }) {
+export default function RecentActivity({ adminToken, refreshKey = 0, success, showError }) {
   const [activity, setActivity] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -31,13 +33,20 @@ export default function RecentActivity({ adminToken, refreshKey = 0 }) {
       setActivity(data.activity || [])
     } catch (err) {
       console.warn("[recent-activity] load failed", err.message)
+      throw err
     } finally {
       setLoading(false)
     }
   }, [adminToken])
 
+  const refreshAction = useRefreshAction({
+    onRefresh: load,
+    onSuccess: success,
+    onError: showError,
+  })
+
   useEffect(() => {
-    load()
+    load().catch(() => {})
   }, [load, refreshKey])
 
   return (
@@ -47,7 +56,13 @@ export default function RecentActivity({ adminToken, refreshKey = 0 }) {
           <p className="text-sm font-semibold">Recent Activity</p>
           <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>Recent operational history</p>
         </div>
-        <button className="btn btn-secondary btn-xs" onClick={load}>Refresh</button>
+        <RefreshButton
+          size="xs"
+          onClick={refreshAction.refresh}
+          refreshing={refreshAction.refreshing}
+          updatedLabel={refreshAction.updatedLabel}
+          disabled={loading}
+        />
       </div>
 
       {loading ? (

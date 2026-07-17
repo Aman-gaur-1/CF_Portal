@@ -2,11 +2,15 @@ import { NextResponse } from 'next/server'
 import { unstable_noStore as noStore } from 'next/cache'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
-import { assertSubmissionInTeacherScope } from '@/lib/teacher-scope'
+import { assertSubmissionInTeacherScope, getTeacherScope } from '@/lib/teacher-scope'
 import { sanitizeStudentText } from '@/lib/ai/sanitize'
-import { appendActivity } from '@/lib/activity-log'
-import { AI_STATUS } from '@/lib/ai/constants'
 import { decorateSubmissionReviewState, deriveReviewStatus } from '@/lib/review-state'
+import {
+  executeBulkAiApproval,
+  fetchBulkApprovalCandidates,
+  previewBulkAiApproval,
+} from '@/lib/ai/bulk-approval'
+import { APPROVAL_METHOD, publishSubmissionFeedback } from '@/lib/submission-publisher'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,6 +28,46 @@ function createDiagnosticId() {
   return `tf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+function serializeErrorForLog(err) {
+  if (!err) return null
+  return {
+    name: err.name,
+    message: err.message,
+    stack: err.stack,
+    code: err.code,
+    details: err.details,
+    hint: err.hint,
+    status: err.status,
+    statusCode: err.statusCode,
+    cause: err.cause ? {
+      name: err.cause.name,
+      message: err.cause.message,
+      stack: err.cause.stack,
+      code: err.cause.code,
+      details: err.cause.details,
+      hint: err.cause.hint,
+      status: err.cause.status,
+      statusCode: err.cause.statusCode,
+    } : undefined,
+  }
+}
+
+function logCompleteException(context, err, { diagnosticId, ...extra } = {}) {
+  console.error(`[teacher-feedback] ${context}`, {
+    diagnosticId,
+    message: err?.message,
+    stack: err?.stack,
+    cause: err?.cause,
+    code: err?.code,
+    details: err?.details,
+    hint: err?.hint,
+    status: err?.status,
+    statusCode: err?.statusCode,
+    ...extra,
+    error: err,
+  })
+}
+
 function logPublishDiagnostic(level, message, details) {
   const safeDetails = {
     diagnosticId: details.diagnosticId,
@@ -39,6 +83,7 @@ function logPublishDiagnostic(level, message, details) {
     reviewStatusAfter: details.reviewStatusAfter,
     aiStatusBefore: details.aiStatusBefore,
     aiStatusAfter: details.aiStatusAfter,
+    error: serializeErrorForLog(details.error),
   }
   console[level](`[teacher-feedback] ${message}`, safeDetails)
 }
@@ -54,41 +99,46 @@ export async function PATCH(request) {
     }
 
     const body = await request.json()
+    const supabase = getSupabaseAdmin()
+    if (body?.action === 'bulk_approve_preview') {
+      return jsonNoStore({ success: true, ...await previewTeacherFeedback(supabase, teacher.name, { phase: body?.phase }) })
+    }
+
+    if (body?.action === 'bulk_approve') {
+      return jsonNoStore({ success: true, ...await bulkApproveTeacherFeedback(supabase, teacher.name, { phase: body?.phase }) })
+    }
+
     const submissionId = String(body?.submissionId || '').trim()
     const feedback = sanitizeStudentText(body?.feedback, 8000)
     if (!submissionId || !feedback) {
       return jsonNoStore({ error: 'submissionId and feedback are required', diagnosticId }, { status: 400 })
     }
 
-    const supabase = getSupabaseAdmin()
     const { scoped, submission } = await assertSubmissionInTeacherScope(supabase, teacher.name, submissionId)
     const trainerName = scoped.teacherName || teacher.name
     const wasPending = !submission.feedback && !submission.feedback_at
     const reviewStatusBefore = deriveReviewStatus(submission)
     const aiStatusBefore = submission.ai_status || null
 
-    const feedbackAt = new Date().toISOString()
-    const update = {
-      feedback,
-      feedback_by: trainerName,
-      feedback_at: feedbackAt,
-      review_active_by: null,
-      review_active_at: null,
-    }
-    if (submission.ai_feedback) {
-      update.ai_status = AI_STATUS.READY
-      update.ai_error = null
-    }
-    if (body?.submission_type) update.submission_type = String(body.submission_type)
-    if (body?.phase) update.phase = String(body.phase)
-
-    const { data: updated, error } = await supabase
-      .from('submissions')
-      .update(update)
-      .eq('id', submissionId)
-      .select('*')
-      .maybeSingle()
-    if (error) {
+    let publishResult
+    try {
+      publishResult = await publishSubmissionFeedback({
+        submissionId,
+        feedback,
+        actorName: trainerName,
+        actorRole: 'teacher',
+        approvalMethod: APPROVAL_METHOD.MANUAL,
+        submissionType: body?.submission_type,
+        phase: body?.phase,
+        allowUpdatePublished: !wasPending,
+        supabase,
+      })
+    } catch (err) {
+      logCompleteException('publishSubmissionFeedback exception', err, {
+        diagnosticId,
+        submissionId,
+        teacherName: teacher.name,
+      })
       logPublishDiagnostic('error', 'supabase update failed', {
         diagnosticId,
         submissionId,
@@ -97,20 +147,13 @@ export async function PATCH(request) {
         wasPending,
         reviewStatusBefore,
         aiStatusBefore,
-        supabaseCode: error.code,
-        supabaseMessage: error.message,
+        supabaseMessage: err.message,
+        error: err,
       })
-      throw new Error(error.message)
+      throw err
     }
 
-    if (!updated) {
-      const { data: current, error: verifyError } = await supabase
-        .from('submissions')
-        .select('*')
-        .eq('id', submissionId)
-        .maybeSingle()
-      if (verifyError) throw new Error(verifyError.message)
-
+    if (!publishResult.published) {
       logPublishDiagnostic('error', 'supabase update returned no row', {
         diagnosticId,
         submissionId,
@@ -118,21 +161,16 @@ export async function PATCH(request) {
         feedbackLength: feedback.length,
         wasPending,
         updateReturnedRow: false,
-        verifiedPersisted: Boolean(current?.feedback === feedback && current?.feedback_at),
+        verifiedPersisted: Boolean(publishResult.submission?.feedback === feedback && publishResult.submission?.feedback_at),
         reviewStatusBefore,
-        reviewStatusAfter: current ? deriveReviewStatus(current) : null,
+        reviewStatusAfter: publishResult.submission ? deriveReviewStatus(publishResult.submission) : null,
         aiStatusBefore,
-        aiStatusAfter: current?.ai_status || null,
+        aiStatusAfter: publishResult.submission?.ai_status || null,
       })
       return jsonNoStore({ error: 'Feedback was not saved. Please refresh and try again.', diagnosticId }, { status: 409 })
     }
 
-    const { data: verified, error: verifyError } = await supabase
-      .from('submissions')
-      .select('*')
-      .eq('id', submissionId)
-      .maybeSingle()
-    if (verifyError) throw new Error(verifyError.message)
+    const verified = publishResult.submission
 
     const persisted = Boolean(
       verified?.id &&
@@ -161,29 +199,6 @@ export async function PATCH(request) {
       return jsonNoStore({ error: 'Feedback was not confirmed saved. Please refresh and try again.', diagnosticId }, { status: 409 })
     }
 
-    const topic = submission.topic || 'assignment'
-    const approvedAiDraft = Boolean(submission.ai_feedback)
-    try {
-      await appendActivity({
-        eventType: approvedAiDraft ? 'review_approved' : 'manual_feedback_submitted',
-        description: approvedAiDraft ? `approved ${topic}` : `submitted manual feedback for ${topic}`,
-        actorName: teacher.name,
-        actorRole: 'teacher',
-        supabase,
-      })
-    } catch (err) {
-      logPublishDiagnostic('warn', 'activity log append failed after feedback persisted', {
-        diagnosticId,
-        submissionId,
-        teacherName: teacher.name,
-        feedbackLength: feedback.length,
-        wasPending,
-        updateReturnedRow: true,
-        verifiedPersisted: true,
-        supabaseMessage: err?.message,
-      })
-    }
-
     logPublishDiagnostic('info', 'feedback persisted', {
       diagnosticId,
       submissionId,
@@ -206,10 +221,37 @@ export async function PATCH(request) {
     })
   } catch (err) {
     const status = err?.status || 500
+    logCompleteException('PATCH exception', err, { diagnosticId, status })
     logPublishDiagnostic('error', 'failed', {
       diagnosticId,
       supabaseMessage: err?.message,
+      error: err,
     })
     return jsonNoStore({ error: status === 403 ? err.message : 'Could not save feedback', diagnosticId }, { status })
   }
+}
+
+async function previewTeacherFeedback(supabase, teacherName, { phase = '' } = {}) {
+  const scope = await getTeacherScope(supabase, teacherName)
+  if (!scope.batchNames.length) return previewBulkAiApproval([])
+
+  const rows = await fetchBulkApprovalCandidates({ supabase, batchNames: scope.batchNames, phase: String(phase || '').trim() })
+  return previewBulkAiApproval(rows)
+}
+
+async function bulkApproveTeacherFeedback(supabase, teacherName, { phase = '' } = {}) {
+  const scope = await getTeacherScope(supabase, teacherName)
+  if (!scope.batchNames.length) return previewBulkAiApproval([])
+
+  const selectedPhase = String(phase || '').trim()
+  const rows = await fetchBulkApprovalCandidates({ supabase, batchNames: scope.batchNames, phase: selectedPhase })
+  return executeBulkAiApproval({
+    supabase,
+    rows,
+    actorName: scope.teacherName || teacherName,
+    actorRole: 'teacher',
+    batchNames: scope.batchNames,
+    phase: selectedPhase,
+    audit: { userName: scope.teacherName || teacherName },
+  })
 }

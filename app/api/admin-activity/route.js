@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { appendActivity, loadRecentActivity } from '@/lib/activity-log'
+import { appendActivity, loadActivityTimelines, loadRecentActivity } from '@/lib/activity-log'
 import { getAdminFromRequest } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
@@ -18,7 +18,20 @@ export async function GET(request) {
   try {
     const admin = getAdminFromRequest(request)
     if (!admin) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
-    return jsonNoStore({ success: true, activity: await loadRecentActivity() })
+    const params = request.nextUrl.searchParams
+    const mode = params.get('mode') || 'recent'
+    const filters = {
+      date: params.get('date') || '',
+      actor: params.get('actor') || '',
+      role: params.get('role') || '',
+      search: params.get('search') || '',
+    }
+    const limit = mode === 'log' ? 500 : 20
+    const [activity, timelines] = await Promise.all([
+      loadRecentActivity({ limit, filters }),
+      mode === 'log' ? loadActivityTimelines({ limit: 150 }) : Promise.resolve([]),
+    ])
+    return jsonNoStore({ success: true, activity, timelines })
   } catch (err) {
     console.error('[admin-activity] load failed', err?.message)
     return jsonNoStore({ error: 'Could not load recent activity' }, { status: 500 })

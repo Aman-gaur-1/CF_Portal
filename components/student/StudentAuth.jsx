@@ -60,7 +60,7 @@ export default function StudentAuth({ onLogin }) {
     e.preventDefault()
     if (!regName.trim()) { showError("Name is required."); return }
     if (!regBatch) { showError("Please select your batch."); return }
-    if (!regPass.trim() || regPass.trim().length < 4) { showError("Password must be at least 4 characters."); return }
+    if (!regPass.trim() || regPass.trim().length < 8) { showError("Password must be at least 8 characters."); return }
     if (regPass.trim() !== regConfirm.trim()) { showError("Passwords do not match."); return }
     setLoading(true)
     try {
@@ -116,7 +116,7 @@ export default function StudentAuth({ onLogin }) {
                 <label className="label">Select Batch</label>
                 <BatchPicker value={regBatch} onChange={setRegBatch} batches={batches} label="Select batch" />
               </div>
-              <div><label className="label">Password (min 4 chars)</label><input type="password" className="input" value={regPass} onChange={e => setRegPass(e.target.value)} placeholder="Create a password" /></div>
+              <div><label className="label">Password (min 8 chars)</label><input type="password" className="input" value={regPass} onChange={e => setRegPass(e.target.value)} placeholder="Create a password" /></div>
               <div><label className="label">Confirm Password</label><input type="password" className="input" value={regConfirm} onChange={e => setRegConfirm(e.target.value)} placeholder="Confirm password" /></div>
               <button type="submit" className="btn btn-primary w-full flex items-center justify-center gap-2 mt-2" disabled={loading}>
                 {loading ? <Spinner /> : "🚀 Register"}

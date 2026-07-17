@@ -6,6 +6,7 @@ import { getScopedTeacherData, getTeacherScope } from '@/lib/teacher-scope'
 import { pageRange, paginationMeta, parsePage } from '@/lib/pagination'
 import { normalizeSearchText } from '@/lib/submission-search'
 import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
+import { withSignedAssignmentUrl } from '@/lib/assignment-file-access'
 import {
   decorateSubmissionReviewState,
   isReviewedSubmission,
@@ -130,13 +131,13 @@ async function loadSubmissionDetail(request, teacherName) {
   }
 
   return {
-    submission: toDetailSubmission(row),
+    submission: toDetailSubmission(await withSignedAssignmentUrl(row, { supabase })),
   }
 }
 
 async function loadReviewPage(request, teacherName) {
   const supabase = getSupabaseAdmin()
-  await recoverStaleAiDrafts(supabase, { context: 'teacher-data' })
+  await recoverStaleAiDrafts(supabase, { context: 'teacher-data', limit: 10 })
   const scope = await getTeacherScope(supabase, teacherName)
   const page = parsePage(request.nextUrl.searchParams.get('page'))
   const { from, to } = pageRange(page)
@@ -145,16 +146,30 @@ async function loadReviewPage(request, teacherName) {
     return { ...scope, submissions: [], pagination: paginationMeta(page, 0) }
   }
 
-  const { data: rows, error } = await supabase
-    .from('submissions')
-    .select(REVIEW_LIST_SELECT)
-    .in('batch', scope.batchNames)
+  const confirmedIds = confirmedReviewedIds(request.nextUrl.searchParams)
+  const filteredQuery = applyReviewQueryFilters(
+    supabase
+      .from('submissions')
+      .select(REVIEW_LIST_SELECT, { count: 'exact' })
+      .in('batch', scope.batchNames),
+    request.nextUrl.searchParams,
+    teacherName
+  )
+
+  const { data: rows, error, count } = await filteredQuery
     .order('submitted_at', { ascending: false })
+    .range(from, to)
   if (error) throw new Error(error.message)
 
-  const confirmedIds = confirmedReviewedIds(request.nextUrl.searchParams)
+  const { data: summaryRows, error: summaryError } = await supabase
+    .from('submissions')
+    .select('id,feedback,feedback_at,ai_status')
+    .in('batch', scope.batchNames)
+  if (summaryError) throw new Error(summaryError.message)
+
   const decoratedRows = (rows || []).map(row => toListSubmission(row, confirmedIds))
   const filtered = filterReviewRows(decoratedRows, request.nextUrl.searchParams, scope.teacherName, confirmedIds)
+  const decoratedSummaryRows = (summaryRows || []).map(row => decorateSubmissionReviewState(row, confirmedIds))
   const staleConfirmed = decoratedRows.filter(row => confirmedIds.has(String(row.id)) && !isReviewedSubmission(row))
   if (staleConfirmed.length) {
     console.warn('[teacher-data] confirmed published rows arrived stale from Supabase', {
@@ -169,17 +184,56 @@ async function loadReviewPage(request, teacherName) {
     status: request.nextUrl.searchParams.get('status') || 'All',
     aiStatus: request.nextUrl.searchParams.get('aiStatus') || 'All',
     confirmedCount: confirmedIds.size,
-    summary: summarizeReviewRows(decoratedRows, confirmedIds),
+    summary: summarizeReviewRows(decoratedSummaryRows, confirmedIds),
     filteredSummary: summarizeReviewRows(filtered, confirmedIds),
-    returned: Math.min(filtered.length, to - from + 1),
+    returned: filtered.length,
     payloadKind: 'list',
   })
 
   return {
     ...scope,
-    submissions: filtered.slice(from, to + 1),
-    pagination: paginationMeta(page, filtered.length),
+    submissions: filtered,
+    pagination: paginationMeta(page, count || 0),
   }
+}
+
+function applyReviewQueryFilters(query, params, teacherName) {
+  let next = query
+  const status = params.get('status') || 'All'
+  const aiStatus = params.get('aiStatus') || 'All'
+  const batch = params.get('batch') || 'All Batches'
+  const search = normalizeSearchText(params.get('search'))
+
+  if (status === 'Pending Feedback') next = next.is('feedback', null).is('feedback_at', null)
+  if (status === 'Feedback Done') next = next.or('feedback.not.is.null,feedback_at.not.is.null')
+  if (status === 'Failed AI') next = next.eq('ai_status', 'failed')
+  if (aiStatus !== 'All') next = next.eq('ai_status', aiStatus)
+  if (batch !== 'All Batches') next = next.eq('batch', batch)
+
+  const searchForQuery = applyReviewStatusSearchToQuery(search)
+  if (searchForQuery) {
+    const terms = searchForQuery
+      .split(' ')
+      .map(term => term.trim())
+      .filter(term => term && !normalizeSearchText(teacherName).includes(term))
+    for (const term of terms) {
+      const escaped = term.replace(/[%_,]/g, '')
+      if (escaped) {
+        next = next.or(`student_name.ilike.%${escaped}%,topic.ilike.%${escaped}%,batch.ilike.%${escaped}%,ai_status.ilike.%${escaped}%`)
+      }
+    }
+  }
+
+  return next
+}
+
+function applyReviewStatusSearchToQuery(search) {
+  let next = search
+  next = next.replace('ai failed', '')
+  next = next.replace('ai ready', '')
+  next = next.replace('reviewed', '')
+  next = next.replace('needs review', '')
+  return next.trim()
 }
 
 function toListSubmission(row, confirmedIds) {

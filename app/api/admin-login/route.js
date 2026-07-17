@@ -10,7 +10,7 @@ function readCredentials() {
 
 export async function POST(request) {
   try {
-    const rateLimit = consumeLoginAttempt(request, "admin")
+    const rateLimit = await consumeLoginAttempt(request, "admin")
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { success: false, error: "Too many login attempts. Please try again shortly." },
@@ -22,7 +22,7 @@ export async function POST(request) {
     const admins = readCredentials()
 
     if (admins[username] && admins[username] === password) {
-      clearLoginAttempts(request, "admin")
+      await clearLoginAttempts(request, "admin")
       return NextResponse.json({ success: true, name: username, role: "admin", token: createAdminToken(username) })
     }
 

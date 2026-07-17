@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server'
 import { generatePlainTextWithGemini } from '@/lib/ai/gemini'
-import { getClientIp } from '@/lib/ai/api-guard'
+import { consumeSharedRateLimit, getClientIp } from '@/lib/rate-limit'
 import { sanitizeStudentText, wrapUntrustedContent } from '@/lib/ai/sanitize'
+import { getStudentFromRequest } from '@/lib/student-auth'
 
 export const maxDuration = 60
 
 const MAX_FEEDBACK_LENGTH = 8000
-const RATE_WINDOW_MS = 60_000
+const RATE_WINDOW_SECONDS = 60
 const MAX_TRANSLATIONS_PER_IP = 20
 const SUPPORTED_LANGUAGES = new Set(['english', 'hinglish', 'hindi'])
-const requestBuckets = new Map()
 
 const TRANSLATION_INSTRUCTIONS = {
   hindi:
@@ -20,9 +20,22 @@ const TRANSLATION_INSTRUCTIONS = {
 
 export async function POST(req) {
   try {
+    const student = getStudentFromRequest(req)
+    if (!student) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const ip = getClientIp(req)
-    if (!allowTranslationRequest(ip)) {
-      return NextResponse.json({ error: 'Too many translation requests. Please try again shortly.' }, { status: 429 })
+    const rateLimit = await consumeSharedRateLimit({
+      key: `translate-feedback:${student.id}:${ip}`,
+      windowSeconds: RATE_WINDOW_SECONDS,
+      maxAttempts: MAX_TRANSLATIONS_PER_IP,
+    })
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Too many translation requests. Please try again shortly.' },
+        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } }
+      )
     }
 
     let body
@@ -67,18 +80,6 @@ ${wrapUntrustedContent('feedback_to_translate', feedback)}`
     console.error('[translate-feedback] failed', err?.message)
     return NextResponse.json({ error: 'Could not translate feedback. Please try again.' }, { status: 500 })
   }
-}
-
-function allowTranslationRequest(ip) {
-  const now = Date.now()
-  const current = requestBuckets.get(ip)
-  if (!current || current.resetAt <= now) {
-    requestBuckets.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS })
-    return true
-  }
-
-  current.count += 1
-  return current.count <= MAX_TRANSLATIONS_PER_IP
 }
 
 function cleanTranslation(text) {

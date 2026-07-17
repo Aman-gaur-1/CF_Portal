@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { consumeLoginAttempt } from '@/lib/login-rate-limit'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import {
-  hashStudentPassword,
+  hashStudentPasswordSecure,
   normalizeStudentName,
   validateStudentRegistrationInput,
 } from '@/lib/student-auth'
@@ -21,7 +21,7 @@ function jsonNoStore(body, init) {
 
 export async function POST(request) {
   try {
-    const rateLimit = consumeLoginAttempt(request, 'student-registration')
+    const rateLimit = await consumeLoginAttempt(request, 'student-registration')
     if (!rateLimit.allowed) {
       return jsonNoStore(
         { success: false, error: 'Too many registration attempts. Please try again shortly.' },
@@ -59,7 +59,7 @@ export async function POST(request) {
     const { error } = await supabase.from('students').insert({
       name: normalizeStudentName(name),
       batch,
-      password_hash: hashStudentPassword(password),
+      password_hash: await hashStudentPasswordSecure(password),
       created_at: new Date().toISOString(),
     })
 

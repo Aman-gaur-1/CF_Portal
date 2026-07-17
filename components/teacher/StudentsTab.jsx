@@ -4,7 +4,9 @@ import { formatDate } from "@/lib/utils"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
 import { isReviewedSubmission } from "@/lib/review-state"
 import Spinner from "@/components/ui/Spinner"
+import RefreshButton from "@/components/ui/RefreshButton"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
+import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const SCOPE_REFRESH_MS = 5000
 
@@ -47,6 +49,12 @@ export default function StudentsTab({ teacherToken }) {
       }
     }
   }, [teacherToken])
+
+  const refreshAction = useRefreshAction({
+    onRefresh: () => load({ silent: true }),
+    onSuccess: success,
+    onError: showError,
+  })
 
   useEffect(() => {
     load()
@@ -98,8 +106,8 @@ export default function StudentsTab({ teacherToken }) {
       showError("Student name is required.")
       return
     }
-    if (password && password.length < 4) {
-      showError("Password must be at least 4 characters.")
+    if (password && password.length < 8) {
+      showError("Password must be at least 8 characters.")
       return
     }
 
@@ -127,13 +135,22 @@ export default function StudentsTab({ teacherToken }) {
 
   return (
     <div>
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <p className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>{filtered.length} assigned students</p>
+        <RefreshButton
+          onClick={refreshAction.refresh}
+          refreshing={refreshAction.refreshing}
+          updatedLabel={refreshAction.updatedLabel}
+          disabled={loading}
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
         <input className="input" placeholder="Search your assigned students..." value={search} onChange={e => setSearch(e.target.value)} />
         <select className="select" value={batchFilter} onChange={e => setBatchFilter(e.target.value)}>
           {allBatches.map(batch => <option key={batch}>{batch}</option>)}
         </select>
       </div>
-      <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>{filtered.length} assigned students</p>
 
       {loading ? (
         <div className="flex justify-center py-16"><Spinner size="lg" /></div>

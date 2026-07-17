@@ -6,20 +6,62 @@ import ThemeToggle from "@/components/ui/ThemeToggle"
 const SESSION_KEY = "cf_admin"
 
 export const MOAT_NAV_ITEMS = [
-  { href: "/moat", label: "Overview" },
-  { href: "/moat/competitors", label: "Competitors" },
-  { href: "/moat/sources", label: "Sources" },
-  { href: "/moat/source-discovery", label: "Discovery" },
-  { href: "/moat/providers", label: "Providers" },
-  { href: "/moat/test-sync", label: "Test Sync" },
-  { href: "/moat/jobs", label: "Jobs" },
-  { href: "/moat/reviews", label: "Reviews" },
-  { href: "/moat/insights", label: "Insights" },
-  { href: "/moat/opportunities", label: "Opportunities" },
-  { href: "/moat/market-demand", label: "Market Demand" },
-  { href: "/moat/reports", label: "Reports" },
-  { href: "/moat/alerts", label: "Alerts" },
+  { href: "/scan", label: "Overview" },
+  { href: "/scan/competitors", label: "Competitors" },
 ]
+
+export const MOAT_NAV_GROUPS = [
+  {
+    label: "Collection",
+    items: [
+      { href: "/scan/sources", label: "Sources" },
+      { href: "/scan/source-discovery", label: "Discovery" },
+      { href: "/scan/providers", label: "Providers" },
+      { href: "/scan/jobs", label: "Jobs" },
+      { href: "/scan/test-sync", label: "Test Sync" },
+    ],
+  },
+  {
+    label: "Analysis",
+    items: [
+      { href: "/scan/reviews", label: "Reviews" },
+      { href: "/scan/insights", label: "Insights" },
+    ],
+  },
+  {
+    label: "Intelligence",
+    items: [
+      { href: "/scan/opportunities", label: "Opportunities" },
+      { href: "/scan/alerts", label: "Alerts" },
+      { href: "/scan/market-demand", label: "Market Demand" },
+    ],
+  },
+  {
+    label: "Reporting",
+    items: [
+      { href: "/scan/reports", label: "Reports" },
+    ],
+  },
+]
+
+export const MOAT_ALL_NAV_ITEMS = [
+  ...MOAT_NAV_ITEMS,
+  { href: "/scan/sources", label: "Sources" },
+  { href: "/scan/source-discovery", label: "Discovery" },
+  { href: "/scan/providers", label: "Providers" },
+  { href: "/scan/test-sync", label: "Test Sync" },
+  { href: "/scan/jobs", label: "Jobs" },
+  { href: "/scan/reviews", label: "Reviews" },
+  { href: "/scan/insights", label: "Insights" },
+  { href: "/scan/opportunities", label: "Opportunities" },
+  { href: "/scan/market-demand", label: "Market Demand" },
+  { href: "/scan/reports", label: "Reports" },
+  { href: "/scan/alerts", label: "Alerts" },
+]
+
+function publicScanPath(path) {
+  return String(path || "").replace(/^\/moat(?=\/|$)/, "/scan")
+}
 
 function readAdminSession() {
   try {
@@ -47,6 +89,8 @@ export default function MoatShell({ activePath, title, description, children }) 
   }, [])
 
   const navItems = useMemo(() => MOAT_NAV_ITEMS, [])
+  const navGroups = useMemo(() => MOAT_NAV_GROUPS, [])
+  const activePublicPath = publicScanPath(activePath)
 
   if (loading) {
     return (
@@ -73,13 +117,28 @@ export default function MoatShell({ activePath, title, description, children }) 
 
         <nav className="moat-nav" aria-label="Moat navigation">
           {navItems.map(item => {
-            const isActive = activePath === item.href
+            const isActive = activePublicPath === item.href
             return (
               <a key={item.href} className={`moat-nav-link${isActive ? " moat-nav-link-active" : ""}`} href={item.href}>
                 {item.label}
               </a>
             )
           })}
+          {navGroups.map(group => (
+            <div key={group.label} className="grid gap-1">
+              <span className="text-[10px] font-semibold uppercase px-2" style={{ color: "var(--text-muted)" }}>{group.label}</span>
+              <div className="flex gap-2 flex-wrap">
+                {group.items.map(item => {
+                  const isActive = activePublicPath === item.href
+                  return (
+                    <a key={item.href} className={`moat-nav-link${isActive ? " moat-nav-link-active" : ""}`} href={item.href}>
+                      {item.label}
+                    </a>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         <main className="mt-5">

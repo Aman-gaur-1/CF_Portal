@@ -18,6 +18,13 @@ const EMPTY_KPIS = {
   categories_covered: 0,
 }
 
+function formatDate(value) {
+  if (!value) return "-"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "-"
+  return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+}
+
 function OpportunityDrawer({ opportunity, onClose }) {
   if (!opportunity) return null
 
@@ -33,6 +40,9 @@ function OpportunityDrawer({ opportunity, onClose }) {
             <div className="admin-queue-metric"><span>Confidence</span><b>{Math.round(Number(opportunity.confidence_score || 0) * 100)}%</b></div>
             <div className="admin-queue-metric"><span>Priority Score</span><b>{opportunity.priority_score}</b></div>
             <div className="admin-queue-metric"><span>Evidence</span><b>{opportunity.evidence_count}</b></div>
+            <div className="admin-queue-metric"><span>Impact</span><b>{opportunity.impact || opportunity.priority}</b></div>
+            <div className="admin-queue-metric"><span>Priority</span><b>{opportunity.priority}</b></div>
+            <div className="admin-queue-metric"><span>Created</span><b>{formatDate(opportunity.created_at)}</b></div>
           </section>
 
           <section>
@@ -54,7 +64,21 @@ function OpportunityDrawer({ opportunity, onClose }) {
           </section>
 
           <section>
-            <p className="label">Source Insight References</p>
+            <p className="label">Supporting Review Snippets</p>
+            <div className="grid gap-2">
+              {(opportunity.source_insight_references || []).filter(item => item.excerpt || item.summary).slice(0, 6).map((item, index) => (
+                <div key={`${item.review_id || item.insight_id || index}`} className="moat-review-full-text">
+                  {item.excerpt || item.summary}
+                </div>
+              ))}
+              {!(opportunity.source_insight_references || []).some(item => item.excerpt || item.summary) && (
+                <p className="text-sm" style={{ color: "var(--text-secondary)" }}>No supporting snippets available.</p>
+              )}
+            </div>
+          </section>
+
+          <section>
+            <p className="label">Source References</p>
             <pre className="code-block">{JSON.stringify(opportunity.source_insight_references || [], null, 2)}</pre>
           </section>
       </div>
@@ -75,8 +99,11 @@ function OpportunityCard({ opportunity, onOpen }) {
       <p className="text-sm mt-3" style={{ color: "var(--text-secondary)" }}>{opportunity.description}</p>
       <div className="flex gap-2 flex-wrap mt-4">
         <span className="badge-done">{opportunity.category}</span>
+        <span className="badge-pending">{opportunity.impact || opportunity.priority} impact</span>
+        <span className="badge-pending">{opportunity.priority} priority</span>
         <span className="badge-pending">{Math.round(Number(opportunity.confidence_score || 0) * 100)}% confidence</span>
         <span className="badge-pending">{opportunity.evidence_count} evidence</span>
+        <span className="badge-done">Created {formatDate(opportunity.created_at)}</span>
       </div>
     </button>
   )
@@ -91,6 +118,7 @@ export default function MoatOpportunitiesExplorer({ adminToken }) {
   const [selectedOpportunity, setSelectedOpportunity] = useState(null)
   const [loading, setLoading] = useState(true)
   const { toasts, error: showError } = useToast()
+  const lastUpdated = opportunities.map(item => new Date(item.created_at || 0).getTime()).filter(Number.isFinite).sort((a, b) => b - a)[0]
 
   useEffect(() => {
     load()
@@ -136,6 +164,14 @@ export default function MoatOpportunitiesExplorer({ adminToken }) {
         <MoatKpiCard label="High Priority" value={kpis.high_priority} hint="Actionable now" />
         <MoatKpiCard label="Competitors Covered" value={kpis.competitors_covered} hint="With opportunities" />
         <MoatKpiCard label="Categories Covered" value={kpis.categories_covered} hint="Opportunity areas" />
+      </section>
+
+      <section className="card admin-panel">
+        <div className="grid gap-2 text-sm md:grid-cols-3" style={{ color: "var(--text-secondary)" }}>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Last Updated</span><br />{formatDate(lastUpdated)}</div>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Generated At</span><br />{formatDate(new Date())}</div>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Data Freshness</span><br />{kpis.total_opportunities} current opportunities</div>
+        </div>
       </section>
 
       <section className="card admin-panel">

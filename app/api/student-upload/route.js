@@ -39,6 +39,7 @@ export async function POST(request) {
         fileUrl,
         mimeType,
         originalFileName,
+        storageMimeType: extension === 'docx' ? 'application/octet-stream' : mimeType,
       },
     })
   } catch (err) {

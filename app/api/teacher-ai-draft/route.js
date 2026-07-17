@@ -5,6 +5,8 @@ import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { assertSubmissionInTeacherScope } from '@/lib/teacher-scope'
 import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
+import { isReviewedSubmission } from '@/lib/review-state'
+import { scheduleAutoApprovalIfEligible } from '@/lib/auto-approval'
 
 function jsonNoStore(body, init) {
   return NextResponse.json(body, {
@@ -31,7 +33,7 @@ export async function PATCH(request) {
     const supabase = getSupabaseAdmin()
     await recoverStaleAiDrafts(supabase, { context: 'teacher-ai-draft-save' })
     const { submission } = await assertSubmissionInTeacherScope(supabase, teacher.name, submissionId)
-    if (submission.feedback) {
+    if (isReviewedSubmission(submission)) {
       return jsonNoStore({ error: 'Submission already has approved feedback' }, { status: 409 })
     }
     if (submission.ai_status === AI_STATUS.PROCESSING || submission.ai_status === AI_STATUS.PENDING) {
@@ -49,6 +51,9 @@ export async function PATCH(request) {
       .eq('id', submissionId)
 
     if (error) throw new Error(error.message)
+    await scheduleAutoApprovalIfEligible(submissionId, { supabase }).catch(err => {
+      console.warn('[teacher-ai-draft] auto approval scheduling failed', { submissionId, error: err?.message })
+    })
     return jsonNoStore({ success: true, ai_feedback: draft, ai_status: AI_STATUS.READY })
   } catch (err) {
     const status = err?.status || 500

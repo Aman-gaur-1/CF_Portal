@@ -9,6 +9,7 @@ const EMPTY_SUMMARY = {
   sources_tracked: 0,
   reviews_collected: 0,
   reviews_analyzed: 0,
+  pending_analysis: 0,
   opportunities_generated: 0,
   alerts_generated: 0,
   demand_signals: 0,
@@ -89,6 +90,16 @@ function ReportSection({ title, children }) {
   )
 }
 
+function downloadText(filename, text, type = "text/plain") {
+  const blob = new Blob([text], { type })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function MoatExecutiveReports({ adminToken }) {
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -116,7 +127,31 @@ export default function MoatExecutiveReports({ adminToken }) {
     }
   }
 
+  function copySummary() {
+    navigator.clipboard?.writeText(summary.executive_summary || "")
+  }
+
+  function exportCsv() {
+    const rows = [
+      ["Metric", "Value"],
+      ["Competitors", summary.competitors_tracked],
+      ["Sources", summary.sources_tracked],
+      ["Collected Reviews", summary.reviews_collected],
+      ["Analyzed Reviews", summary.reviews_analyzed],
+      ["Opportunities", summary.opportunities_generated],
+      ["Alerts", summary.alerts_generated],
+      ["Demand Signals", summary.demand_signals],
+      ["Market Gaps", summary.market_gaps],
+    ]
+    downloadText("moat-executive-summary.csv", rows.map(row => row.map(value => `"${String(value ?? "").replace(/"/g, '""')}"`).join(",")).join("\n"), "text/csv")
+  }
+
   const summary = { ...EMPTY_SUMMARY, ...(report?.summary || {}) }
+  const biggestOpportunity = report?.opportunities?.top_recommended_actions?.[0]
+  const biggestRisk = report?.alerts?.strongest_alerts?.[0]
+  const fastestDemand = report?.demand?.fastest_growing_themes?.[0] || report?.demand?.strongest_demand?.[0]
+  const strongestOpportunity = report?.opportunities?.top_recommended_actions?.[0]
+  const highestRiskAlert = report?.alerts?.strongest_alerts?.[0]
 
   return (
     <div className="grid gap-5 moat-report-page">
@@ -125,6 +160,9 @@ export default function MoatExecutiveReports({ adminToken }) {
         <div className="flex gap-2">
           <button className="btn btn-secondary btn-sm" onClick={load} disabled={loading}>Refresh</button>
           <button className="btn btn-primary btn-sm" onClick={() => window.print()} disabled={loading}>Print</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => window.print()} disabled={loading}>PDF</button>
+          <button className="btn btn-secondary btn-sm" onClick={exportCsv} disabled={loading}>CSV</button>
+          <button className="btn btn-secondary btn-sm" onClick={copySummary} disabled={loading}>Copy Executive Summary</button>
         </div>
       </div>
 
@@ -135,6 +173,7 @@ export default function MoatExecutiveReports({ adminToken }) {
             <MoatKpiCard label="Sources Tracked" value={summary.sources_tracked} />
             <MoatKpiCard label="Reviews Collected" value={summary.reviews_collected} />
             <MoatKpiCard label="Reviews Analyzed" value={summary.reviews_analyzed} />
+            <MoatKpiCard label="Pending Analysis" value={summary.pending_analysis} />
             <MoatKpiCard label="Opportunities" value={summary.opportunities_generated} />
             <MoatKpiCard label="Alerts" value={summary.alerts_generated} />
             <MoatKpiCard label="Demand Signals" value={summary.demand_signals} />
@@ -144,6 +183,24 @@ export default function MoatExecutiveReports({ adminToken }) {
           <ReportSection title="Executive Summary">
             <div className="moat-report-summary">{summary.executive_summary}</div>
             <p className="text-xs mt-3" style={{ color: "var(--text-muted)" }}>Generated at {report?.generated_at ? new Date(report.generated_at).toLocaleString() : "-"}</p>
+          </ReportSection>
+
+          <ReportSection title="Founder Summary">
+            <div className="grid gap-3 md:grid-cols-2">
+              <CompactSignal item={{ title: "Biggest Opportunity", description: biggestOpportunity?.description || biggestOpportunity?.title || "No opportunity found.", priority: biggestOpportunity?.priority, evidence_count: biggestOpportunity?.evidence_count }} />
+              <CompactSignal item={{ title: "Biggest Risk", description: biggestRisk?.description || biggestRisk?.title || "No risk found.", severity: biggestRisk?.severity, evidence_count: biggestRisk?.evidence_count }} />
+              <CompactSignal item={{ title: "Fastest Growing Demand", description: fastestDemand?.description || fastestDemand?.title || "No demand signal found.", priority: fastestDemand?.priority, evidence_count: fastestDemand?.evidence_count }} />
+              <CompactSignal item={{ title: "Strongest Opportunity", description: strongestOpportunity?.description || strongestOpportunity?.title || "No opportunity found.", priority: strongestOpportunity?.priority, evidence_count: strongestOpportunity?.evidence_count }} />
+              <CompactSignal item={{ title: "Highest Risk Alert", description: highestRiskAlert?.description || highestRiskAlert?.title || "No alert found.", severity: highestRiskAlert?.severity, evidence_count: highestRiskAlert?.evidence_count }} />
+              <div className="moat-report-row">
+                <div>
+                  <p className="font-semibold" style={{ color: "var(--text-primary)" }}>Immediate Actions</p>
+                  <ol className="moat-recommendation-list mt-2">
+                    {(report?.strategic_recommendations || []).slice(0, 3).map(item => <li key={item}>{item}</li>)}
+                  </ol>
+                </div>
+              </div>
+            </div>
           </ReportSection>
 
           <ReportSection title="Competitor Overview">

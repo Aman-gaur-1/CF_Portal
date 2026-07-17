@@ -25,6 +25,19 @@ function formatDate(value) {
   return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
 }
 
+function timelineGroup(value) {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return "Earlier"
+  const now = new Date()
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const startYesterday = startToday - 24 * 60 * 60 * 1000
+  const time = date.getTime()
+  if (time >= startToday) return "Today"
+  if (time >= startYesterday) return "Yesterday"
+  if (time >= startToday - 7 * 24 * 60 * 60 * 1000) return "Last 7 Days"
+  return "Earlier"
+}
+
 function AlertDrawer({ alert, onClose }) {
   if (!alert) return null
 
@@ -40,6 +53,9 @@ function AlertDrawer({ alert, onClose }) {
             <div className="admin-queue-metric"><span>Confidence</span><b>{Math.round(Number(alert.confidence || 0) * 100)}%</b></div>
             <div className="admin-queue-metric"><span>Severity Score</span><b>{alert.severity_score}</b></div>
             <div className="admin-queue-metric"><span>Evidence</span><b>{alert.evidence_count}</b></div>
+            <div className="admin-queue-metric"><span>Generated</span><b>{formatDate(alert.created_at)}</b></div>
+            <div className="admin-queue-metric"><span>Triggered By</span><b>{alert.alert_type}</b></div>
+            <div className="admin-queue-metric"><span>Evidence Count</span><b>{alert.evidence_count}</b></div>
           </section>
 
           <section>
@@ -75,6 +91,7 @@ function AlertCard({ alert, onOpen }) {
       <div className="flex gap-2 flex-wrap mt-4">
         <span className="badge-pending">{Math.round(Number(alert.confidence || 0) * 100)}% confidence</span>
         <span className="badge-pending">{alert.evidence_count} evidence</span>
+        <span className="badge-pending">{alert.alert_type}</span>
         <span className="badge-done">{formatDate(alert.created_at)}</span>
       </div>
     </button>
@@ -128,6 +145,12 @@ export default function MoatAlertsExplorer({ adminToken }) {
 
   const alertTypes = useMemo(() => filterOptions.alert_types || [], [filterOptions.alert_types])
   const severities = useMemo(() => filterOptions.severities || [], [filterOptions.severities])
+  const lastUpdated = alerts.map(item => new Date(item.created_at || 0).getTime()).filter(Number.isFinite).sort((a, b) => b - a)[0]
+  const timeline = useMemo(() => {
+    const groups = { Today: [], Yesterday: [], "Last 7 Days": [], Earlier: [] }
+    alerts.forEach(alert => groups[timelineGroup(alert.created_at)].push(alert))
+    return groups
+  }, [alerts])
 
   return (
     <div className="grid gap-5">
@@ -136,6 +159,14 @@ export default function MoatAlertsExplorer({ adminToken }) {
         <MoatKpiCard label="Critical Alerts" value={kpis.critical_alerts} hint="Highest severity" />
         <MoatKpiCard label="High Severity Alerts" value={kpis.high_severity_alerts} hint="Needs attention" />
         <MoatKpiCard label="Competitors Impacted" value={kpis.competitors_impacted} hint="With alert signals" />
+      </section>
+
+      <section className="card admin-panel">
+        <div className="grid gap-2 text-sm md:grid-cols-3" style={{ color: "var(--text-secondary)" }}>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Last Updated</span><br />{formatDate(lastUpdated)}</div>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Generated At</span><br />{formatDate(new Date())}</div>
+          <div><span className="font-semibold" style={{ color: "var(--text-primary)" }}>Data Freshness</span><br />{kpis.total_alerts} current alerts</div>
+        </div>
       </section>
 
       <section className="card admin-panel">
@@ -167,9 +198,16 @@ export default function MoatAlertsExplorer({ adminToken }) {
         </div>
 
         {loading ? <div className="flex justify-center py-10"><Spinner size="lg" /></div> : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {alerts.map(alert => (
-              <AlertCard key={alert.id} alert={alert} onOpen={setSelectedAlert} />
+          <div className="grid gap-5">
+            {Object.entries(timeline).map(([label, rows]) => rows.length > 0 && (
+              <div key={label} className="grid gap-3">
+                <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{label}</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {rows.map(alert => (
+                    <AlertCard key={alert.id} alert={alert} onOpen={setSelectedAlert} />
+                  ))}
+                </div>
+              </div>
             ))}
             {alerts.length === 0 && <p className="text-sm py-6" style={{ color: "var(--text-secondary)" }}>No alerts found from current intelligence.</p>}
           </div>

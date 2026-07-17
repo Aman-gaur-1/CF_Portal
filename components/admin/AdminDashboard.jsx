@@ -4,15 +4,24 @@ import { supabase } from "@/lib/supabase"
 import Tabs from "@/components/ui/Tabs"
 import Spinner from "@/components/ui/Spinner"
 import ThemeToggle from "@/components/ui/ThemeToggle"
+import NotificationBell from "@/components/ui/NotificationBell"
+import RefreshButton from "@/components/ui/RefreshButton"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
 import AdminAiGenerationQueue from "@/components/admin/AdminAiGenerationQueue"
 import ReviewProgressByTeacher from "@/components/admin/ReviewProgressByTeacher"
 import RecentActivity from "@/components/admin/RecentActivity"
+import PhaseManagement from "@/components/admin/PhaseManagement"
+import WorkflowSettings from "@/components/admin/WorkflowSettings"
+import AdminQueriesPanel from "@/components/admin/AdminQueriesPanel"
+import AdminActivityLog from "@/components/admin/AdminActivityLog"
+import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "people", label: "People" },
   { id: "ai", label: "AI Ops" },
+  { id: "activity", label: "Activity Log" },
+  { id: "queries", label: "Queries" },
   { id: "settings", label: "Settings" },
 ]
 
@@ -67,6 +76,10 @@ const EMPTY_ADMIN_METRICS = {
   aiFailed: 0,
   aiFinished: 0,
   successRate: null,
+  todayRequests: 0,
+  generatedToday: 0,
+  failedToday: 0,
+  pendingQueue: 0,
 }
 
 function SectionTitle({ title, detail }) {
@@ -104,24 +117,111 @@ function formatLastUsed(value) {
   if (!value) return "No timestamp"
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return "No timestamp"
+  const elapsed = Date.now() - date.getTime()
+  const minutes = Math.max(Math.round(elapsed / 60000), 0)
+  if (minutes < 1) return "just now"
+  if (minutes < 60) return `${minutes} minutes ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 12) return `${hours} hours ago`
+  const today = new Date()
+  if (date.toDateString() === today.toDateString()) return `Today ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday"
   return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
 }
 
+function formatLatency(ms) {
+  const value = Number(ms)
+  if (!Number.isFinite(value) || value <= 0) return "Not available"
+  if (value < 1000) return `${Math.round(value)} ms`
+  return `${(value / 1000).toFixed(1)} s`
+}
+
+function modelDisplayName(model) {
+  const raw = String(model || "Unknown model")
+  const last = raw.split("/").pop() || raw
+  return last
+    .replace(/^glm/i, "GLM")
+    .replace(/mistral-small/i, "Mistral Small")
+    .replace(/kimi/i, "Kimi")
+    .replace(/deepseek/i, "DeepSeek")
+    .replace(/-/g, " ")
+}
+
+function providerStatus(provider) {
+  if (provider.enabled === false) return { label: "Disabled", tone: "pending" }
+  if (provider.failed > 0 && provider.generated === 0) return { label: "Failed", tone: "failed" }
+  if (provider.success_percent >= 90) return { label: "Healthy", tone: "done" }
+  return { label: "Warning", tone: "pending" }
+}
+
+function providerIcon(provider) {
+  const label = String(provider.final_provider_name || provider.provider_label || provider.provider || "AI").trim()
+  if (/openrouter/i.test(label)) return "OR"
+  if (/nvidia|nemotron|qwen/i.test(label)) return "NV"
+  if (/step/i.test(label)) return "ST"
+  return label.slice(0, 2).toUpperCase()
+}
+
 function ProviderHealthCard({ provider }) {
+  const [open, setOpen] = useState(false)
   const tone = providerReliabilityTone(provider.success_percent)
+  const status = providerStatus(provider)
+  function toggle() {
+    setOpen(value => !value)
+  }
   return (
-    <div className={`provider-health-card provider-health-${tone}`}>
+    <div
+      className={`provider-health-card provider-health-${tone}`}
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      onClick={toggle}
+      onKeyDown={event => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          toggle()
+        }
+      }}
+    >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-semibold">{provider.provider_label}</p>
-          <p className="text-xs mt-1 truncate" style={{ color: "var(--text-muted)" }}>{provider.model}</p>
+        <div className="flex items-start gap-3 min-w-0">
+          <span className="provider-icon" aria-hidden>{providerIcon(provider)}</span>
+          <div className="min-w-0">
+            <p className="font-semibold">{provider.final_provider_name || provider.provider_label}</p>
+            <p className="text-xs mt-1 truncate" style={{ color: "var(--text-muted)" }}>{modelDisplayName(provider.model)}</p>
+          </div>
         </div>
-        <span className="provider-health-dot" aria-label={`${tone} reliability`} />
+        <div className="flex gap-2 flex-wrap justify-end">
+          <SoftBadge tone={status.tone}>{status.label}</SoftBadge>
+          <SoftBadge tone={provider.is_active || provider.slot === "primary" ? "done" : "pending"}>{provider.is_active || provider.slot === "primary" ? "Primary" : "Backup"}</SoftBadge>
+          <span className="provider-health-dot" aria-label={`${tone} reliability`} />
+        </div>
       </div>
-      <p className="provider-health-rate">{provider.success_percent}% <span>success</span></p>
-      <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{provider.generated} generated - {provider.failed} failed</p>
-      <p className="text-xs mt-3" style={{ color: "var(--text-muted)" }}>Fallbacks: <b style={{ color: "var(--text-primary)" }}>{provider.fallback_used_count}</b></p>
-      <p className="text-xs mt-1 truncate" style={{ color: "var(--text-muted)" }}>Last used: {formatLastUsed(provider.last_used_at)}</p>
+      <div className="grid grid-cols-2 gap-2 mt-3">
+        <div className="admin-queue-metric"><span>Success Rate</span><b>{provider.success_percent}%</b></div>
+        <div className="admin-queue-metric"><span>Avg Response</span><b>{formatLatency(provider.avg_latency_ms)}</b></div>
+      </div>
+      <p className="provider-expand-label">{open ? "Collapse" : "Expand"}</p>
+      {open && (
+        <div className="provider-details mt-3">
+          <div className="admin-summary-row"><span>Provider</span><b>{provider.final_provider_name || provider.provider_label}</b></div>
+          <div className="admin-summary-row"><span>Model</span><b>{modelDisplayName(provider.model)}</b></div>
+          <div className="admin-summary-row"><span>Base URL</span><b>{provider.base_url || "Not stored"}</b></div>
+          <div className="admin-summary-row"><span>Model ID</span><b>{provider.model || "Unknown"}</b></div>
+          <div className="admin-summary-row"><span>Generation Mode</span><b>{provider.generation_mode || "auto"}</b></div>
+          <div className="admin-summary-row"><span>Timeout</span><b>Runtime default</b></div>
+          <div className="admin-summary-row"><span>Last Success</span><b>{formatLastUsed(provider.last_success_at)}</b></div>
+          <div className="admin-summary-row"><span>Last Failure</span><b>{formatLastUsed(provider.last_failure_at)}</b></div>
+          <div className="admin-summary-row"><span>Provider Diagnostics</span><b>{provider.diagnostics?.last_test_message || "No test message"}</b></div>
+          <div className="admin-summary-row"><span>Fallback History</span><b>{provider.fallback_used_count ? `${provider.fallback_used_count} fallback events` : "No fallback events"}</b></div>
+          <div className="admin-summary-row"><span>Average Response Time</span><b>{formatLatency(provider.avg_latency_ms)}</b></div>
+          <div className="admin-summary-row"><span>Generated</span><b>{provider.generated}</b></div>
+          <div className="admin-summary-row"><span>Failed</span><b>{provider.failed}</b></div>
+          <div className="admin-summary-row"><span>Success %</span><b>{provider.success_percent}%</b></div>
+        </div>
+      )}
     </div>
   )
 }
@@ -199,8 +299,14 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
     }
 
     setLoading(false)
-    loadAiSettings()
+    await loadAiSettings()
   }
+
+  const refreshAction = useRefreshAction({
+    onRefresh: () => load({ silent: true }),
+    onSuccess: success,
+    onError: showError,
+  })
 
   async function loadAiSettings() {
     if (!adminToken) return
@@ -546,7 +652,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           </div>
         </div>
 
-        <RecentActivity adminToken={adminToken} refreshKey={activityRefreshKey} />
+        <RecentActivity adminToken={adminToken} refreshKey={activityRefreshKey} success={success} showError={showError} />
       </div>
     )
   }
@@ -658,10 +764,13 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   function renderAiOps() {
     return (
       <div className="grid gap-5">
-        <div className="grid gap-3 md:grid-cols-3">
-          <MetricCard label="Success Rate" value={metrics.aiFinished ? `${metrics.successRate}%` : "No runs"} hint={`${metrics.aiReady} ready / ${metrics.aiFailed} failed`} />
-          <MetricCard label="Last Provider" value={aiRuntime?.last_active_provider || "None"} hint={aiRuntime?.last_active_model || "No generation yet"} />
-          <MetricCard label="Fallback" value={aiRuntime?.last_fallback_used ? "Used" : "Idle"} hint={aiRuntime?.last_fallback_from?.length ? aiRuntime.last_fallback_from.join(", ") : "Primary handled last run"} />
+        <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+          <MetricCard label="AI Success Rate" value={metrics.aiFinished ? `${metrics.successRate}%` : "No runs"} hint={`${metrics.aiReady} ready / ${metrics.aiFailed} failed`} />
+          <MetricCard label="Today's Requests" value={metrics.todayRequests || 0} hint={`${metrics.generatedToday || 0} generated today`} />
+          <MetricCard label="Average Response Time" value={formatLatency(aiHealth.providers?.[0]?.avg_latency_ms)} hint="From stored evaluations" />
+          <MetricCard label="Pending Queue" value={metrics.pendingQueue || 0} hint="Missing AI drafts" />
+          <MetricCard label="Current Primary Provider" value={providerLabel(primaryProviderForm.provider)} hint={primaryProviderForm.model || "No model set"} />
+          <MetricCard label="Fallback Status" value={aiRuntime?.last_fallback_used ? "Used" : "Idle"} hint={aiRuntime?.last_fallback_from?.length ? aiRuntime.last_fallback_from.join(", ") : "Primary handled last run"} />
         </div>
 
         <div className="card admin-panel">
@@ -800,6 +909,9 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             <a className="btn btn-primary" href="/admin">Admin Portal</a>
           </div>
         </div>
+
+        <WorkflowSettings adminToken={adminToken} success={success} showError={showError} />
+        <PhaseManagement adminToken={adminToken} success={success} showError={showError} />
       </div>
     )
   }
@@ -813,8 +925,9 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{adminName} - operations and review control</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            <NotificationBell userType="admin" authToken={adminToken} />
             <ThemeToggle />
-            <button className="btn btn-secondary btn-sm" onClick={() => load({ silent: true })}>Refresh</button>
+            <RefreshButton onClick={refreshAction.refresh} refreshing={refreshAction.refreshing} updatedLabel={refreshAction.updatedLabel} />
             <button className="btn btn-secondary btn-sm" onClick={onLogout}>Logout</button>
           </div>
         </div>
@@ -828,6 +941,8 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             {tab === "overview" && renderOverview()}
             {tab === "people" && renderPeople()}
             {tab === "ai" && renderAiOps()}
+            {tab === "activity" && <AdminActivityLog adminToken={adminToken} success={success} showError={showError} />}
+            {tab === "queries" && <AdminQueriesPanel adminToken={adminToken} showError={showError} />}
             {tab === "settings" && renderSettings()}
           </>
         )}

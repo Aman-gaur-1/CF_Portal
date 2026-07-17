@@ -10,7 +10,10 @@ import Spinner from "@/components/ui/Spinner"
 import AiStatusBadge from "@/components/ui/AiStatusBadge"
 import SmartSearchInput from "@/components/ui/SmartSearchInput"
 import PaginationControls from "@/components/ui/PaginationControls"
+import RefreshButton from "@/components/ui/RefreshButton"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
+import TeacherQueryPanel from "@/components/teacher/TeacherQueryPanel"
+import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const POINT_OPTIONS = [
   { value: "100", label: "Assignment (+100 pts)" },
@@ -19,7 +22,7 @@ const POINT_OPTIONS = [
   { value: "20", label: "Micro Task (+20 pts)" },
   { value: "custom", label: "Manual points" },
 ]
-const DEFAULT_PHASE_OPTIONS = ["Python", "Data Analytics"]
+const DEFAULT_PHASE_OPTIONS = []
 const REVIEW_REFRESH_MS = 15000
 const SEARCH_DEBOUNCE_MS = 250
 const BULK_PROGRESS_REFRESH_MS = 3000
@@ -92,6 +95,43 @@ function isMissingAiFeedback(row) {
 
 function isBulkJobActive(job) {
   return job?.status === "running"
+}
+
+function formatBulkApprovalSummary(result) {
+  const reasons = formatBulkApprovalReasons(result)
+  const base = `Approved: ${result?.approved ?? result?.published ?? 0}. Skipped: ${result?.skipped || 0}.`
+  const duration = result?.duration_ms ? ` Duration: ${(Number(result.duration_ms) / 1000).toFixed(1)} seconds.` : ""
+  return reasons ? `${base} Reasons: ${reasons}.${duration}` : `${base}${duration}`
+}
+
+function formatBulkApprovalReasons(result, separator = "; ") {
+  return Object.entries(result?.reasons || {})
+    .filter(([, count]) => Number(count) > 0)
+    .map(([reason, count]) => `${reason}: ${count}`)
+    .join(separator)
+}
+
+function formatBulkApprovalConfirmation(preview, phaseName) {
+  const phaseLabel = phaseName || "All Phases"
+  const reasons = formatBulkApprovalReasons(preview, "\n")
+  return [
+    "Approve All AI Ready?",
+    "",
+    "Mode:",
+    phaseName ? "Selected Phase" : "Approve All Phases",
+    "",
+    "Phase:",
+    phaseLabel,
+    "",
+    "Eligible:",
+    String(preview?.eligible || 0),
+    "",
+    "Will Skip:",
+    String(preview?.skipped || 0),
+    "",
+    "Reasons:",
+    reasons || "None",
+  ].join("\n")
 }
 
 function isEditableTarget(target) {
@@ -374,7 +414,13 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   const [deletingSubmissionId, setDeletingSubmissionId] = useState(null)
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
   const [bulkStarting, setBulkStarting] = useState(false)
+  const [bulkApproving, setBulkApproving] = useState(false)
+  const [bulkApprovalProgress, setBulkApprovalProgress] = useState("")
+  const [bulkApprovalPhase, setBulkApprovalPhase] = useState("")
   const [bulkJob, setBulkJob] = useState(null)
+  const [studentQueryEnabled, setStudentQueryEnabled] = useState(false)
+  const [assignmentQueries, setAssignmentQueries] = useState([])
+  const [queryCounts, setQueryCounts] = useState({ open: 0, resolved: 0 })
   const [activeSubmissionId, setActiveSubmissionId] = useState(null)
   const [detailLoadingIds, setDetailLoadingIds] = useState([])
   const [page, setPage] = useState(1)
@@ -418,9 +464,10 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         idsPreview: confirmedReviewedIds.slice(0, 5),
       })
       if (confirmedReviewedIds.length) params.set("confirmedReviewedIds", confirmedReviewedIds.join(","))
-      const [res, analyticsRes] = await Promise.all([
+      const [res, analyticsRes, phasesRes] = await Promise.all([
         fetch(`/api/teacher-data?${params}`, { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal }),
         fetch(`/api/teacher-analytics?${new URLSearchParams(confirmedReviewedIds.length ? { confirmedReviewedIds: confirmedReviewedIds.join(",") } : {})}`, { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal }),
+        fetch("/api/assignment-phases", { cache: "no-store", signal: controller.signal }),
       ])
       const scoped = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(scoped.error || "Could not load reviews.")
@@ -439,6 +486,9 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
           batchDistribution: analytics.batchDistribution || [],
         })
       }
+      const phasePayload = phasesRes.ok ? await phasesRes.json().catch(() => ({})) : {}
+      const activePhaseNames = (phasePayload.phases || []).map(phase => phase.name).filter(Boolean)
+      const defaultPhaseName = phasePayload.defaultPhaseName || activePhaseNames[0] || ""
 
       const rows = (scoped.submissions || [])
         .map(row => {
@@ -466,7 +516,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       setPagination(nextPagination)
 
       const types = {}, phases = {}, customPoints = {}
-      const allPhases = new Set(DEFAULT_PHASE_OPTIONS)
+      const allPhases = new Set([...DEFAULT_PHASE_OPTIONS, ...activePhaseNames])
       for (const r of rows) {
         const rawType = r.submission_type || "assignment"
         if (rawType === "assignment") types[r.id] = "100"
@@ -475,8 +525,8 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
           types[r.id] = "custom"
           customPoints[r.id] = rawType
         } else types[r.id] = rawType
-        phases[r.id] = r.phase || "Python"
-        allPhases.add(r.phase || "Python")
+        phases[r.id] = r.phase || defaultPhaseName
+        if (r.phase) allPhases.add(r.phase)
       }
       setSubmissionTypes(types)
       setSubmissionCustomPoints(customPoints)
@@ -497,6 +547,25 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     }
   }, [aiStatusFilter, batchFilter, page, search, statusFilter, teacherToken])
 
+  const refreshAction = useRefreshAction({
+    onRefresh: () => load({ silent: true, requireAnalytics: true, throwOnError: true }),
+    onSuccess: success,
+    onError: showError,
+  })
+
+  const loadQueries = useCallback(async ({ signal } = {}) => {
+    const res = await fetch("/api/teacher-queries", {
+      headers: authHeaders(teacherToken),
+      cache: "no-store",
+      signal,
+    })
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(payload.error || "Could not load student queries.")
+    setStudentQueryEnabled(Boolean(payload.enabled))
+    setAssignmentQueries(payload.queries || [])
+    setQueryCounts(payload.counts || { open: 0, resolved: 0 })
+  }, [teacherToken])
+
   useEffect(() => {
     load()
     return () => {
@@ -504,8 +573,21 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     }
   }, [load])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    loadQueries({ signal: controller.signal }).catch(err => {
+      if (!isAbortError(err)) console.warn("[teacher-queries] load failed", err.message)
+    })
+    return () => controller.abort()
+  }, [loadQueries])
+
   useAdaptivePolling(
     () => load({ silent: true }),
+    { enabled: Boolean(teacherToken), activeMs: REVIEW_REFRESH_MS }
+  )
+
+  useAdaptivePolling(
+    () => loadQueries().catch(() => {}),
     { enabled: Boolean(teacherToken), activeMs: REVIEW_REFRESH_MS }
   )
 
@@ -681,6 +763,15 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     return data.filter(row => !isReviewedSubmission(row))
   }
 
+  function handleQueryResolved(query) {
+    if (!query?.id) return
+    setAssignmentQueries(prev => prev.map(item => item.id === query.id ? query : item))
+    setQueryCounts(prev => ({
+      open: Math.max((prev.open || 0) - 1, 0),
+      resolved: (prev.resolved || 0) + 1,
+    }))
+  }
+
   function adjacentPendingId(currentId, direction) {
     const rows = pendingRows()
     if (!rows.length) return null
@@ -712,7 +803,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     const wasReviewed = isReviewedSubmission(r)
     const rawType = submissionTypes[r.id] || r.submission_type || "assignment"
     const finalType = rawType === "custom" ? submissionCustomPoints[r.id] : rawType
-    const phase = submissionPhases[r.id] || r.phase || "Python"
+    const phase = submissionPhases[r.id] || r.phase || phaseOptions[0] || ""
     const feedback = (textOverride ?? feedbackEdits[r.id] ?? r.feedback ?? r.ai_feedback ?? "").trim()
     if (!feedback) { showError("Feedback cannot be empty."); return }
 
@@ -753,6 +844,38 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       showError(err.message || "Could not save feedback.")
     } finally {
       setFeedbackSavingId(null)
+    }
+  }
+
+  async function approveAllReadyFeedback() {
+    setBulkApproving(true)
+    setBulkApprovalProgress("Calculating eligible submissions...")
+    try {
+      const previewRes = await fetch("/api/teacher-feedback", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
+        body: JSON.stringify({ action: "bulk_approve_preview", phase: bulkApprovalPhase }),
+      })
+      const preview = await previewRes.json().catch(() => ({}))
+      if (!previewRes.ok) throw new Error(preview.error || "Could not preview AI feedback approvals.")
+      if (!window.confirm(formatBulkApprovalConfirmation(preview, bulkApprovalPhase))) return
+
+      setBulkApprovalProgress(`Processing 0 / ${preview.eligible || 0}...`)
+      const res = await fetch("/api/teacher-feedback", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
+        body: JSON.stringify({ action: "bulk_approve", phase: bulkApprovalPhase }),
+      })
+      const result = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(result.error || "Could not approve AI feedback.")
+      setBulkApprovalProgress(`Processing ${result?.processed ?? result?.approved ?? 0} / ${preview.eligible || result?.eligible || 0} complete.`)
+      await load({ silent: true, requireAnalytics: true, throwOnError: true })
+      success(formatBulkApprovalSummary(result))
+    } catch (err) {
+      showError(err.message || "Could not approve AI feedback.")
+    } finally {
+      setBulkApproving(false)
+      setTimeout(() => setBulkApprovalProgress(""), 1500)
     }
   }
 
@@ -917,6 +1040,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     { value: "Failed AI", label: `Failed AI (${submissionCounts.failed})` },
   ], [submissionCounts])
   const missingAiCount = useMemo(() => data.filter(isMissingAiFeedback).length, [data])
+  const readyAiCount = useMemo(() => data.filter(row => row.ai_feedback && !isReviewedSubmission(row)).length, [data])
   const bulkActive = isBulkJobActive(bulkJob)
   const filtered = data
   const activeSubmission = useMemo(() => {
@@ -969,7 +1093,17 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     <div>
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
         <p className="text-xs uppercase tracking-[0.25em]" style={{ color: "var(--text-muted)" }}>Review queue</p>
-        <p className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>{submissionCounts.pending} pending reviews</p>
+        <div className="flex items-center gap-3 flex-wrap justify-end">
+          <p className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>
+            {submissionCounts.pending} pending reviews{studentQueryEnabled ? ` - ${queryCounts.open || 0} open queries` : ""}
+          </p>
+          <RefreshButton
+            onClick={refreshAction.refresh}
+            refreshing={refreshAction.refreshing}
+            updatedLabel={refreshAction.updatedLabel}
+            disabled={loading}
+          />
+        </div>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <KpiCard id="total" label="Total" value={globalStats.totalSubmissions} active={activeKpi === "total"} onClick={applyKpiFilter} />
@@ -988,16 +1122,45 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
           {batchOptions.map(b => <option key={b}>{b}</option>)}
         </select>
         <SmartSearchInput value={searchInput} onChange={setSearchInput} />
-        {missingAiCount > 0 && (
-          <button
-            type="button"
-            className="btn btn-secondary whitespace-nowrap"
-            disabled={bulkActive || bulkStarting}
-            onClick={() => setBulkConfirmOpen(true)}
-          >
-            {bulkActive ? "Generating..." : "Generate Missing AI"}
-          </button>
-        )}
+        <div className="flex gap-2 flex-wrap items-center">
+          {bulkApprovalProgress && (
+            <span className="text-xs font-semibold whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
+              {bulkApprovalProgress}
+            </span>
+          )}
+          {readyAiCount > 0 && (
+            <>
+              <select
+                className="select text-sm max-w-[190px]"
+                value={bulkApprovalPhase}
+                onChange={e => setBulkApprovalPhase(e.target.value)}
+                aria-label="Bulk approval phase"
+                disabled={bulkApproving}
+              >
+                <option value="">All Phases</option>
+                {phaseOptions.map(phase => <option key={phase} value={phase}>{phase}</option>)}
+              </select>
+              <button
+                type="button"
+                className="btn btn-primary whitespace-nowrap"
+                disabled={bulkApproving}
+                onClick={approveAllReadyFeedback}
+              >
+                {bulkApproving ? "Processing..." : "Approve All AI Ready"}
+              </button>
+            </>
+          )}
+          {missingAiCount > 0 && (
+            <button
+              type="button"
+              className="btn btn-secondary whitespace-nowrap"
+              disabled={bulkActive || bulkStarting}
+              onClick={() => setBulkConfirmOpen(true)}
+            >
+              {bulkActive ? "Generating..." : "Generate Missing AI"}
+            </button>
+          )}
+        </div>
       </div>
 
       {(bulkActive || bulkJob?.status === "complete" || bulkJob?.status === "failed") && bulkJob?.total > 0 && (
@@ -1070,8 +1233,9 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
           const normalizedRawType = rawType === "assignment" ? "100" : rawType === "project" ? "200" : rawType
           const newType = /^[0-9]+$/.test(normalizedRawType) && !["100", "200", "50", "20"].includes(normalizedRawType) ? "custom" : normalizedRawType
           const customValue = submissionCustomPoints[r.id] || ""
-          const newPhase = submissionPhases[r.id] || r.phase || "Python"
+          const newPhase = submissionPhases[r.id] || r.phase || phaseOptions[0] || ""
           const reviewState = resolveSubmissionReviewState(r)
+          const openQueryCount = assignmentQueries.filter(query => String(query.submission_id) === String(r.id) && query.status === "open").length
 
           return (
             <div key={r.id} ref={node => { submissionRefs.current[r.id] = node }}>
@@ -1083,7 +1247,12 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                     <span className="submission-row-topic"><span aria-hidden>📘</span>{r.topic || "Untitled assignment"}</span>
                   </span>
                 )}
-                badge={<ReviewStatusPill state={reviewState} />}
+                badge={(
+                  <span className="flex items-center gap-2 flex-wrap">
+                    <ReviewStatusPill state={reviewState} />
+                    {studentQueryEnabled && openQueryCount > 0 && <span className="badge-query-open">{openQueryCount} QUERY</span>}
+                  </span>
+                )}
                 open={String(activeSubmissionId) === String(r.id)}
                 onToggle={open => setActiveSubmissionId(open ? r.id : null)}
               >
@@ -1124,6 +1293,15 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                 <AiGenerationNotice row={r} generatingIds={aiGeneratingIds} />
               )}
               {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "var(--surface)", color: "var(--text-secondary)" }}>Student note: {r.comment}</p>}
+              <TeacherQueryPanel
+                enabled={studentQueryEnabled}
+                submissionId={r.id}
+                queries={assignmentQueries}
+                teacherToken={teacherToken}
+                onResolved={handleQueryResolved}
+                onError={showError}
+                onSuccess={success}
+              />
               {r.file_url && r.file_name && (
                 <div className="flex gap-2 mb-3 flex-wrap items-center">
                   <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{r.original_file_name || r.file_name}</span>

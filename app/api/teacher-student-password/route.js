@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { getTeacherScope } from '@/lib/teacher-scope'
-import { hashStudentPassword, normalizeStudentName } from '@/lib/student-auth'
+import { hashStudentPasswordSecure, normalizeStudentName } from '@/lib/student-auth'
 import { appendActivity } from '@/lib/activity-log'
 
 function jsonNoStore(body, init) {
@@ -31,7 +31,7 @@ export async function PATCH(request) {
     if (!studentId) return jsonNoStore({ error: 'studentId is required' }, { status: 400 })
     if (!isUuid(studentId)) return jsonNoStore({ error: 'Invalid studentId.' }, { status: 400 })
     if (name && name.length > 120) return jsonNoStore({ error: 'Student name is too long.' }, { status: 400 })
-    if (password && password.length < 4) return jsonNoStore({ error: 'Password must be at least 4 characters.' }, { status: 400 })
+    if (password && password.length < 8) return jsonNoStore({ error: 'Password must be at least 8 characters.' }, { status: 400 })
     if (password.length > 200) return jsonNoStore({ error: 'Password is too long.' }, { status: 400 })
 
     const supabase = getSupabaseAdmin()
@@ -50,7 +50,7 @@ export async function PATCH(request) {
 
     const update = {}
     if (name) update.name = name
-    if (password) update.password_hash = hashStudentPassword(password)
+    if (password) update.password_hash = await hashStudentPasswordSecure(password)
     if (!Object.keys(update).length) return jsonNoStore({ error: 'Nothing to update.' }, { status: 400 })
 
     const { data: updatedStudent, error } = await supabase

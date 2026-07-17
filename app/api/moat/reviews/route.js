@@ -1,11 +1,13 @@
 import { unstable_noStore as noStore } from 'next/cache'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
+import { loadMoatKpis } from '@/lib/moat/kpi-service'
 import { moatJson, moatUnauthorized, requireMoatAdmin } from '@/lib/moat-api'
 
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 25
 const MAX_METRIC_ROWS = 10000
+const SORTS = new Set(['newest', 'oldest', 'highest_rating', 'lowest_rating', 'longest_review', 'shortest_review'])
 
 function asTrimmed(value) {
   return String(value || '').trim()
@@ -19,6 +21,11 @@ function parsePage(value) {
 function parseRating(value) {
   const rating = Number.parseInt(value || '', 10)
   return Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null
+}
+
+function parseSort(value) {
+  const sort = asTrimmed(value)
+  return SORTS.has(sort) ? sort : 'newest'
 }
 
 function normalizeDate(value, endOfDay = false) {
@@ -120,6 +127,7 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url)
     const page = parsePage(searchParams.get('page'))
+    const sort = parseSort(searchParams.get('sort'))
     const filters = {
       competitorId: asTrimmed(searchParams.get('competitor_id')),
       sourceId: asTrimmed(searchParams.get('source_id')),
@@ -159,13 +167,22 @@ export async function GET(request) {
 
     const from = (page - 1) * PAGE_SIZE
     const to = from + PAGE_SIZE - 1
-    const [filtersResult, metricsResult, reviewsResult] = await Promise.all([
+    let sortedListQuery = listQuery
+    if (sort === 'oldest') {
+      sortedListQuery = sortedListQuery.order('reviewed_at', { ascending: true, nullsFirst: false }).order('collected_at', { ascending: true, nullsFirst: false })
+    } else if (sort === 'highest_rating') {
+      sortedListQuery = sortedListQuery.order('rating', { ascending: false, nullsFirst: false }).order('reviewed_at', { ascending: false, nullsFirst: false })
+    } else if (sort === 'lowest_rating') {
+      sortedListQuery = sortedListQuery.order('rating', { ascending: true, nullsFirst: false }).order('reviewed_at', { ascending: false, nullsFirst: false })
+    } else {
+      sortedListQuery = sortedListQuery.order('reviewed_at', { ascending: false, nullsFirst: false }).order('collected_at', { ascending: false, nullsFirst: false })
+    }
+
+    const [filtersResult, metricsResult, reviewsResult, globalKpis] = await Promise.all([
       loadFilterOptions(supabase),
       metricQuery,
-      listQuery
-        .order('reviewed_at', { ascending: false, nullsFirst: false })
-        .order('collected_at', { ascending: false, nullsFirst: false })
-        .range(from, to),
+      sortedListQuery.range(from, to),
+      loadMoatKpis(),
     ])
 
     if (metricsResult.error) throw metricsResult.error
@@ -174,10 +191,19 @@ export async function GET(request) {
     const total = reviewsResult.count || 0
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
+    let reviews = (reviewsResult.data || []).map(serializeReview)
+    if (sort === 'longest_review' || sort === 'shortest_review') {
+      reviews = reviews.sort((a, b) => {
+        const delta = String(b.review_text || '').length - String(a.review_text || '').length
+        return sort === 'longest_review' ? delta : -delta
+      })
+    }
+
     return moatJson({
       metrics: calculateMetrics(metricsResult.data || [], total),
+      global_kpis: globalKpis,
       filters: filtersResult,
-      reviews: (reviewsResult.data || []).map(serializeReview),
+      reviews,
       pagination: {
         page,
         page_size: PAGE_SIZE,
