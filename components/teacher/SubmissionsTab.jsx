@@ -1043,6 +1043,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   const readyAiCount = useMemo(() => data.filter(row => row.ai_feedback && !isReviewedSubmission(row)).length, [data])
   const bulkActive = isBulkJobActive(bulkJob)
   const filtered = data
+  const isListView = activeSubmissionId === null
   const activeSubmission = useMemo(() => {
     return data.find(row => String(row.id) === String(activeSubmissionId)) || null
   }, [activeSubmissionId, data])
@@ -1128,7 +1129,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
               {bulkApprovalProgress}
             </span>
           )}
-          {readyAiCount > 0 && (
+          {isListView && readyAiCount > 0 && (
             <>
               <select
                 className="select text-sm max-w-[190px]"
