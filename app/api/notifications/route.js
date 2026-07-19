@@ -7,6 +7,7 @@ import { getSupabaseAdmin } from '@/lib/supabase-server'
 import {
   listNotifications,
   markNotificationRead,
+  markReferenceNotificationsRead,
   getNotificationPreferences,
   setNotificationPreferences,
   loadNotificationAnalytics,
@@ -126,7 +127,7 @@ async function ensureOperationalNotifications({ supabase, userType, userIdentifi
         icon: '!',
         severity: 'warning',
         actionLabel: 'Review Query',
-        actionUrl: '/teacher?tab=reviews',
+        actionUrl: '/teacher?tab=reviews&filter=open-queries',
         pinned: true,
         supabase,
       })
@@ -185,6 +186,15 @@ export async function PATCH(request) {
     if (body?.action === 'update_preferences') {
       const preferences = await setNotificationPreferences({ ...recipient, preferences: body?.preferences || {} })
       return jsonNoStore({ success: true, preferences })
+    }
+
+    if (body?.action === 'mark_reference_read') {
+      const updated = await markReferenceNotificationsRead({
+        ...recipient,
+        referenceType: body?.referenceType,
+        referenceIds: body?.referenceIds,
+      })
+      return jsonNoStore({ success: true, updated })
     }
 
     const updated = await markNotificationRead({

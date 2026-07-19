@@ -1,5 +1,5 @@
 "use client"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Tabs from "@/components/ui/Tabs"
 import SubmissionsTab from "@/components/teacher/SubmissionsTab"
 import StudentsTab from "@/components/teacher/StudentsTab"
@@ -17,6 +17,18 @@ const openLinkedIn = () => window.open("https://www.linkedin.com/in/aman-gaur-39
 
 export default function TeacherDashboard({ teacherName, teacherToken, onLogout }) {
   const [tab, setTab] = useState("reviews")
+  const [reviewFilter, setReviewFilter] = useState("")
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const requestedTab = params.get("tab")
+    const requestedFilter = params.get("filter")
+    if (requestedTab && TABS.some(item => item.id === requestedTab)) setTab(requestedTab)
+    if (requestedFilter === "open-queries") {
+      setTab("reviews")
+      setReviewFilter("Open Queries")
+    }
+  }, [])
 
   return (
     <div className="min-h-screen p-6" style={{ background: "var(--bg-main)" }}>
@@ -37,7 +49,7 @@ export default function TeacherDashboard({ teacherName, teacherToken, onLogout }
 
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
-        {tab === "reviews" && <SubmissionsTab teacherName={teacherName} teacherToken={teacherToken} />}
+        {tab === "reviews" && <SubmissionsTab teacherName={teacherName} teacherToken={teacherToken} requestedFilter={reviewFilter} />}
         {tab === "students" && <StudentsTab teacherToken={teacherToken} />}
         {tab === "batches" && <BatchesTab teacherName={teacherName} teacherToken={teacherToken} />}
 

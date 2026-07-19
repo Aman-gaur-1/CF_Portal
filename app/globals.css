@@ -355,7 +355,7 @@ textarea.input { resize: vertical; min-height: 100px; }
 .badge-done { background: var(--badge-done-bg); color: var(--badge-done-color); border-color: var(--badge-done-border); }
 .badge-pending { background: var(--badge-pending-bg); color: var(--badge-pending-color); border-color: var(--badge-pending-border); }
 .badge-failed { background: rgba(239,68,68,0.12); color: var(--danger); border-color: rgba(239,68,68,0.24); }
-.badge-query-open { background: rgba(245,158,11,0.14); color: #f59e0b; border-color: rgba(245,158,11,0.34); }
+.badge-query-open { background: rgba(239,68,68,0.16); color: #ef4444; border-color: rgba(239,68,68,0.48); font-weight: 900; text-transform: uppercase; box-shadow: 0 0 0 2px rgba(239,68,68,0.08); }
 .badge-query-resolved { background: rgba(16,185,129,0.12); color: #10b981; border-color: rgba(16,185,129,0.3); }
 .review-status-pill { display: inline-flex; align-items: center; min-height: 24px; padding: 4px 9px; border-radius: 999px; border: 1px solid transparent; font-family: var(--font-mono), monospace; font-size: 0.64rem; font-weight: 500; letter-spacing: 0.04em; white-space: nowrap; }
 .review-status-ready { background: rgba(14,165,233,0.12); color: #38bdf8; border-color: rgba(14,165,233,0.22); }

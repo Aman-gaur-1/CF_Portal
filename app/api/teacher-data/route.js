@@ -147,13 +147,18 @@ async function loadReviewPage(request, teacherName) {
   }
 
   const confirmedIds = confirmedReviewedIds(request.nextUrl.searchParams)
+  const openQuerySubmissionIds = await loadOpenQuerySubmissionIds(supabase, scope.batchNames, request.nextUrl.searchParams)
+  if (openQuerySubmissionIds && !openQuerySubmissionIds.length) {
+    return { ...scope, submissions: [], pagination: paginationMeta(page, 0) }
+  }
   const filteredQuery = applyReviewQueryFilters(
     supabase
       .from('submissions')
       .select(REVIEW_LIST_SELECT, { count: 'exact' })
       .in('batch', scope.batchNames),
     request.nextUrl.searchParams,
-    teacherName
+    teacherName,
+    openQuerySubmissionIds
   )
 
   const { data: rows, error, count } = await filteredQuery
@@ -197,7 +202,29 @@ async function loadReviewPage(request, teacherName) {
   }
 }
 
-function applyReviewQueryFilters(query, params, teacherName) {
+async function loadOpenQuerySubmissionIds(supabase, batchNames, params) {
+  if ((params.get('status') || 'All') !== 'Open Queries') return null
+  const { data: scopedSubmissions, error: submissionError } = await supabase
+    .from('submissions')
+    .select('id')
+    .in('batch', batchNames)
+  if (submissionError) throw new Error(submissionError.message)
+
+  const scopedIds = (scopedSubmissions || []).map(row => row.id)
+  if (!scopedIds.length) return []
+
+  const { data: openQueries, error: queryError } = await supabase
+    .from('assignment_queries')
+    .select('submission_id')
+    .eq('status', 'open')
+    .in('submission_id', scopedIds)
+    .limit(1000)
+  if (queryError) throw new Error(queryError.message)
+
+  return [...new Set((openQueries || []).map(row => row.submission_id).filter(Boolean))]
+}
+
+function applyReviewQueryFilters(query, params, teacherName, openQuerySubmissionIds = null) {
   let next = query
   const status = params.get('status') || 'All'
   const aiStatus = params.get('aiStatus') || 'All'
@@ -207,6 +234,7 @@ function applyReviewQueryFilters(query, params, teacherName) {
   if (status === 'Pending Feedback') next = next.is('feedback', null).is('feedback_at', null)
   if (status === 'Feedback Done') next = next.or('feedback.not.is.null,feedback_at.not.is.null')
   if (status === 'Failed AI') next = next.eq('ai_status', 'failed')
+  if (status === 'Open Queries' && openQuerySubmissionIds) next = next.in('id', openQuerySubmissionIds)
   if (aiStatus !== 'All') next = next.eq('ai_status', aiStatus)
   if (batch !== 'All Batches') next = next.eq('batch', batch)
 

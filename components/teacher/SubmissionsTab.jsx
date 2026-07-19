@@ -381,7 +381,7 @@ function mergeRowsWithLoadedDetails(rows, previousRows) {
   return mergedRows
 }
 
-export default function SubmissionsTab({ teacherName, teacherToken }) {
+export default function SubmissionsTab({ teacherName, teacherToken, requestedFilter = "" }) {
   const [data, setData] = useState([])
   const [batches, setBatches] = useState([])
   const [globalStats, setGlobalStats] = useState({
@@ -394,7 +394,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   })
   const [loading, setLoading] = useState(true)
   const [activeKpi, setActiveKpi] = useState("total")
-  const [statusFilter, setStatusFilter] = useState("All")
+  const [statusFilter, setStatusFilter] = useState(requestedFilter || "All")
   const [aiStatusFilter, setAiStatusFilter] = useState("All")
   const [batchFilter, setBatchFilter] = useState("All Batches")
   const [searchInput, setSearchInput] = useState("")
@@ -430,12 +430,14 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   const loadAbortRef = useRef(null)
   const bulkPollAbortRef = useRef(null)
   const activeSubmissionIdRef = useRef(null)
+  const listTopRef = useRef(null)
   const reviewInactivityTimerRef = useRef(null)
   const reviewSessionActiveRef = useRef(false)
   const confirmedPublishedRef = useRef(new Map())
   const confirmedAiDraftsRef = useRef(new Map())
   const submissionRefs = useRef({})
   const feedbackEditorRefs = useRef({})
+  const markedQueryNotificationIdsRef = useRef(new Set())
   const { toasts, success, error: showError } = useToast()
 
   const load = useCallback(async ({ silent = false, requireAnalytics = false, throwOnError = false } = {}) => {
@@ -572,6 +574,16 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       if (loadAbortRef.current) loadAbortRef.current.abort()
     }
   }, [load])
+
+  useEffect(() => {
+    if (!requestedFilter) return
+    setStatusFilter(requestedFilter)
+    setAiStatusFilter("All")
+    setActiveKpi("queries")
+    setActiveSubmissionId(null)
+    setPage(1)
+    setTimeout(() => listTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0)
+  }, [requestedFilter])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -770,6 +782,46 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       open: Math.max((prev.open || 0) - 1, 0),
       resolved: (prev.resolved || 0) + 1,
     }))
+  }
+
+  function openQueryCountForSubmission(submissionId) {
+    return assignmentQueries.filter(query => String(query.submission_id) === String(submissionId) && query.status === "open").length
+  }
+
+  function openQueriesForSubmission(submissionId) {
+    return assignmentQueries.filter(query => String(query.submission_id) === String(submissionId) && query.status === "open")
+  }
+
+  function applyOpenQueriesFilter() {
+    setPage(1)
+    setActiveKpi("queries")
+    setStatusFilter("Open Queries")
+    setAiStatusFilter("All")
+    setActiveSubmissionId(null)
+    setTimeout(() => listTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0)
+  }
+
+  async function markOpenQueryNotificationsRead(queries) {
+    const ids = queries
+      .map(query => String(query.id || "").trim())
+      .filter(id => id && !markedQueryNotificationIdsRef.current.has(id))
+    if (!ids.length) return
+    ids.forEach(id => markedQueryNotificationIdsRef.current.add(id))
+    try {
+      await fetch("/api/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
+        body: JSON.stringify({
+          userType: "teacher",
+          action: "mark_reference_read",
+          referenceType: "query",
+          referenceIds: ids,
+        }),
+      })
+      window.dispatchEvent(new Event("notifications:refresh"))
+    } catch (err) {
+      ids.forEach(id => markedQueryNotificationIdsRef.current.delete(id))
+    }
   }
 
   function adjacentPendingId(currentId, direction) {
@@ -1014,6 +1066,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     if (id === "total") setStatusFilter("All")
     if (id === "pending") setStatusFilter("Pending Feedback")
     if (id === "reviewed") setStatusFilter("Feedback Done")
+    if (id === "queries") setStatusFilter("Open Queries")
     if (id === "failed") {
       setStatusFilter("Failed AI")
       setAiStatusFilter("All")
@@ -1037,8 +1090,9 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
     { value: "All", label: `All (${submissionCounts.all})` },
     { value: "Pending Feedback", label: `Pending Feedback (${submissionCounts.pending})` },
     { value: "Feedback Done", label: `Reviewed (${submissionCounts.reviewed})` },
+    ...(studentQueryEnabled ? [{ value: "Open Queries", label: `Open Queries (${queryCounts.open || 0})` }] : []),
     { value: "Failed AI", label: `Failed AI (${submissionCounts.failed})` },
-  ], [submissionCounts])
+  ], [queryCounts.open, studentQueryEnabled, submissionCounts])
   const missingAiCount = useMemo(() => data.filter(isMissingAiFeedback).length, [data])
   const readyAiCount = useMemo(() => data.filter(row => row.ai_feedback && !isReviewedSubmission(row)).length, [data])
   const bulkActive = isBulkJobActive(bulkJob)
@@ -1051,6 +1105,12 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
   useEffect(() => {
     if (activeSubmissionId !== null && !activeSubmission) setActiveSubmissionId(null)
   }, [activeSubmission, activeSubmissionId])
+
+  useEffect(() => {
+    if (activeSubmissionId === null || !studentQueryEnabled) return
+    const openQueries = openQueriesForSubmission(activeSubmissionId)
+    if (openQueries.length) markOpenQueryNotificationsRead(openQueries)
+  }, [activeSubmissionId, assignmentQueries, studentQueryEnabled])
 
   const activeReviewActivity = reviewActivity || submissionReviewActivity(activeSubmission, teacherName)
   const otherReviewActivity = activeReviewActivity && activeReviewActivity.isCurrentTeacher === false
@@ -1096,7 +1156,21 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
         <p className="text-xs uppercase tracking-[0.25em]" style={{ color: "var(--text-muted)" }}>Review queue</p>
         <div className="flex items-center gap-3 flex-wrap justify-end">
           <p className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>
-            {submissionCounts.pending} pending reviews{studentQueryEnabled ? ` - ${queryCounts.open || 0} open queries` : ""}
+            {submissionCounts.pending} pending reviews
+            {studentQueryEnabled ? (
+              <>
+                {" - "}
+                <button
+                  type="button"
+                  className="text-xs font-black underline-offset-4 hover:underline"
+                  style={{ color: (queryCounts.open || 0) > 0 ? "var(--danger)" : "var(--text-secondary)" }}
+                  onClick={applyOpenQueriesFilter}
+                  disabled={(queryCounts.open || 0) === 0}
+                >
+                  {queryCounts.open || 0} Open Queries
+                </button>
+              </>
+            ) : ""}
           </p>
           <RefreshButton
             onClick={refreshAction.refresh}
@@ -1115,7 +1189,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
 
       <TeacherAnalyticsCharts globalStats={globalStats} />
 
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3 mb-4">
+      <div ref={listTopRef} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3 mb-4">
         <select className="select" value={statusFilter} onChange={e => handleStatusFilterChange(e.target.value)}>
           {statusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
@@ -1226,7 +1300,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
       {loading ? (
         <div className="flex justify-center py-16"><Spinner size="lg" /></div>
       ) : filtered.length === 0 ? (
-        <div className="card p-8 text-center"><p style={{ color: "var(--text-secondary)" }}>{search ? "No submissions matched your search." : "No assigned submissions found."}</p></div>
+        <div className="card p-8 text-center"><p style={{ color: "var(--text-secondary)" }}>{statusFilter === "Open Queries" ? "No submissions have open student queries." : search ? "No submissions matched your search." : "No assigned submissions found."}</p></div>
       ) : (
         filtered.map(r => {
           const hasFb = isReviewedSubmission(r)
@@ -1236,7 +1310,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
           const customValue = submissionCustomPoints[r.id] || ""
           const newPhase = submissionPhases[r.id] || r.phase || phaseOptions[0] || ""
           const reviewState = resolveSubmissionReviewState(r)
-          const openQueryCount = assignmentQueries.filter(query => String(query.submission_id) === String(r.id) && query.status === "open").length
+          const openQueryCount = openQueryCountForSubmission(r.id)
 
           return (
             <div key={r.id} ref={node => { submissionRefs.current[r.id] = node }}>
@@ -1251,7 +1325,7 @@ export default function SubmissionsTab({ teacherName, teacherToken }) {
                 badge={(
                   <span className="flex items-center gap-2 flex-wrap">
                     <ReviewStatusPill state={reviewState} />
-                    {studentQueryEnabled && openQueryCount > 0 && <span className="badge-query-open">{openQueryCount} QUERY</span>}
+                    {studentQueryEnabled && openQueryCount > 0 && <span className="badge-query-open" title="Student query needs a trainer response">{openQueryCount > 1 ? `${openQueryCount} Student Queries` : "Student Query"}</span>}
                   </span>
                 )}
                 open={String(activeSubmissionId) === String(r.id)}

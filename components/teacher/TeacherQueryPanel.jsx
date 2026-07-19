@@ -44,9 +44,16 @@ export default function TeacherQueryPanel({ enabled, submissionId, queries = [],
   }
 
   return (
-    <div className="mb-4 p-4 rounded-xl" style={{ background: "rgba(14,165,233,0.06)", border: "1px solid var(--border)" }}>
+    <div
+      className="mb-4 p-4 rounded-xl"
+      style={{
+        background: "linear-gradient(135deg,rgba(239,68,68,0.14),rgba(245,158,11,0.13))",
+        border: "2px solid rgba(239,68,68,0.42)",
+        boxShadow: "0 14px 32px rgba(239,68,68,0.12)",
+      }}
+    >
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-        <p className="text-sm font-semibold">Student Queries</p>
+        <p className="text-sm font-black uppercase tracking-[0.18em]" style={{ color: "var(--danger)" }}>Student Query</p>
         <span className="badge-query-open">{submissionQueries.filter(query => query.status === "open").length} open</span>
       </div>
 
@@ -54,10 +61,10 @@ export default function TeacherQueryPanel({ enabled, submissionId, queries = [],
         {submissionQueries.map(query => {
           const resolved = query.status === "resolved"
           return (
-            <div key={query.id} className="p-3 rounded-lg" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+            <div key={query.id} className="p-3 rounded-lg" style={{ background: "var(--bg-card)", border: resolved ? "1px solid var(--border)" : "1px solid rgba(239,68,68,0.35)" }}>
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                 <span className={resolved ? "badge-query-resolved" : "badge-query-open"}>{resolved ? "RESOLVED" : "OPEN"}</span>
-                <span className="text-xs" style={{ color: "var(--text-muted)" }}>{formatDate(query.created_at)}</span>
+                <span className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>Asked: {formatDate(query.created_at)}</span>
               </div>
               <p className="text-sm whitespace-pre-wrap mb-3">{query.query_text}</p>
               {resolved ? (
@@ -75,7 +82,7 @@ export default function TeacherQueryPanel({ enabled, submissionId, queries = [],
                     placeholder="Respond to the student query..."
                   />
                   <button className="btn btn-primary btn-sm flex items-center justify-center gap-2" type="button" onClick={() => resolveQuery(query)} disabled={savingId === query.id || !(responses[query.id] || "").trim()}>
-                    {savingId === query.id ? <Spinner size="sm" /> : "Mark as Resolved"}
+                    {savingId === query.id ? <Spinner size="sm" /> : "Reply and Mark Resolved"}
                   </button>
                 </div>
               )}

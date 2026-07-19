@@ -42,6 +42,7 @@ function iconFor(item) {
 }
 
 function targetFor(notification, userType) {
+  if (userType === "teacher" && notification.reference_type === "query") return "/teacher?tab=reviews&filter=open-queries"
   if (notification.action_url) return notification.action_url
   if (userType === "student") return "/?tab=feedback"
   if (userType === "teacher") return "/teacher?tab=reviews"
@@ -118,6 +119,14 @@ export default function NotificationBell({ userType, authToken, student }) {
   }, [loadNotifications])
 
   useEffect(() => {
+    function handleRefresh() {
+      loadNotifications().catch(() => {})
+    }
+    window.addEventListener("notifications:refresh", handleRefresh)
+    return () => window.removeEventListener("notifications:refresh", handleRefresh)
+  }, [loadNotifications])
+
+  useEffect(() => {
     function handleClick(event) {
       if (panelRef.current && !panelRef.current.contains(event.target)) setOpen(false)
     }
@@ -158,10 +167,6 @@ export default function NotificationBell({ userType, authToken, student }) {
     () => loadNotifications().catch(() => {}),
     { enabled: true, activeMs: realtimeReady ? 120000 : 30000, hiddenMs: realtimeReady ? 300000 : 60000 }
   )
-
-  useEffect(() => {
-    if (open && unreadCount > 0) markAllRead()
-  }, [open])
 
   async function patchNotifications(body) {
     return fetch("/api/notifications", {

@@ -163,7 +163,7 @@ async function createQueryNotifications({ supabase, query, submission, student }
       icon: '?',
       severity: 'info',
       actionLabel: 'Open Query',
-      actionUrl: '/teacher?tab=reviews',
+      actionUrl: '/teacher?tab=reviews&filter=open-queries',
       supabase,
     })
   }
