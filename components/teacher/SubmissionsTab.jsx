@@ -1094,7 +1094,10 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
     { value: "Failed AI", label: `Failed AI (${submissionCounts.failed})` },
   ], [queryCounts.open, studentQueryEnabled, submissionCounts])
   const missingAiCount = useMemo(() => data.filter(isMissingAiFeedback).length, [data])
-  const readyAiCount = useMemo(() => data.filter(row => row.ai_feedback && !isReviewedSubmission(row)).length, [data])
+  const readyAiCount = useMemo(() => {
+    const visibleReady = data.filter(row => row.ai_feedback && !isReviewedSubmission(row)).length
+    return Math.max(globalStats.aiHealth.ready || 0, visibleReady)
+  }, [data, globalStats.aiHealth.ready])
   const bulkActive = isBulkJobActive(bulkJob)
   const filtered = data
   const isListView = activeSubmissionId === null
