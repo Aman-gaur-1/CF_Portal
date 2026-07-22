@@ -13,6 +13,7 @@ import ThemeToggle from "@/components/ui/ThemeToggle"
 import AiStatusBadge from "@/components/ui/AiStatusBadge"
 import NotificationBell from "@/components/ui/NotificationBell"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
+import { ASSIGNMENT_PHASES, detectAssignmentLanguage, phaseMatchesDetectedLanguage } from "@/lib/assignment-analysis"
 
 const TABS = [{ id: "submit", label: "📤 Submit Assignment" }, { id: "feedback", label: "📋 My Feedback" }]
 const MAX_MB = 10
@@ -98,12 +99,24 @@ function FeedbackTranslation({ feedback, authToken, onError }) {
   )
 }
 
+async function readFileForDetection(file) {
+  if (!file) return ""
+  const lowerName = String(file.name || "").toLowerCase()
+  if (!/\.(py|sql|txt|md|json|ipynb|csv|html?)$/.test(lowerName)) return ""
+  if (file.size > 1024 * 1024) return ""
+  return file.text()
+}
+
 export default function StudentView({ student, onLogout }) {
     const [tab, setTab] = useState("submit")
   const [submissions, setSubmissions] = useState([])
   const [loadingSubs, setLoadingSubs] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [defaultPhaseName, setDefaultPhaseName] = useState("")
+  const [phaseOptions, setPhaseOptions] = useState(ASSIGNMENT_PHASES)
+  const [selectedPhase, setSelectedPhase] = useState("")
+  const [detectedAssignment, setDetectedAssignment] = useState({ language: "Unknown", phase: "Unknown", confidence: "none", evidence: [] })
+  const [phaseWarningAcknowledged, setPhaseWarningAcknowledged] = useState(false)
   const [studentQueryEnabled, setStudentQueryEnabled] = useState(false)
   const [assignmentQueries, setAssignmentQueries] = useState([])
   const loadAbortRef = useRef(null)
@@ -128,11 +141,44 @@ export default function StudentView({ student, onLogout }) {
     fetch("/api/assignment-phases", { cache: "no-store" })
       .then(res => res.ok ? res.json() : {})
       .then(data => {
-        if (!cancelled && data.defaultPhaseName) setDefaultPhaseName(data.defaultPhaseName)
+        if (cancelled) return
+        const activeNames = (data.phases || []).map(phase => phase.name).filter(Boolean)
+        const merged = [...ASSIGNMENT_PHASES, ...activeNames].filter((name, index, list) => list.indexOf(name) === index)
+        setPhaseOptions(merged)
+        if (data.defaultPhaseName) {
+          setDefaultPhaseName(data.defaultPhaseName)
+          setSelectedPhase(current => current || data.defaultPhaseName)
+        } else {
+          setSelectedPhase(current => current || merged[0] || "")
+        }
       })
       .catch(() => {})
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function detect() {
+      const fileText = file ? await readFileForDetection(file) : ""
+      if (cancelled) return
+      setDetectedAssignment(detectAssignmentLanguage({
+        text: [code, fileText].filter(Boolean).join("\n"),
+        fileName: file?.name || "",
+        topic,
+      }))
+      setPhaseWarningAcknowledged(false)
+    }
+
+    detect().catch(() => {
+      if (!cancelled) {
+        setDetectedAssignment(detectAssignmentLanguage({ text: code, fileName: file?.name || "", topic }))
+        setPhaseWarningAcknowledged(false)
+      }
+    })
+
+    return () => { cancelled = true }
+  }, [code, file, topic, selectedPhase])
 
   const loadQueries = useCallback(async () => {
     const res = await fetch("/api/student-queries", {
@@ -226,6 +272,7 @@ export default function StudentView({ student, onLogout }) {
     async function handleSubmit(e) {
     e.preventDefault()
     if (!topic.trim()) { showError("Topic is required."); return }
+    if (!selectedPhase.trim()) { showError("Assignment phase is required."); return }
     if (!file && !code.trim()) { showError("Upload a file or paste your code."); return }
 
     // Comprehensive file validation
@@ -260,7 +307,7 @@ export default function StudentView({ student, onLogout }) {
         const { error: uploadErr } = await supabase.storage.from("assignments").upload(storedName, file, { contentType: prepareData.upload.mimeType })
         if (uploadErr) throw uploadErr
       }
-      let resolvedPhaseName = defaultPhaseName
+      let resolvedPhaseName = selectedPhase || defaultPhaseName
       if (!resolvedPhaseName) {
         try {
           const phaseRes = await fetch("/api/assignment-phases", { cache: "no-store" })
@@ -274,9 +321,12 @@ export default function StudentView({ student, onLogout }) {
 
       const submissionPayload = {
         topic: topic.trim(), file_name: storedName, original_file_name: originalFileName, file_url: fileUrl,
-        code_text: code.trim() || null, comment: comment.trim(),
+        code_text: code.trim() || null,
+        comment: comment.trim(),
+        phase: resolvedPhaseName,
+        detected_assignment_language: detectedAssignment.language !== "Unknown" ? detectedAssignment.language : null,
+        detected_assignment_phase: detectedAssignment.phase !== "Unknown" ? detectedAssignment.phase : null,
       }
-      if (resolvedPhaseName) submissionPayload.phase = resolvedPhaseName
 
       const submitRes = await fetch("/api/student-submissions", {
         method: "POST",
@@ -297,7 +347,7 @@ export default function StudentView({ student, onLogout }) {
         })
       }
 
-      setTopic(""); setFile(null); setCode(""); setComment("")
+      setTopic(""); setFile(null); setCode(""); setComment(""); setPhaseWarningAcknowledged(false)
       const fi = document.getElementById("fileInput"); if (fi) fi.value = ""
     } catch (err) {
       showError(`Submission failed: ${err.message}`)
@@ -307,6 +357,10 @@ export default function StudentView({ student, onLogout }) {
   }
 
   const pending = submissions.filter(r => !isReviewedSubmission(r)).length
+  const showPhaseWarning = selectedPhase &&
+    Number(detectedAssignment.confidence || 0) > 0 &&
+    detectedAssignment.phase !== "Unknown" &&
+    !phaseMatchesDetectedLanguage(selectedPhase, detectedAssignment)
 
   return (
     <div className="min-h-screen p-6" style={{ background: "var(--bg-main)" }}>
@@ -340,11 +394,33 @@ export default function StudentView({ student, onLogout }) {
                 <input className="input" value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. Functions, OOP, Pandas..." />
               </div>
 
+              <div>
+                <label className="label">Assignment Phase *</label>
+                <select className="input" value={selectedPhase} onChange={e => setSelectedPhase(e.target.value)}>
+                  <option value="">Select phase</option>
+                  {phaseOptions.map(phase => <option key={phase} value={phase}>{phase}</option>)}
+                </select>
+              </div>
+
+              {showPhaseWarning && (
+                <div className="rounded-lg p-4 text-sm" style={{ border: "1px solid var(--warning)", background: "var(--surface)" }}>
+                  <p className="font-semibold mb-2" style={{ color: "var(--warning)" }}>Phase and detected work may not match.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                    <span><b>Selected Phase:</b> {selectedPhase}</span>
+                    <span><b>Detected:</b> {detectedAssignment.language}</span>
+                  </div>
+                  <label className="flex items-start gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+                    <input type="checkbox" checked={phaseWarningAcknowledged} onChange={e => setPhaseWarningAcknowledged(e.target.checked)} />
+                    I want to continue with the selected phase.
+                  </label>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="rounded-xl p-4" style={{ border: "1px dashed var(--border)", background: "var(--surface)" }}>
                   <p className="text-xs font-semibold mb-2" style={{ color: "var(--text-muted)" }}>📁 Option 1: Upload File</p>
                   <label className="label">File (max {MAX_MB}MB)</label>
-                  <input id="fileInput" type="file" accept=".py,.txt,.md,.json,.html,.ipynb,.js,.ts,.jsx,.tsx,.csv,.zip,.pdf"
+                  <input id="fileInput" type="file" accept=".py,.txt,.md,.json,.html,.ipynb,.js,.ts,.jsx,.tsx,.csv,.pdf,.docx"
                     className="input text-xs py-2 cursor-pointer"
                     onChange={e => setFile(e.target.files[0] || null)}
                     style={{ color: "var(--text-secondary)" }}
@@ -363,7 +439,7 @@ export default function StudentView({ student, onLogout }) {
                 <textarea className="input" rows={3} value={comment} onChange={e => setComment(e.target.value)} placeholder="Any question or note for the trainer..." />
               </div>
 
-              <button type="submit" className="btn btn-primary flex items-center justify-center gap-2" disabled={submitting}>
+              <button type="submit" className="btn btn-primary flex items-center justify-center gap-2" disabled={submitting || (showPhaseWarning && !phaseWarningAcknowledged)}>
                 {submitting ? <Spinner /> : "🚀 Submit Assignment"}
               </button>
             </form>

@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getStudentFromRequest } from '@/lib/student-auth'
 import { sanitizeStudentText } from '@/lib/ai/sanitize'
 import { withSignedAssignmentUrls } from '@/lib/assignment-file-access'
+import { detectAssignmentLanguage, detectAssignmentType, normalizeAssignmentPhase, phaseMatchesDetectedLanguage } from '@/lib/assignment-analysis'
 
 export const dynamic = 'force-dynamic'
 
@@ -86,9 +87,22 @@ export async function POST(request) {
     const codeText = sanitizeStudentText(body?.code_text, 50000)
     const fileName = String(body?.file_name || '').trim()
     const originalFileName = String(body?.original_file_name || '').trim().slice(0, 240) || null
+    const phase = normalizeAssignmentPhase(body?.phase)
 
     if (!topic) return jsonNoStore({ error: 'Topic is required' }, { status: 400 })
+    if (!phase) return jsonNoStore({ error: 'Assignment phase is required' }, { status: 400 })
     if (!fileName && !codeText) return jsonNoStore({ error: 'Upload a file or paste your code' }, { status: 400 })
+
+    const detected = detectAssignmentLanguage({
+      text: codeText,
+      fileName: originalFileName || fileName,
+      topic,
+    })
+    const assignmentType = detectAssignmentType({
+      text: codeText,
+      fileName: originalFileName || fileName,
+      topic,
+    })
 
     const payload = {
       student_id: student.id,
@@ -102,10 +116,14 @@ export async function POST(request) {
       comment: sanitizeStudentText(body?.comment, 2000),
       submitted_at: new Date().toISOString(),
       submission_type: 'assignment',
+      phase,
+      detected_assignment_language: sanitizeStudentText(body?.detected_assignment_language, 80) || detected.language,
+      detected_assignment_phase: normalizeAssignmentPhase(body?.detected_assignment_phase) || detected.phase,
+      detected_assignment_type: assignmentType,
+      final_evaluation_phase: phase,
+      phase_detection_warning: !phaseMatchesDetectedLanguage(phase, detected),
       ai_status: 'pending',
     }
-    const phase = String(body?.phase || '').trim()
-    if (phase) payload.phase = phase
 
     const { data, error } = await supabase
       .from('submissions')

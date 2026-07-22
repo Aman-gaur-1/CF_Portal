@@ -45,6 +45,7 @@ export async function POST(request) {
       draft: result.draft,
       ai_feedback: result.ai_feedback,
       ai_score: normalizeAiScore(result.evaluation?.score),
+      ai_assignment_diagnostics: result.evaluation?.diagnostics?.assignment_phase || null,
       message: 'AI draft ready.',
     })
   } catch (err) {

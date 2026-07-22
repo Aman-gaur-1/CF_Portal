@@ -203,6 +203,40 @@ function AiScoreBadge({ score }) {
   )
 }
 
+function EvaluatorDecisionBadge({ row }) {
+  const diagnostics = row?.ai_assignment_diagnostics || {}
+  const selected = diagnostics.selected_phase || diagnostics.selected || row?.phase || ""
+  const detected = diagnostics.detected_phase || row?.detected_assignment_phase || ""
+  const finalPhase = diagnostics.final_evaluation_phase || row?.final_evaluation_phase || selected
+  const assignmentType = diagnostics.assignment_type || row?.detected_assignment_type || ""
+  const confidence = Number(diagnostics.confidence)
+  const confidenceLabel = Number.isFinite(confidence)
+    ? `${Math.round(confidence * 100)}%`
+    : diagnostics.confidence_percent
+      ? `${diagnostics.confidence_percent}%`
+      : ""
+
+  if (!detected && !finalPhase && !assignmentType) return null
+
+  const title = [
+    selected ? `Selected: ${selected}` : "",
+    detected ? `Detected: ${detected}` : "",
+    confidenceLabel ? `Confidence: ${confidenceLabel}` : "",
+    finalPhase ? `Evaluator: ${finalPhase}` : "",
+    assignmentType ? `Type: ${assignmentType}` : "",
+  ].filter(Boolean).join(" | ")
+
+  return (
+    <span
+      className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+      style={{ color: "var(--text-secondary)", background: "var(--surface)", border: "1px solid var(--border)" }}
+      title={title}
+    >
+      {finalPhase || detected} evaluator{diagnostics.overridden ? " override" : ""}
+    </span>
+  )
+}
+
 function aiStatusView(row, generatingIds = []) {
   const status = String(row?.ai_status || "").toLowerCase()
   const diagnostics = aiProviderDiagnostics(row)
@@ -995,6 +1029,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
         ai_error: null,
         ai_feedback: data.ai_feedback,
         ai_score: typeof data.ai_score === "number" ? data.ai_score : null,
+        ai_assignment_diagnostics: data.ai_assignment_diagnostics || null,
         ai_feedback_at: new Date().toISOString(),
       }
       confirmedAiDraftsRef.current.set(submissionId, confirmedDraft)
@@ -1396,6 +1431,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>AI Draft</p>
                       <AiScoreBadge score={aiScoreValue(r)} />
+                      <EvaluatorDecisionBadge row={r} />
                       <AiStatusBadge
                         status={r.ai_feedback ? "ready" : r.ai_status || "ready"}
                         error={publicAiError(r.ai_error)}
