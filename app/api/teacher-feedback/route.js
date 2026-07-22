@@ -11,6 +11,7 @@ import {
   previewBulkAiApproval,
 } from '@/lib/ai/bulk-approval'
 import { APPROVAL_METHOD, publishSubmissionFeedback } from '@/lib/submission-publisher'
+import { appendActivity } from '@/lib/activity-log'
 
 export const dynamic = 'force-dynamic'
 
@@ -101,11 +102,19 @@ export async function PATCH(request) {
     const body = await request.json()
     const supabase = getSupabaseAdmin()
     if (body?.action === 'bulk_approve_preview') {
-      return jsonNoStore({ success: true, ...await previewTeacherFeedback(supabase, teacher.name, { phase: body?.phase }) })
+      return jsonNoStore({ success: true, ...await previewTeacherFeedback(supabase, teacher.name, { phase: body?.phase, ids: body?.submissionIds }) })
     }
 
     if (body?.action === 'bulk_approve') {
-      return jsonNoStore({ success: true, ...await bulkApproveTeacherFeedback(supabase, teacher.name, { phase: body?.phase }) })
+      return jsonNoStore({ success: true, ...await bulkApproveTeacherFeedback(supabase, teacher.name, { phase: body?.phase, ids: body?.submissionIds }) })
+    }
+
+    if (body?.action === 'force_approve') {
+      return jsonNoStore({ success: true, ...await forceApproveSubmission(supabase, teacher.name, body, diagnosticId) })
+    }
+
+    if (body?.action === 'bulk_force_approve') {
+      return jsonNoStore({ success: true, ...await bulkForceApproveTeacherFeedback(supabase, teacher.name, { phase: body?.phase, ids: body?.submissionIds }) })
     }
 
     const submissionId = String(body?.submissionId || '').trim()
@@ -231,20 +240,30 @@ export async function PATCH(request) {
   }
 }
 
-async function previewTeacherFeedback(supabase, teacherName, { phase = '' } = {}) {
+async function previewTeacherFeedback(supabase, teacherName, { phase = '', ids = null } = {}) {
   const scope = await getTeacherScope(supabase, teacherName)
   if (!scope.batchNames.length) return previewBulkAiApproval([])
 
-  const rows = await fetchBulkApprovalCandidates({ supabase, batchNames: scope.batchNames, phase: String(phase || '').trim() })
+  const rows = await fetchBulkApprovalCandidates({
+    supabase,
+    batchNames: scope.batchNames,
+    phase: String(phase || '').trim(),
+    ids: Array.isArray(ids) ? ids.map(String) : null,
+  })
   return previewBulkAiApproval(rows)
 }
 
-async function bulkApproveTeacherFeedback(supabase, teacherName, { phase = '' } = {}) {
+async function bulkApproveTeacherFeedback(supabase, teacherName, { phase = '', ids = null } = {}) {
   const scope = await getTeacherScope(supabase, teacherName)
   if (!scope.batchNames.length) return previewBulkAiApproval([])
 
   const selectedPhase = String(phase || '').trim()
-  const rows = await fetchBulkApprovalCandidates({ supabase, batchNames: scope.batchNames, phase: selectedPhase })
+  const rows = await fetchBulkApprovalCandidates({
+    supabase,
+    batchNames: scope.batchNames,
+    phase: selectedPhase,
+    ids: Array.isArray(ids) ? ids.map(String) : null,
+  })
   return executeBulkAiApproval({
     supabase,
     rows,
@@ -253,5 +272,80 @@ async function bulkApproveTeacherFeedback(supabase, teacherName, { phase = '' } 
     batchNames: scope.batchNames,
     phase: selectedPhase,
     audit: { userName: scope.teacherName || teacherName },
+  })
+}
+
+async function forceApproveSubmission(supabase, teacherName, body, diagnosticId) {
+  const submissionId = String(body?.submissionId || '').trim()
+  if (!submissionId) {
+    const err = new Error('submissionId is required')
+    err.status = 400
+    throw err
+  }
+
+  const { scoped, submission } = await assertSubmissionInTeacherScope(supabase, teacherName, submissionId)
+  const feedback = sanitizeStudentText(body?.feedback || submission.ai_feedback || submission.feedback, 8000)
+  if (!feedback) {
+    const err = new Error('Force approve requires feedback or an AI draft.')
+    err.status = 400
+    throw err
+  }
+
+  const result = await publishSubmissionFeedback({
+    submissionId,
+    feedback,
+    actorName: scoped.teacherName || teacherName,
+    actorRole: 'teacher',
+    approvalMethod: APPROVAL_METHOD.FORCE,
+    submissionType: body?.submission_type,
+    phase: body?.phase,
+    allowUpdatePublished: false,
+    supabase,
+  })
+
+  if (!result.published) {
+    return {
+      persisted: false,
+      diagnosticId,
+      error: result.detail || result.reason || 'Force approve could not publish this draft.',
+      reason: result.reason,
+      submission: result.submission,
+    }
+  }
+
+  await appendActivity({
+    eventType: 'review_force_approve_requested',
+    description: `force approve confirmed for ${result.submission?.topic || 'assignment'} (${result.reason || 'published'})`,
+    actorName: scoped.teacherName || teacherName,
+    actorRole: 'teacher',
+    supabase,
+  })
+
+  return {
+    persisted: true,
+    diagnosticId,
+    submission: result.submission,
+  }
+}
+
+async function bulkForceApproveTeacherFeedback(supabase, teacherName, { phase = '', ids = null } = {}) {
+  const scope = await getTeacherScope(supabase, teacherName)
+  if (!scope.batchNames.length) return previewBulkAiApproval([])
+  const rows = await fetchBulkApprovalCandidates({
+    supabase,
+    batchNames: scope.batchNames,
+    phase: String(phase || '').trim(),
+    ids: Array.isArray(ids) ? ids.map(String) : null,
+  })
+
+  return executeBulkAiApproval({
+    supabase,
+    rows,
+    actorName: scope.teacherName || teacherName,
+    actorRole: 'teacher',
+    batchNames: scope.batchNames,
+    phase: String(phase || '').trim(),
+    force: true,
+    audit: { userName: scope.teacherName || teacherName, action: 'bulk_force_approve' },
   })
 }

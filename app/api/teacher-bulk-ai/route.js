@@ -90,6 +90,7 @@ function serializeJob(job) {
   return {
     id: job.id,
     status: job.status,
+    action: job.action || 'generate_missing',
     total: job.total,
     completed: job.completed,
     failed: job.failed,
@@ -346,6 +347,8 @@ export async function POST(request) {
     noStore()
     const teacher = getTeacherFromRequest(request)
     if (!teacher) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
+    const body = await request.json().catch(() => ({}))
+    const action = String(body?.action || 'generate_missing').trim()
 
     const jobKey = getTeacherJobKey(teacher.name)
     const supabase = getSupabaseAdmin()
@@ -365,8 +368,13 @@ export async function POST(request) {
       : { data: [], error: null }
     if (submissionError) throw new Error(submissionError.message)
 
+    const requestedIds = Array.isArray(body?.submissionIds) ? new Set(body.submissionIds.map(id => String(id))) : null
     const submissionIds = (submissions || [])
-      .filter(isMissingAiFeedback)
+      .filter(row => {
+        if (requestedIds && !requestedIds.has(String(row.id))) return false
+        if (action === 'retry_failed') return row.ai_status === AI_STATUS.FAILED && !isReviewedSubmission(row)
+        return isMissingAiFeedback(row)
+      })
       .map(row => String(row.id))
 
     if (!submissionIds.length) {
@@ -387,19 +395,64 @@ export async function POST(request) {
       return jsonNoStoreWithPayloadLog({ success: true, job: serializeJob(emptyJob) }, { mode: 'empty-job' })
     }
 
+    const queuedAt = new Date().toISOString()
+    let queueMarkQuery = supabase
+      .from('submissions')
+      .update({
+        ai_status: AI_STATUS.PENDING,
+        ai_workflow_state: 'queued',
+        ai_error: 'Queued successfully. Generation will start shortly.',
+        ai_feedback_at: queuedAt,
+      })
+      .in('id', submissionIds)
+      .is('feedback', null)
+      .is('feedback_at', null)
+      .is('approval_at', null)
+      .is('approved_at', null)
+
+    queueMarkQuery = action === 'retry_failed'
+      ? queueMarkQuery.eq('ai_status', AI_STATUS.FAILED)
+      : queueMarkQuery.neq('ai_status', AI_STATUS.PROCESSING)
+
+    const { data: queuedRows, error: queueMarkError } = await queueMarkQuery.select('id')
+    if (queueMarkError) throw new Error(queueMarkError.message)
+
+    const queuedIds = new Set((queuedRows || []).map(row => String(row.id)))
+    const skippedByQueueGuard = submissionIds.length - queuedIds.size
+    const queuedSubmissionIds = submissionIds.filter(id => queuedIds.has(String(id)))
+
+    if (!queuedSubmissionIds.length) {
+      const emptyJob = {
+        id: `${jobKey}-${Date.now()}`,
+        status: 'complete',
+        total: submissionIds.length,
+        completed: 0,
+        failed: 0,
+        skipped: skippedByQueueGuard,
+        submissionIds: [],
+        currentSubmissionId: null,
+        currentState: skippedByQueueGuard ? 'Skipped: no longer eligible' : null,
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+      }
+      await saveTeacherJob(teacher.name, emptyJob, supabase)
+      return jsonNoStoreWithPayloadLog({ success: true, job: serializeJob(emptyJob) }, { mode: 'empty-job' })
+    }
+
     const job = {
       id: `${jobKey}-${Date.now()}`,
       status: 'running',
-      total: submissionIds.length,
+      total: queuedSubmissionIds.length + skippedByQueueGuard,
       completed: 0,
       failed: 0,
-      skipped: 0,
-      submissionIds,
+      skipped: skippedByQueueGuard,
+      submissionIds: queuedSubmissionIds,
       attemptsBySubmissionId: {},
       retryAfterBySubmissionId: {},
       failures: [],
       currentSubmissionId: null,
       currentState: 'Queued',
+      action,
       startedAt: new Date().toISOString(),
       lastProgressAt: new Date().toISOString(),
       finishedAt: null,

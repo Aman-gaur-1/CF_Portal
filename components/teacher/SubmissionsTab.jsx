@@ -239,12 +239,15 @@ function EvaluatorDecisionBadge({ row }) {
 
 function aiStatusView(row, generatingIds = []) {
   const status = String(row?.ai_status || "").toLowerCase()
+  const workflowState = String(row?.ai_workflow_state || "").toLowerCase()
   const diagnostics = aiProviderDiagnostics(row)
   const queuedAt = row?.ai_feedback_at
   const elapsedMs = queuedAt ? Date.now() - new Date(queuedAt).getTime() : 0
   const locallyQueued = generatingIds.includes(String(row?.id))
 
-  if (status === "ready" || row?.ai_feedback) {
+  if (workflowState === "published") return null
+
+  if (status === "ready" || workflowState === "draft_ready" || row?.ai_feedback) {
     if (diagnostics?.fallback_used) {
       return {
         status: "ready",
@@ -261,16 +264,18 @@ function aiStatusView(row, generatingIds = []) {
     }
   }
 
-  if (status === "failed") {
+  if (status === "failed" || workflowState === "failed") {
+    const retryCount = Number(row?.ai_retry_count || 0)
+    const reason = row?.ai_failure_reason || publicAiError(row?.ai_error) || "AI draft failed"
     return {
       status: "failed",
       title: "Failed",
-      message: publicAiError(row?.ai_error) || "AI draft failed. You can retry.",
+      message: `${reason}. ${retryCount ? `Retry count: ${retryCount}. ` : ""}You can retry.`,
       tone: "failed",
     }
   }
 
-  if (status === "processing") {
+  if (status === "processing" || workflowState === "processing") {
     if (Number.isFinite(elapsedMs) && elapsedMs > 45_000) {
       return {
         status: "processing",
@@ -287,10 +292,10 @@ function aiStatusView(row, generatingIds = []) {
     }
   }
 
-  if (status === "pending" || locallyQueued) {
+  if (status === "pending" || workflowState === "queued" || locallyQueued) {
     return {
       status: "pending",
-      title: "Queued",
+      title: workflowState === "queued" || locallyQueued ? "Queued" : "Pending",
       message: row?.ai_error || "Queued successfully. Generation will start shortly.",
       tone: "queued",
     }
@@ -302,6 +307,8 @@ function aiStatusView(row, generatingIds = []) {
 function AiGenerationNotice({ row, generatingIds }) {
   const view = aiStatusView(row, generatingIds)
   if (!view) return null
+  const duration = Number(row?.ai_last_duration_ms)
+  const durationText = Number.isFinite(duration) && duration > 0 ? ` Processing time: ${Math.round(duration / 1000)}s.` : ""
 
   const styles = {
     queued: { background: "rgba(59,130,246,0.08)", borderColor: "rgba(59,130,246,0.24)" },
@@ -321,7 +328,7 @@ function AiGenerationNotice({ row, generatingIds }) {
     >
       <div className="min-w-0">
         <p className="text-sm font-semibold">{view.title}</p>
-        <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{view.message}</p>
+        <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{view.message}{durationText}</p>
       </div>
       <AiStatusBadge
         status={view.status}
@@ -340,6 +347,14 @@ function publicAiError(message) {
     return "AI service took too long. Please retry."
   }
   return text
+}
+
+function approvalMethodLabel(method) {
+  const value = String(method || "").toLowerCase()
+  if (value === "auto" || value === "ai") return "AI"
+  if (value === "force") return "Force"
+  if (value === "manual") return "Manual"
+  return ""
 }
 
 function aiGenerationButtonLabel(row, generatingIds, regenerate = false) {
@@ -452,6 +467,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
   const [bulkApprovalProgress, setBulkApprovalProgress] = useState("")
   const [bulkApprovalPhase, setBulkApprovalPhase] = useState("")
   const [bulkJob, setBulkJob] = useState(null)
+  const [selectedSubmissionIds, setSelectedSubmissionIds] = useState([])
   const [studentQueryEnabled, setStudentQueryEnabled] = useState(false)
   const [assignmentQueries, setAssignmentQueries] = useState([])
   const [queryCounts, setQueryCounts] = useState({ open: 0, resolved: 0 })
@@ -933,6 +949,40 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
     }
   }
 
+  async function forceApprove(r) {
+    if (!r?.id) return
+    const feedback = (draftEdits[r.id] ?? r.ai_feedback ?? r.feedback ?? "").trim()
+    if (!feedback) { showError("Force approve requires feedback or an AI draft."); return }
+    if (!window.confirm("Force approve this draft now? This bypasses AI validation checks and publishes immediately.")) return
+
+    setFeedbackSavingId(r.id)
+    try {
+      const res = await fetch("/api/teacher-feedback", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
+        body: JSON.stringify({
+          action: "force_approve",
+          submissionId: r.id,
+          feedback,
+          submission_type: submissionTypes[r.id] || r.submission_type,
+          phase: submissionPhases[r.id] || r.phase,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.persisted) throw new Error(data.error || "Could not force approve draft.")
+      const normalizedPublished = decorateSubmissionReviewState(data.submission)
+      ensureConfirmedPublishedMap(confirmedPublishedRef).set(String(r.id), normalizedPublished)
+      confirmedAiDraftsRef.current.delete(String(r.id))
+      setData(prev => prev.map(row => String(row.id) === String(r.id) ? decorateSubmissionReviewState({ ...row, ...normalizedPublished }) : row))
+      await load({ silent: true, requireAnalytics: true, throwOnError: true })
+      success("Draft force approved and published.")
+    } catch (err) {
+      showError(err.message || "Could not force approve draft.")
+    } finally {
+      setFeedbackSavingId(null)
+    }
+  }
+
   async function approveAllReadyFeedback() {
     setBulkApproving(true)
     setBulkApprovalProgress("Calculating eligible submissions...")
@@ -940,7 +990,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
       const previewRes = await fetch("/api/teacher-feedback", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
-        body: JSON.stringify({ action: "bulk_approve_preview", phase: bulkApprovalPhase }),
+        body: JSON.stringify({ action: "bulk_approve_preview", phase: bulkApprovalPhase, submissionIds: selectedSubmissionIds.length ? selectedSubmissionIds : undefined }),
       })
       const preview = await previewRes.json().catch(() => ({}))
       if (!previewRes.ok) throw new Error(preview.error || "Could not preview AI feedback approvals.")
@@ -950,15 +1000,40 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
       const res = await fetch("/api/teacher-feedback", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
-        body: JSON.stringify({ action: "bulk_approve", phase: bulkApprovalPhase }),
+        body: JSON.stringify({ action: "bulk_approve", phase: bulkApprovalPhase, submissionIds: selectedSubmissionIds.length ? selectedSubmissionIds : undefined }),
       })
       const result = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(result.error || "Could not approve AI feedback.")
       setBulkApprovalProgress(`Processing ${result?.processed ?? result?.approved ?? 0} / ${preview.eligible || result?.eligible || 0} complete.`)
       await load({ silent: true, requireAnalytics: true, throwOnError: true })
+      setSelectedSubmissionIds([])
       success(formatBulkApprovalSummary(result))
     } catch (err) {
       showError(err.message || "Could not approve AI feedback.")
+    } finally {
+      setBulkApproving(false)
+      setTimeout(() => setBulkApprovalProgress(""), 1500)
+    }
+  }
+
+  async function forceApproveReadyFeedback() {
+    if (!window.confirm("Force approve all ready AI drafts in this scope? This bypasses AI validation checks.")) return
+    setBulkApproving(true)
+    setBulkApprovalProgress("Force approving ready drafts...")
+    try {
+      const res = await fetch("/api/teacher-feedback", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
+        body: JSON.stringify({ action: "bulk_force_approve", phase: bulkApprovalPhase, submissionIds: selectedSubmissionIds.length ? selectedSubmissionIds : undefined }),
+      })
+      const result = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(result.error || "Could not force approve AI feedback.")
+      setBulkApprovalProgress(`Force approved ${result?.processed ?? result?.approved ?? 0} drafts.`)
+      await load({ silent: true, requireAnalytics: true, throwOnError: true })
+      setSelectedSubmissionIds([])
+      success(formatBulkApprovalSummary(result))
+    } catch (err) {
+      showError(err.message || "Could not force approve AI feedback.")
     } finally {
       setBulkApproving(false)
       setTimeout(() => setBulkApprovalProgress(""), 1500)
@@ -1070,23 +1145,25 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
     }
   }
 
-  async function startBulkAiGeneration() {
+  async function startBulkAiGeneration(action = "generate_missing") {
     setBulkStarting(true)
     try {
       const res = await fetch("/api/teacher-bulk-ai", {
         method: "POST",
-        headers: authHeaders(teacherToken),
+        headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
+        body: JSON.stringify({ action, submissionIds: action === "generate_selected" ? selectedSubmissionIds : undefined }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not start bulk AI generation.")
       setBulkJob(data.job || null)
       setBulkConfirmOpen(false)
       if (data.job?.total) {
-        success("Bulk AI generation started.")
+        success(action === "retry_failed" ? "Retrying failed AI drafts." : "Bulk AI generation started.")
       } else {
         success("No missing AI drafts to generate.")
         await load({ silent: true })
       }
+      if (action === "generate_selected") setSelectedSubmissionIds([])
     } catch (err) {
       showError(err.message || "Could not start bulk AI generation.")
     } finally {
@@ -1114,6 +1191,11 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
     setAiStatusFilter("All")
   }
 
+  function toggleSubmissionSelection(id) {
+    const key = String(id)
+    setSelectedSubmissionIds(prev => prev.includes(key) ? prev.filter(item => item !== key) : [...prev, key])
+  }
+
   const batchOptions = useMemo(() => ["All Batches", ...batches.map(b => b.name)], [batches])
   const submissionCounts = useMemo(() => ({
     all: globalStats.totalSubmissions,
@@ -1133,6 +1215,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
     const visibleReady = data.filter(row => row.ai_feedback && !isReviewedSubmission(row)).length
     return Math.max(globalStats.aiHealth.ready || 0, visibleReady)
   }, [data, globalStats.aiHealth.ready])
+  const selectedCount = selectedSubmissionIds.length
   const bulkActive = isBulkJobActive(bulkJob)
   const filtered = data
   const isListView = activeSubmissionId === null
@@ -1236,6 +1319,11 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
         </select>
         <SmartSearchInput value={searchInput} onChange={setSearchInput} />
         <div className="flex gap-2 flex-wrap items-center">
+          {selectedCount > 0 && (
+            <span className="text-xs font-semibold whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
+              {selectedCount} selected
+            </span>
+          )}
           {bulkApprovalProgress && (
             <span className="text-xs font-semibold whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
               {bulkApprovalProgress}
@@ -1261,6 +1349,42 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
               >
                 {bulkApproving ? "Processing..." : "Approve All AI Ready"}
               </button>
+              <button
+                type="button"
+                className="btn btn-secondary whitespace-nowrap"
+                disabled={bulkApproving}
+                onClick={forceApproveReadyFeedback}
+              >
+                Force Approve Ready
+              </button>
+            </>
+          )}
+          {selectedCount > 0 && (
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary whitespace-nowrap"
+                disabled={bulkActive || bulkStarting}
+                onClick={() => startBulkAiGeneration("generate_selected")}
+              >
+                Generate Selected
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary whitespace-nowrap"
+                disabled={bulkApproving}
+                onClick={approveAllReadyFeedback}
+              >
+                Publish Selected
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary whitespace-nowrap"
+                disabled={bulkApproving}
+                onClick={forceApproveReadyFeedback}
+              >
+                Force Approve Selected
+              </button>
             </>
           )}
           {missingAiCount > 0 && (
@@ -1271,6 +1395,16 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
               onClick={() => setBulkConfirmOpen(true)}
             >
               {bulkActive ? "Generating..." : "Generate Missing AI"}
+            </button>
+          )}
+          {submissionCounts.failed > 0 && (
+            <button
+              type="button"
+              className="btn btn-secondary whitespace-nowrap"
+              disabled={bulkActive || bulkStarting}
+              onClick={() => startBulkAiGeneration("retry_failed")}
+            >
+              Retry Failed
             </button>
           )}
         </div>
@@ -1306,7 +1440,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
               <button className="btn btn-secondary btn-sm" disabled={bulkStarting} onClick={() => setBulkConfirmOpen(false)}>
                 Cancel
               </button>
-              <button className="btn btn-primary btn-sm flex items-center gap-2" disabled={bulkStarting || missingAiCount === 0} onClick={startBulkAiGeneration}>
+              <button className="btn btn-primary btn-sm flex items-center gap-2" disabled={bulkStarting || missingAiCount === 0} onClick={() => startBulkAiGeneration()}>
                 {bulkStarting ? <Spinner size="sm" /> : null}
                 Start Generation
               </button>
@@ -1405,6 +1539,16 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
               {!hasFb && (
                 <AiGenerationNotice row={r} generatingIds={aiGeneratingIds} />
               )}
+              {!hasFb && (
+                <label className="flex items-center gap-2 text-xs mb-3" style={{ color: "var(--text-secondary)" }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedSubmissionIds.includes(String(r.id))}
+                    onChange={() => toggleSubmissionSelection(r.id)}
+                  />
+                  Select for bulk action
+                </label>
+              )}
               {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "var(--surface)", color: "var(--text-secondary)" }}>Student note: {r.comment}</p>}
               <TeacherQueryPanel
                 enabled={studentQueryEnabled}
@@ -1442,6 +1586,9 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
                     <div className="flex gap-2 flex-wrap">
                       <button className="btn btn-primary btn-xs" disabled={isAiGeneratingUi(r.ai_status, aiGeneratingIds, r.id) || feedbackSavingId === r.id} onClick={() => saveFeedback(r, r.ai_feedback)}>
                         Approve draft
+                      </button>
+                      <button className="btn btn-secondary btn-xs" disabled={isAiGeneratingUi(r.ai_status, aiGeneratingIds, r.id) || feedbackSavingId === r.id} onClick={() => forceApprove(r)}>
+                        Force Approve
                       </button>
                       <button className="btn btn-secondary btn-xs" disabled={isAiGeneratingUi(r.ai_status, aiGeneratingIds, r.id)} onClick={() => generateAiDraft(r)}>
                         {aiGenerationButtonLabel(r, aiGeneratingIds, true)}
@@ -1540,7 +1687,10 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
                     ) : (
                     <div className="feedback-box">
                       <div className="flex items-start justify-between gap-3 mb-2">
-                        <p className="text-xs font-semibold" style={{ color: "var(--success)" }}>By {r.feedback_by || teacherName} {r.feedback_at ? "- " + formatDate(r.feedback_at) : ""}</p>
+                        <p className="text-xs font-semibold" style={{ color: "var(--success)" }}>
+                          By {r.feedback_by || teacherName} {r.feedback_at ? "- " + formatDate(r.feedback_at) : ""}
+                          {approvalMethodLabel(r.approval_method) ? ` - ${approvalMethodLabel(r.approval_method)} approval` : ""}
+                        </p>
                         <button className="btn btn-secondary btn-xs" type="button" onClick={() => {
                           setFeedbackEdits(prev => ({ ...prev, [r.id]: r.feedback || "" }))
                           setEditingFeedbackId(r.id)

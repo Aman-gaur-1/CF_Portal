@@ -123,6 +123,7 @@ export async function POST(request) {
       final_evaluation_phase: phase,
       phase_detection_warning: !phaseMatchesDetectedLanguage(phase, detected),
       ai_status: 'pending',
+      ai_workflow_state: 'pending',
     }
 
     const { data, error } = await supabase

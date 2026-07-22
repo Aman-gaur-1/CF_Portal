@@ -7,6 +7,8 @@ import { assertSubmissionInTeacherScope } from '@/lib/teacher-scope'
 import { recoverStaleAiDrafts } from '@/lib/ai/claim-evaluation'
 import { isReviewedSubmission } from '@/lib/review-state'
 import { scheduleAutoApprovalIfEligible } from '@/lib/auto-approval'
+import { appendActivity } from '@/lib/activity-log'
+import { AI_WORKFLOW_STATE } from '@/lib/ai/workflow-state'
 
 function jsonNoStore(body, init) {
   return NextResponse.json(body, {
@@ -40,19 +42,36 @@ export async function PATCH(request) {
       return jsonNoStore({ error: 'AI draft is still generating' }, { status: 409 })
     }
 
-    const { error } = await supabase
+    const { data: updatedRows, error } = await supabase
       .from('submissions')
       .update({
         ai_feedback: draft,
         ai_status: AI_STATUS.READY,
+        ai_workflow_state: AI_WORKFLOW_STATE.DRAFT_READY,
         ai_error: null,
+        ai_failure_reason: null,
         ai_feedback_at: new Date().toISOString(),
       })
       .eq('id', submissionId)
+      .is('feedback', null)
+      .is('feedback_at', null)
+      .is('approval_at', null)
+      .is('approved_at', null)
+      .select('id')
 
     if (error) throw new Error(error.message)
+    if (!updatedRows?.length) {
+      return jsonNoStore({ error: 'Submission already has approved feedback' }, { status: 409 })
+    }
     await scheduleAutoApprovalIfEligible(submissionId, { supabase }).catch(err => {
       console.warn('[teacher-ai-draft] auto approval scheduling failed', { submissionId, error: err?.message })
+    })
+    await appendActivity({
+      eventType: 'ai_draft_trainer_edited',
+      description: `trainer edited AI draft for ${submission.topic || 'assignment'}`,
+      actorName: teacher.name,
+      actorRole: 'teacher',
+      supabase,
     })
     return jsonNoStore({ success: true, ai_feedback: draft, ai_status: AI_STATUS.READY })
   } catch (err) {
