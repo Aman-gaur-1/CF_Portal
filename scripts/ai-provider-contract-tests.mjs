@@ -4,6 +4,7 @@ import path from 'node:path'
 import vm from 'node:vm'
 import {
   buildAssistantResponseDiagnostics,
+  buildStructuredOutputRequestControls,
   createStructuredOutputContractError,
   extractJsonPayload,
   inspectStructuredOutput,
@@ -11,6 +12,7 @@ import {
 } from '../lib/ai/structured-output.mjs'
 
 const { classifyProviderFailure, isFailoverEligibleError } = loadProviderManager()
+const { sanitizeParserDiagnosticsForLog } = loadParserLogSanitizer()
 const validJson = '{"score":8,"trainer_feedback":"Synthetic feedback."}'
 
 const cases = [
@@ -106,6 +108,50 @@ const cases = [
     })
     assert.equal(diagnostics.response_format_removed_for_retry, true)
     assert.equal(diagnostics.retry_without_response_format, true)
+  }],
+  ['Nemotron 3 Super structured output disables reasoning', () => {
+    assert.deepEqual(
+      buildStructuredOutputRequestControls({
+        model: 'nvidia/nemotron-3-super-120b-a12b',
+        responseFormat: 'json_object',
+      }),
+      { chat_template_kwargs: { enable_thinking: false } }
+    )
+  }],
+  ['reasoning control remains model and contract specific', () => {
+    assert.deepEqual(
+      buildStructuredOutputRequestControls({ model: 'poolside/laguna-xs-2.1', responseFormat: 'json_object' }),
+      {}
+    )
+    assert.deepEqual(
+      buildStructuredOutputRequestControls({ model: 'nvidia/nemotron-3-super-120b-a12b', responseFormat: null }),
+      {}
+    )
+  }],
+  ['request controls are captured without response content', () => {
+    const diagnostics = buildAssistantResponseDiagnostics(fakeData(validJson), validJson, {
+      thinking_disabled: true,
+      max_tokens_requested: 1024,
+    })
+    assert.equal(diagnostics.thinking_disabled, true)
+    assert.equal(diagnostics.max_tokens_requested, 1024)
+    assert.equal(JSON.stringify(diagnostics).includes(validJson), false)
+  }],
+  ['parser diagnostics remove submission previews and snippets', () => {
+    const sensitiveText = 'synthetic submission body that must never be logged'
+    const diagnostics = sanitizeParserDiagnosticsForLog({
+      characters: sensitiveText.length,
+      normalized_text_preview: sensitiveText,
+      header_preview: sensitiveText,
+      bodySnippet: sensitiveText,
+    })
+    assert.equal(diagnostics.characters, sensitiveText.length)
+    assert.equal(JSON.stringify(diagnostics).includes(sensitiveText), false)
+    assert.equal(Object.keys(diagnostics).some(key => /preview|snippet/i.test(key)), false)
+  }],
+  ['extraction handoff source contains no direct text preview logging', () => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'lib', 'ai', 'extract.js'), 'utf8')
+    assert.equal(/finalTextPreview|cachedPreview/.test(source), false)
   }],
   ['first valid structured response has zero structured retries', async () => {
     const recovered = await recoverStructuredOutput(fakeResult(validJson), {
@@ -222,5 +268,16 @@ function loadProviderManager() {
     providerHealthSummary: () => ({}),
   }
   vm.runInNewContext(`${source}\nmodule.exports = { classifyProviderFailure, isFailoverEligibleError };`, sandbox)
+  return sandbox.module.exports
+}
+
+function loadParserLogSanitizer() {
+  const file = path.join(process.cwd(), 'lib', 'ai', 'parsers', 'index.js')
+  const source = fs.readFileSync(file, 'utf8')
+    .replace(/import[\s\S]*?from\s+['"][^'"]+['"]\s*/g, '')
+    .replace(/export function /g, 'function ')
+    .replace(/export async function /g, 'async function ')
+  const sandbox = { console, module: { exports: {} } }
+  vm.runInNewContext(`${source}\nmodule.exports = { sanitizeParserDiagnosticsForLog };`, sandbox)
   return sandbox.module.exports
 }
