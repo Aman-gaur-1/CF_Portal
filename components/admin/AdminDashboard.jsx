@@ -795,8 +795,6 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             </div>
           )}
         </div>
-      </div>
-
       {deleteBatchTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.45)" }} role="dialog" aria-modal="true" aria-label="Delete batch confirmation">
           <div className="card p-5 w-full max-w-md">
@@ -811,6 +809,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           </div>
         </div>
       )}
+      </div>
     )
   }
 
