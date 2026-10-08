@@ -1,3 +1,4 @@
+import { debugLog } from '@/lib/logger'
 import { NextResponse } from 'next/server'
 import { unstable_noStore as noStore } from 'next/cache'
 import { getAdminFromRequest } from '@/lib/admin-auth'
@@ -43,7 +44,7 @@ function jsonNoStoreWithPayloadLog(body, meta = {}, init) {
 function logPayloadSize(context, body, meta = {}) {
   try {
     const bytes = Buffer.byteLength(JSON.stringify(body), 'utf8')
-    console.info(`[${context}] payload`, {
+    debugLog(`[${context}] payload`, {
       ...meta,
       bytes,
       kb: Math.round(bytes / 1024),

@@ -1,3 +1,4 @@
+import { debugLog } from '@/lib/logger'
 import { NextResponse } from 'next/server'
 import { unstable_noStore as noStore } from 'next/cache'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
@@ -209,7 +210,7 @@ async function loadReviewPage(request, teacherName) {
       staleCount: staleConfirmed.length,
     })
   }
-  console.info('[teacher-data] review hydration', {
+  debugLog('[teacher-data] review hydration', {
     teacherName: scope.teacherName,
     page,
     status: request.nextUrl.searchParams.get('status') || 'All',
@@ -364,7 +365,7 @@ function jsonNoStoreWithPayloadLog(context, body, meta = {}, init) {
 function logPayloadSize(context, body, meta = {}) {
   try {
     const bytes = Buffer.byteLength(JSON.stringify(body), 'utf8')
-    console.info(`[${context}] payload`, {
+    debugLog(`[${context}] payload`, {
       ...meta,
       bytes,
       kb: Math.round(bytes / 1024),

@@ -1,3 +1,4 @@
+import { debugLog } from '@/lib/logger'
 import { NextResponse } from 'next/server'
 import { unstable_noStore as noStore } from 'next/cache'
 import { AI_QUEUE_ITEM_COOLDOWN_MS, AI_STATUS } from '@/lib/ai/constants'
@@ -41,7 +42,7 @@ function jsonNoStoreWithPayloadLog(body, meta = {}, init) {
 function logPayloadSize(context, body, meta = {}) {
   try {
     const bytes = Buffer.byteLength(JSON.stringify(body), 'utf8')
-    console.info(`[${context}] payload`, {
+    debugLog(`[${context}] payload`, {
       ...meta,
       bytes,
       kb: Math.round(bytes / 1024),
@@ -149,7 +150,7 @@ async function runBulkJob(job, { teacherName, supabase = getSupabaseAdmin() } = 
   const lockName = `teacher_bulk_ai_job:${getTeacherJobKey(teacherName)}`
   const acquired = await tryAcquireTeacherBulkLock({ lockName, owner, supabase })
   if (!acquired) {
-    console.info('[teacher-bulk-ai] queue tick skipped: lock busy', {
+    debugLog('[teacher-bulk-ai] queue tick skipped: lock busy', {
       jobId: job.id,
       remaining: job.submissionIds?.length || 0,
       completed: job.completed,
@@ -170,7 +171,7 @@ async function runBulkJob(job, { teacherName, supabase = getSupabaseAdmin() } = 
       const nextIndex = nextReadySubmissionIndex(job)
       if (nextIndex === -1) {
         job.currentState = 'Waiting before retry'
-        console.info('[teacher-bulk-ai] queue waiting for retry cooldown', {
+        debugLog('[teacher-bulk-ai] queue waiting for retry cooldown', {
           jobId: job.id,
           remaining: job.submissionIds.length,
           nextRetryAt: nextRetryAt(job),
@@ -196,7 +197,7 @@ async function runBulkJob(job, { teacherName, supabase = getSupabaseAdmin() } = 
         if (result.status === AI_STATUS.READY) {
           job.completed += 1
           clearAttempt(job, submissionId)
-          console.info('[teacher-bulk-ai] item complete', {
+          debugLog('[teacher-bulk-ai] item complete', {
             jobId: job.id,
             submissionId,
             provider,
@@ -307,7 +308,7 @@ async function runBulkJob(job, { teacherName, supabase = getSupabaseAdmin() } = 
       job.status = 'complete'
       job.currentState = null
       job.finishedAt = new Date().toISOString()
-      console.info('[teacher-bulk-ai] job complete', {
+      debugLog('[teacher-bulk-ai] job complete', {
         jobId: job.id,
         total: job.total,
         completed: job.completed,
@@ -459,7 +460,7 @@ export async function POST(request) {
     }
 
     await saveTeacherJob(teacher.name, job, supabase)
-    console.info('[teacher-bulk-ai] job queued', {
+    debugLog('[teacher-bulk-ai] job queued', {
       jobId: job.id,
       teacher: jobKey,
       total: job.total,
@@ -568,7 +569,7 @@ function recordFailure(job, submissionId, error, attempt) {
 }
 
 function logQueueProgress(job, event, details = {}) {
-  console.info('[teacher-bulk-ai] queue progress', {
+  debugLog('[teacher-bulk-ai] queue progress', {
     event,
     jobId: job.id,
     total: job.total,
