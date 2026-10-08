@@ -14,7 +14,7 @@ function authHeaders(token) {
   return { Authorization: `Bearer ${token}` }
 }
 
-export default function StudentsTab({ teacherToken }) {
+export default function StudentsTab({ teacherToken, globalSearch = "" }) {
   const [students, setStudents] = useState([])
   const [submissions, setSubmissions] = useState([])
   const [batches, setBatches] = useState([])
@@ -26,6 +26,7 @@ export default function StudentsTab({ teacherToken }) {
   const [savingProfile, setSavingProfile] = useState(false)
   const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
+  useEffect(() => setSearch(globalSearch), [globalSearch])
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (loadAbortRef.current) loadAbortRef.current.abort()

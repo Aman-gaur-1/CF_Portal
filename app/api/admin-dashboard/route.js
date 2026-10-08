@@ -147,7 +147,7 @@ export async function GET(request) {
       fetchAllRows(supabase, 'students', 'id, name, batch, created_at', 'created_at'),
       fetchAllRows(supabase, 'batches', '*', 'created_at'),
       fetchAllRows(supabase, 'trainers', '*', 'created_at'),
-      fetchAllRows(supabase, 'submissions', 'student_id,batch,submitted_at,feedback,feedback_at,ai_feedback,ai_feedback_at,ai_status'),
+      fetchAllRows(supabase, 'submissions', 'id,student_id,batch,topic,submitted_at,feedback,feedback_at,ai_feedback,ai_feedback_at,ai_status,phase,submission_type'),
     ])
 
     const metrics = loadMetricsFromSubmissionRows(submissions)
@@ -162,6 +162,7 @@ export async function GET(request) {
       metrics: { ...EMPTY_METRICS, ...metrics },
       batchStats,
       studentSubmissionCounts,
+      submissions,
     })
   } catch (err) {
     console.error('[admin-dashboard] failed', err?.message)

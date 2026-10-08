@@ -3,10 +3,13 @@ import { clearLoginAttempts, consumeLoginAttempt } from '@/lib/login-rate-limit'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import {
   createStudentToken,
+  createStudentRefreshToken,
   hashStudentPasswordSecure,
   safeStudentProfile,
   validateStudentCredentialsInput,
   verifyStudentPassword,
+  STUDENT_REFRESH_COOKIE,
+  STUDENT_REFRESH_TTL_MS,
 } from '@/lib/student-auth'
 
 export const dynamic = 'force-dynamic'
@@ -59,13 +62,21 @@ export async function POST(request) {
     }
 
     await clearLoginAttempts(request, 'student')
-    return jsonNoStore({
+    const response = jsonNoStore({
       success: true,
       student: {
         ...safeStudentProfile(data),
         token: createStudentToken(data),
       },
     })
+    response.cookies.set(STUDENT_REFRESH_COOKIE, createStudentRefreshToken(data), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: Math.floor(STUDENT_REFRESH_TTL_MS / 1000),
+    })
+    return response
   } catch (err) {
     console.error('[student-login] failed', err?.message)
     return jsonNoStore({ success: false, error: 'Student login is unavailable.' }, { status: 500 })

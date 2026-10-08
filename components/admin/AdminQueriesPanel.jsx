@@ -76,7 +76,7 @@ function DetailRow({ label, value }) {
   )
 }
 
-export default function AdminQueriesPanel({ adminToken, showError }) {
+export default function AdminQueriesPanel({ adminToken, showError, globalSearch = "" }) {
   const [enabled, setEnabled] = useState(false)
   const [queries, setQueries] = useState([])
   const [counts, setCounts] = useState({ total: 0, open: 0, resolved: 0 })
@@ -87,6 +87,7 @@ export default function AdminQueriesPanel({ adminToken, showError }) {
   const [dateMode, setDateMode] = useState("all")
   const [customDate, setCustomDate] = useState("")
   const [search, setSearch] = useState("")
+  useEffect(() => setSearch(globalSearch), [globalSearch])
   const [selectedQuery, setSelectedQuery] = useState(null)
   const [loading, setLoading] = useState(true)
 

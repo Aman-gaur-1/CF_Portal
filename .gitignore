@@ -1,3 +1,7 @@
 node_modules
 .env.local
 .next
+.vercel
+artifacts
+supabase/.temp
+*.log

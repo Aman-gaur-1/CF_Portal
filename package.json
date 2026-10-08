@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test:auth": "node scripts/auth-session-tests.mjs",
     "test:evaluator": "node scripts/evaluator-regression-tests.mjs"
   },
   "dependencies": {

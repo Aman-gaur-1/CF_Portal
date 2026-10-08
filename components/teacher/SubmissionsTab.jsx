@@ -430,7 +430,7 @@ function mergeRowsWithLoadedDetails(rows, previousRows) {
   return mergedRows
 }
 
-export default function SubmissionsTab({ teacherName, teacherToken, requestedFilter = "" }) {
+export default function SubmissionsTab({ teacherName, teacherToken, requestedFilter = "", globalSearch = "" }) {
   const [data, setData] = useState([])
   const [batches, setBatches] = useState([])
   const [globalStats, setGlobalStats] = useState({
@@ -448,6 +448,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
   const [batchFilter, setBatchFilter] = useState("All Batches")
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
+  useEffect(() => setSearchInput(globalSearch), [globalSearch])
   const [submissionTypes, setSubmissionTypes] = useState({})
   const [submissionPhases, setSubmissionPhases] = useState({})
   const [submissionCustomPoints, setSubmissionCustomPoints] = useState({})
@@ -1310,7 +1311,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
 
       <TeacherAnalyticsCharts globalStats={globalStats} />
 
-      <div ref={listTopRef} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3 mb-4">
+      <div ref={listTopRef} className="teacher-review-filters grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3 mb-4">
         <select className="select" value={statusFilter} onChange={e => handleStatusFilterChange(e.target.value)}>
           {statusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>

@@ -62,12 +62,13 @@ function formatApprovalSummary(data) {
   return reasons ? `${base} Reasons: ${reasons}.${duration}` : `${base}${duration}`
 }
 
-export default function AdminAiGenerationQueue({ adminToken, success, showError, onQueued }) {
+export default function AdminAiGenerationQueue({ adminToken, success, showError, onQueued, globalSearch = "" }) {
   const [data, setData] = useState(EMPTY_QUEUE_DATA)
   const [trainerName, setTrainerName] = useState("")
   const [phaseName, setPhaseName] = useState("")
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
+  useEffect(() => { setSearchInput(globalSearch); setPage(1) }, [globalSearch])
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [starting, setStarting] = useState(false)
@@ -349,7 +350,7 @@ export default function AdminAiGenerationQueue({ adminToken, success, showError,
           <div className="flex justify-center py-8"><Spinner /></div>
         ) : submissions.length === 0 ? (
           <div className="admin-empty-state">
-            <p className="font-semibold">Everything is up to date</p>
+            <p className="font-semibold queue-empty-title"><span className="queue-empty-check" aria-hidden>✓</span> Everything is up to date</p>
             <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
               {search ? "No submissions matched your search." : `No pending AI drafts for ${selectedLabel}.`}
             </p>

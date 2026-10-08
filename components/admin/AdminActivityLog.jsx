@@ -171,7 +171,7 @@ function Timeline({ row }) {
   )
 }
 
-export default function AdminActivityLog({ adminToken, success, showError }) {
+export default function AdminActivityLog({ adminToken, success, showError, globalSearch = "" }) {
   const [activity, setActivity] = useState([])
   const [timelines, setTimelines] = useState([])
   const [loading, setLoading] = useState(true)
@@ -193,6 +193,7 @@ export default function AdminActivityLog({ adminToken, success, showError }) {
     status: "All",
     search: "",
   })
+  useEffect(() => updateFilter("search", globalSearch), [globalSearch])
 
   async function load() {
     if (!adminToken) return

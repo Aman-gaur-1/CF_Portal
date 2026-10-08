@@ -73,10 +73,14 @@ export default function RecentActivity({ adminToken, refreshKey = 0, success, sh
         <div className="recent-activity-list">
           {activity.map(item => (
             <div className="recent-activity-row" key={item.id}>
-              <p className="text-sm">
+              <p className="text-sm recent-activity-copy">
                 <b>{item.actor_name}</b> {item.description}
                 <span style={{ color: "var(--text-muted)" }}> {" \u2022 "} {relativeTime(item.created_at)}</span>
               </p>
+              <div className="recent-activity-meta">
+                <span>{String(item.event_type || "activity").replace(/_/g, " ")}</span>
+                <span>{item.actor_role || "system"}</span>
+              </div>
             </div>
           ))}
         </div>

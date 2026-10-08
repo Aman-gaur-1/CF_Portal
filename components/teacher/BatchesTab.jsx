@@ -15,7 +15,7 @@ function authHeaders(token) {
   return { Authorization: `Bearer ${token}` }
 }
 
-export default function BatchesTab({ teacherName, teacherToken }) {
+export default function BatchesTab({ teacherName, teacherToken, globalSearch = "" }) {
   const [batches, setBatches] = useState([])
   const [students, setStudents] = useState([])
   const [submissions, setSubmissions] = useState([])
@@ -121,6 +121,9 @@ export default function BatchesTab({ teacherName, teacherToken }) {
         batches.map(batch => {
           const batchStudents = stuByBatch[batch.name] || []
           const batchSubmissions = batchStudents.flatMap(student => subByStudent[student.id] || [])
+          const needle = globalSearch.trim().toLowerCase()
+          const matches = !needle || [batch.name, ...batchStudents.map(student => student.name), ...batchSubmissions.map(submission => submission.topic)].some(value => String(value || "").toLowerCase().includes(needle))
+          if (!matches) return null
           const pending = batchSubmissions.filter(submission => !isReviewedSubmission(submission)).length
           const reviewed = batchSubmissions.length - pending
 

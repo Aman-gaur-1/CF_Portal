@@ -18,6 +18,7 @@ const openLinkedIn = () => window.open("https://www.linkedin.com/in/aman-gaur-39
 export default function TeacherDashboard({ teacherName, teacherToken, onLogout }) {
   const [tab, setTab] = useState("reviews")
   const [reviewFilter, setReviewFilter] = useState("")
+  const [globalSearch, setGlobalSearch] = useState("")
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -49,9 +50,15 @@ export default function TeacherDashboard({ teacherName, teacherToken, onLogout }
 
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
-        {tab === "reviews" && <SubmissionsTab teacherName={teacherName} teacherToken={teacherToken} requestedFilter={reviewFilter} />}
-        {tab === "students" && <StudentsTab teacherToken={teacherToken} />}
-        {tab === "batches" && <BatchesTab teacherName={teacherName} teacherToken={teacherToken} />}
+        <div className="teacher-global-search" role="search">
+          <span aria-hidden>⌕</span>
+          <input value={globalSearch} onChange={event => setGlobalSearch(event.target.value)} placeholder="Search students, assignments, batches, or topics..." aria-label="Search across teacher workspace" />
+          {globalSearch && <button type="button" onClick={() => setGlobalSearch("")} aria-label="Clear search">×</button>}
+        </div>
+
+        {tab === "reviews" && <SubmissionsTab teacherName={teacherName} teacherToken={teacherToken} requestedFilter={reviewFilter} globalSearch={globalSearch} />}
+        {tab === "students" && <StudentsTab teacherToken={teacherToken} globalSearch={globalSearch} />}
+        {tab === "batches" && <BatchesTab teacherName={teacherName} teacherToken={teacherToken} globalSearch={globalSearch} />}
 
         <div className="flex items-center justify-between mt-8 flex-wrap gap-3">
           <div className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>

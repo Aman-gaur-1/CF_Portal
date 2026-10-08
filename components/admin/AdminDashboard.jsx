@@ -240,12 +240,15 @@ function RowShell({ children }) {
 
 export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [tab, setTab] = useState("overview")
+  const [globalSearch, setGlobalSearch] = useState("")
   const [students, setStudents] = useState([])
   const [batches, setBatches] = useState([])
   const [trainers, setTrainers] = useState([])
   const [metrics, setMetrics] = useState(EMPTY_ADMIN_METRICS)
   const [batchStats, setBatchStats] = useState({})
   const [studentSubmissionCounts, setStudentSubmissionCounts] = useState({})
+  const [submissions, setSubmissions] = useState([])
+  const [expandedStudentId, setExpandedStudentId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [aiRuntime, setAiRuntime] = useState(null)
@@ -260,6 +263,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [newTrainer, setNewTrainer] = useState("")
   const [newBatch, setNewBatch] = useState("")
   const [batchTrainer, setBatchTrainer] = useState("")
+  const [deleteBatchTarget, setDeleteBatchTarget] = useState(null)
   const [studentSearch, setStudentSearch] = useState("")
   const [studentBatchFilter, setStudentBatchFilter] = useState("All Batches")
   const [editingStudentId, setEditingStudentId] = useState(null)
@@ -288,6 +292,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
       setMetrics({ ...EMPTY_ADMIN_METRICS, ...(data.metrics || {}) })
       setBatchStats(data.batchStats || {})
       setStudentSubmissionCounts(data.studentSubmissionCounts || {})
+      setSubmissions(data.submissions || [])
 
       const firstTrainer =
         data.trainers?.[0]?.name ||
@@ -352,13 +357,13 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   }, [batchStats, batches, students])
 
   const filteredStudents = useMemo(() => {
-    const search = studentSearch.trim().toLowerCase()
+    const search = (studentSearch || globalSearch).trim().toLowerCase()
     return students.filter(student => {
       const matchesSearch = !search || student.name?.toLowerCase().includes(search)
       const matchesBatch = studentBatchFilter === "All Batches" || student.batch === studentBatchFilter
       return matchesSearch && matchesBatch
     })
-  }, [students, studentSearch, studentBatchFilter])
+  }, [students, studentSearch, globalSearch, studentBatchFilter])
 
   function providerDefaults(provider) {
     if (provider === "openrouter") return { base_url: "https://openrouter.ai/api/v1", infrastructure: "OpenRouter" }
@@ -575,6 +580,27 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
     load({ silent: true })
   }
 
+  async function deleteBatch() {
+    if (!deleteBatchTarget || saving) return
+    setSaving(true)
+    try {
+      const res = await fetch("/api/admin-batch", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ batchId: deleteBatchTarget.id }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not delete batch.")
+      success(`Batch “${deleteBatchTarget.name}” deleted.`)
+      setDeleteBatchTarget(null)
+      load({ silent: true })
+    } catch (error) {
+      showError(error.message || "Could not delete batch.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function moveStudent(studentId, batchName) {
     const student = students.find(row => row.id === studentId)
     if (!student) return
@@ -668,7 +694,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
               <button className="btn btn-primary btn-sm" onClick={addTrainer} disabled={saving}>Add</button>
             </div>
             <div className="grid gap-2">
-              {trainerNames.map(name => (
+              {trainerNames.filter(name => !globalSearch.trim() || name.toLowerCase().includes(globalSearch.trim().toLowerCase())).map(name => (
                 <RowShell key={name}>
                   <span className="font-semibold">{name}</span>
                   <button className="btn btn-secondary btn-sm" onClick={() => deleteTrainer(name)} disabled={saving || name === adminName}>
@@ -689,16 +715,19 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
               <button className="btn btn-primary btn-sm" onClick={addBatch} disabled={saving}>Create</button>
             </div>
             <div className="grid gap-2">
-              {batchRows.map(batch => (
+              {batchRows.filter(batch => !globalSearch.trim() || `${batch.name} ${batch.created_by || ""}`.toLowerCase().includes(globalSearch.trim().toLowerCase())).map(batch => (
                 <RowShell key={batch.id}>
                   <div>
                     <p className="font-semibold">{batch.name}</p>
                     <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{batch.studentCount} students - {batch.pendingCount} pending</p>
                   </div>
-                  <select className="select text-sm max-w-[220px]" value={batch.created_by || ""} onChange={e => assignBatch(batch.id, e.target.value)}>
-                    <option value="">Unassigned</option>
-                    {trainerNames.map(name => <option key={name} value={name}>{name}</option>)}
-                  </select>
+                  <div className="admin-batch-actions">
+                    <select className="select text-sm max-w-[220px]" value={batch.created_by || ""} onChange={e => assignBatch(batch.id, e.target.value)}>
+                      <option value="">Unassigned</option>
+                      {trainerNames.map(name => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                    <button className="btn btn-danger-outline btn-sm" type="button" onClick={() => setDeleteBatchTarget(batch)} disabled={saving} aria-label={`Delete ${batch.name}`}>Delete</button>
+                  </div>
                 </RowShell>
               ))}
             </div>
@@ -719,11 +748,20 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             <div className="grid gap-2">
               {filteredStudents.slice(0, 100).map(student => {
                 const count = studentSubmissionCounts[String(student.id)] || 0
+                const studentSubmissions = submissions.filter(row => String(row.student_id) === String(student.id))
+                const expanded = expandedStudentId === student.id
                 return (
                   <div key={student.id} className="admin-row">
                     <div className="min-w-0">
                       <p className="font-semibold truncate">{student.name}</p>
                       <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{student.batch || "No batch"} - {count} submissions</p>
+                      {count > 0 && <button type="button" className="admin-student-submissions-toggle" onClick={() => setExpandedStudentId(expanded ? null : student.id)}>{expanded ? "Hide submissions" : "View submissions"}</button>}
+                      {expanded && <div className="admin-student-submissions">
+                        {studentSubmissions.map(submission => <div className="admin-student-submission" key={submission.id}>
+                          <div><b>{submission.topic || "Untitled assignment"}</b><span>{submission.phase || submission.submission_type || "Assignment"}</span></div>
+                          <span className={submission.feedback || submission.feedback_at ? "badge-done" : submission.ai_status === "failed" ? "badge-failed" : "badge-pending"}>{submission.feedback || submission.feedback_at ? "Reviewed" : submission.ai_status === "failed" ? "AI Failed" : "Pending"}</span>
+                        </div>)}
+                      </div>}
                       {editingStudentId === student.id && (
                         <div className="grid gap-2 mt-3 md:grid-cols-3">
                           <input className="input" value={studentProfileForm.name} onChange={e => setStudentProfileForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Student name" />
@@ -758,18 +796,31 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           )}
         </div>
       </div>
+
+      {deleteBatchTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.45)" }} role="dialog" aria-modal="true" aria-label="Delete batch confirmation">
+          <div className="card p-5 w-full max-w-md">
+            <p className="text-base font-semibold">Delete batch?</p>
+            <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>
+              You are about to delete <b>{deleteBatchTarget.name}</b>. Batches containing students or submissions cannot be deleted.
+            </p>
+            <div className="flex justify-end gap-2 mt-5">
+              <button className="btn btn-secondary btn-sm" type="button" onClick={() => setDeleteBatchTarget(null)} disabled={saving}>Cancel</button>
+              <button className="btn btn-danger-outline btn-sm" type="button" onClick={deleteBatch} disabled={saving}>{saving ? "Checking..." : "Delete batch"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     )
   }
 
   function renderAiOps() {
     return (
       <div className="grid gap-5">
-        <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard label="AI Success Rate" value={metrics.aiFinished ? `${metrics.successRate}%` : "No runs"} hint={`${metrics.aiReady} ready / ${metrics.aiFailed} failed`} />
-          <MetricCard label="Today's Requests" value={metrics.todayRequests || 0} hint={`${metrics.generatedToday || 0} generated today`} />
-          <MetricCard label="Average Response Time" value={formatLatency(aiHealth.providers?.[0]?.avg_latency_ms)} hint="From stored evaluations" />
           <MetricCard label="Pending Queue" value={metrics.pendingQueue || 0} hint="Missing AI drafts" />
-          <MetricCard label="Current Primary Provider" value={providerLabel(primaryProviderForm.provider)} hint={primaryProviderForm.model || "No model set"} />
+          <MetricCard label="Primary Provider" value={providerLabel(primaryProviderForm.provider)} hint={primaryProviderForm.model || "No model set"} />
           <MetricCard label="Fallback Status" value={aiRuntime?.last_fallback_used ? "Used" : "Idle"} hint={aiRuntime?.last_fallback_from?.length ? aiRuntime.last_fallback_from.join(", ") : "Primary handled last run"} />
         </div>
 
@@ -793,7 +844,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           )}
         </div>
 
-        <AdminAiGenerationQueue adminToken={adminToken} success={success} showError={showError} onQueued={() => setActivityRefreshKey(key => key + 1)} />
+        <AdminAiGenerationQueue adminToken={adminToken} success={success} showError={showError} globalSearch={globalSearch} onQueued={() => setActivityRefreshKey(key => key + 1)} />
       </div>
     )
   }
@@ -933,6 +984,11 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
         </div>
 
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
+        <div className="teacher-global-search admin-global-search" role="search">
+          <span aria-hidden>⌕</span>
+          <input value={globalSearch} onChange={event => setGlobalSearch(event.target.value)} placeholder="Search students, teachers, batches, assignments, or activity..." aria-label="Search across admin portal" />
+          {globalSearch && <button type="button" onClick={() => setGlobalSearch("")} aria-label="Clear search">×</button>}
+        </div>
 
         {loading ? (
           <div className="flex justify-center py-16"><Spinner size="lg" /></div>
@@ -941,8 +997,8 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             {tab === "overview" && renderOverview()}
             {tab === "people" && renderPeople()}
             {tab === "ai" && renderAiOps()}
-            {tab === "activity" && <AdminActivityLog adminToken={adminToken} success={success} showError={showError} />}
-            {tab === "queries" && <AdminQueriesPanel adminToken={adminToken} showError={showError} />}
+            {tab === "activity" && <AdminActivityLog adminToken={adminToken} success={success} showError={showError} globalSearch={globalSearch} />}
+            {tab === "queries" && <AdminQueriesPanel adminToken={adminToken} showError={showError} globalSearch={globalSearch} />}
             {tab === "settings" && renderSettings()}
           </>
         )}

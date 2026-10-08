@@ -107,7 +107,7 @@ async function readFileForDetection(file) {
   return file.text()
 }
 
-export default function StudentView({ student, onLogout }) {
+export default function StudentView({ student, onLogout, onSessionRefresh }) {
     const [tab, setTab] = useState("submit")
   const [submissions, setSubmissions] = useState([])
   const [loadingSubs, setLoadingSubs] = useState(false)
@@ -180,16 +180,30 @@ export default function StudentView({ student, onLogout }) {
     return () => { cancelled = true }
   }, [code, file, topic, selectedPhase])
 
+  const authenticatedFetch = useCallback(async (url, init = {}) => {
+    const request = async token => {
+      const headers = new Headers(init.headers || {})
+      headers.set('Authorization', `Bearer ${token || ''}`)
+      return fetch(url, { ...init, headers })
+    }
+
+    let response = await request(student.token)
+    if (response.status === 401 && onSessionRefresh) {
+      const refreshedStudent = await onSessionRefresh(student.token)
+      if (refreshedStudent?.token) response = await request(refreshedStudent.token)
+    }
+    return response
+  }, [student.token, onSessionRefresh])
+
   const loadQueries = useCallback(async () => {
-    const res = await fetch("/api/student-queries", {
-      headers: { Authorization: `Bearer ${student.token || ""}` },
+    const res = await authenticatedFetch("/api/student-queries", {
       cache: "no-store",
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || "Could not load queries.")
     setStudentQueryEnabled(Boolean(data.enabled))
     setAssignmentQueries(data.queries || [])
-  }, [student.token])
+  }, [authenticatedFetch])
 
   const loadSubmissions = useCallback(async ({ silent = false } = {}) => {
     if (loadAbortRef.current) loadAbortRef.current.abort()
@@ -198,8 +212,7 @@ export default function StudentView({ student, onLogout }) {
 
     if (!silent) setLoadingSubs(true)
     try {
-      const res = await fetch("/api/student-submissions", {
-        headers: { Authorization: `Bearer ${student.token || ""}` },
+      const res = await authenticatedFetch("/api/student-submissions", {
         cache: "no-store",
         signal: controller.signal,
       })
@@ -215,7 +228,7 @@ export default function StudentView({ student, onLogout }) {
         if (!silent) setLoadingSubs(false)
       }
     }
-  }, [student.token])
+  }, [authenticatedFetch])
 
   useEffect(() => {
     if (tab === "feedback") {
@@ -328,9 +341,9 @@ export default function StudentView({ student, onLogout }) {
         detected_assignment_phase: detectedAssignment.phase !== "Unknown" ? detectedAssignment.phase : null,
       }
 
-      const submitRes = await fetch("/api/student-submissions", {
+      const submitRes = await authenticatedFetch("/api/student-submissions", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${student.token || ""}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(submissionPayload),
       })
       const submitData = await submitRes.json().catch(() => ({}))

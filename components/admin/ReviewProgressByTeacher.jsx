@@ -74,7 +74,7 @@ export default function ReviewProgressByTeacher({ adminToken }) {
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold truncate">{teacher.name}</p>
                 <span className="text-xs whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
-                  {teacher.reviewed}/{teacher.received}
+                  {teacher.reviewed}/{teacher.received} · {teacher.progress}%
                 </span>
               </div>
               <div className="progress-bar-wrap" aria-label={`${teacher.name}: ${teacher.progress}% reviewed`}>
