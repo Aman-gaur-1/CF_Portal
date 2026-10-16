@@ -853,6 +853,8 @@ h1, h2, h3, h4, .gradient-text, .stat-num, .score-card > p:first-child { font-fa
 .metric-card-primary { background: var(--portal-primary-soft); border-color: color-mix(in srgb, var(--portal-primary) 24%, var(--portal-border)); }
 .metric-card-success { background: var(--portal-success-soft); border-color: color-mix(in srgb, var(--portal-success) 22%, var(--portal-border)); }
 .metric-card-warning { background: var(--portal-warning-soft); border-color: color-mix(in srgb, var(--portal-warning) 22%, var(--portal-border)); }
+button.metric-card { cursor: pointer; text-align: left; font: inherit; transition: transform 0.1s, box-shadow 0.1s; outline-offset: 2px; border-radius: var(--portal-radius-md); }
+button.metric-card:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 .section-divider { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; }
 .section-divider > span:first-child { color: var(--portal-text); font-size: 0.94rem; font-weight: 730; }
 .section-divider .line { height: 1px; flex: 1; background: var(--portal-border); }

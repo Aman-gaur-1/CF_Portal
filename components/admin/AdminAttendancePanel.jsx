@@ -17,7 +17,7 @@ function statusClass(status) {
 
 export default function AdminAttendancePanel({ adminToken, batches = [], success, showError }) {
   const [mode, setMode] = useState("review")
-  const [status, setStatus] = useState("pending")
+  const [status, setStatus] = useState("all")
   const [batch, setBatch] = useState("")
   const [date, setDate] = useState("")
   const [search, setSearch] = useState("")
@@ -27,6 +27,10 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
   const [reviewingId, setReviewingId] = useState("")
   const [selectedIds, setSelectedIds] = useState([])
   const [confirmReject, setConfirmReject] = useState(false)
+  const [unlinked, setUnlinked] = useState([])
+  const [unlinkedLoading, setUnlinkedLoading] = useState(false)
+  const [rematchResults, setRematchResults] = useState({})
+  const [actioningId, setActioningId] = useState("")
   const showErrorRef = useRef(showError)
   const successRef = useRef(success)
 
@@ -54,6 +58,26 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
   }, [adminToken, batch, date, search, status])
 
   useEffect(() => { load() }, [load])
+
+  const loadUnlinked = useCallback(async () => {
+    setUnlinkedLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (batch) params.set("batch", batch)
+      if (date) params.set("date", date)
+      const res = await fetch(`/api/admin-attendance/unlinked?${params.toString()}`, { cache: "no-store", headers: { Authorization: `Bearer ${adminToken}` } })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not load unlinked records.")
+      setUnlinked(data.unlinked || [])
+      setRematchResults({})
+    } catch (error) {
+      showErrorRef.current(error.message || "Could not load unlinked records.")
+    } finally {
+      setUnlinkedLoading(false)
+    }
+  }, [adminToken, batch, date])
+
+  useEffect(() => { if (mode === "unlinked") loadUnlinked() }, [mode, loadUnlinked])
 
   const pendingVisibleIds = useMemo(() => attendance.filter(row => row.status === "pending").map(row => row.id), [attendance])
   const allVisibleSelected = pendingVisibleIds.length > 0 && pendingVisibleIds.every(id => selectedIds.includes(id))
@@ -94,28 +118,145 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
     review(ids, "reject", note.trim() || null)
   }
 
+  async function rematchAll() {
+    if (!unlinked.length) return
+    setActioningId("rematch-all")
+    try {
+      const res = await fetch("/api/admin-attendance/unlinked", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ action: "rematch", ids: unlinked.map(u => u.id) }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Re-match failed.")
+      const map = {}
+      for (const r of (data.results || [])) map[r.unlinkedId] = r
+      setRematchResults(map)
+      const matched = (data.results || []).filter(r => r.studentId)
+      if (matched.length) successRef.current(`${matched.length} name${matched.length === 1 ? "" : "s"} matched to registered students.`)
+      else successRef.current("No new matches found. Students may not have registered yet.")
+    } catch (error) {
+      showErrorRef.current(error.message || "Re-match failed.")
+    } finally {
+      setActioningId("")
+    }
+  }
+
+  async function linkOne(unlinkedId, studentId) {
+    setActioningId(unlinkedId)
+    try {
+      const res = await fetch("/api/admin-attendance/unlinked", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ action: "link", id: unlinkedId, studentId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Link failed.")
+      successRef.current(`Attendance linked and approved.`)
+      await loadUnlinked()
+      await load()
+    } catch (error) {
+      showErrorRef.current(error.message || "Link failed.")
+    } finally {
+      setActioningId("")
+    }
+  }
+
+  async function dismissIds(ids) {
+    setActioningId(ids.join(","))
+    try {
+      const res = await fetch("/api/admin-attendance/unlinked", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ action: "dismiss", ids }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Dismiss failed.")
+      successRef.current(`${data.dismissed || ids.length} record${(data.dismissed || ids.length) === 1 ? "" : "s"} dismissed.`)
+      await loadUnlinked()
+    } catch (error) {
+      showErrorRef.current(error.message || "Dismiss failed.")
+    } finally {
+      setActioningId("")
+    }
+  }
+
   return (
     <div className="grid gap-4">
       <div className="card admin-panel">
         <SectionHeading
           title="Attendance management"
           detail="Review, upload, and manage attendance across all batches."
-          action={<RefreshButton onClick={load} disabled={loading} />}
+          action={<RefreshButton onClick={mode === "unlinked" ? loadUnlinked : load} disabled={loading || unlinkedLoading} />}
         />
         <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Attendance sections">
           <button type="button" role="tab" aria-selected={mode === "review"} className={`tab-item ${mode === "review" ? "active" : ""}`} onClick={() => setMode("review")}>Review</button>
           <button type="button" role="tab" aria-selected={mode === "upload"} className={`tab-item ${mode === "upload" ? "active" : ""}`} onClick={() => setMode("upload")}>Upload report</button>
+          <button type="button" role="tab" aria-selected={mode === "unlinked"} className={`tab-item ${mode === "unlinked" ? "active" : ""}`} onClick={() => setMode("unlinked")}>Unlinked</button>
         </div>
       </div>
 
-      {mode === "upload" && <AttendanceUpload token={adminToken} batches={batches.map(b => b.name || b)} role="admin" onUploaded={load} />}
+      {mode === "upload" && <AttendanceUpload token={adminToken} batches={batches.map(b => b.name || b)} role="admin" onUploaded={() => { setStatus("all"); load() }} />}
+
+      {mode === "unlinked" && (
+        <div className="grid gap-4">
+          <div className="card admin-panel">
+            <div className="attendance-filter-grid">
+              <select className="select" value={batch} onChange={e => setBatch(e.target.value)} aria-label="Batch filter">
+                <option value="">All batches</option>
+                {batches.map(b => { const name = b.name || b; return <option key={name} value={name}>{name}</option> })}
+              </select>
+              <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} aria-label="Date filter" />
+              <button type="button" className="btn btn-primary btn-sm" onClick={rematchAll} disabled={Boolean(actioningId) || !unlinked.length}>
+                {actioningId === "rematch-all" ? <Spinner size="sm" /> : "Re-match all"}
+              </button>
+            </div>
+          </div>
+
+          <div className="card admin-panel">
+            {unlinkedLoading ? <div className="flex justify-center py-8"><Spinner size="lg" /></div> : unlinked.length === 0 ? (
+              <EmptyState icon="✓" title="No unlinked records" message="All uploaded attendance has been matched to registered students." />
+            ) : (
+              <div className="attendance-list">
+                <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>{unlinked.length} name{unlinked.length === 1 ? "" : "s"} waiting for student registration</p>
+                {unlinked.map(row => {
+                  const match = rematchResults[row.id]
+                  return (
+                    <div key={row.id} className="attendance-row">
+                      <div className="min-w-0">
+                        <p className="font-semibold">{row.participant_name}</p>
+                        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{row.batch} · {row.attendance_date} · uploaded {String(row.created_at || "").slice(0, 16).replace("T", " ")}</p>
+                        {match && match.studentId && (
+                          <p className="text-xs mt-2" style={{ color: "var(--success)" }}>Matched: <b>{match.studentName}</b> ({Math.round(match.similarity * 100)}% {match.confidence})</p>
+                        )}
+                        {match && !match.studentId && (
+                          <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>Still no match — student may not have registered yet</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap justify-end">
+                        <span className="badge-pending">Waiting</span>
+                        {match && match.studentId && (
+                          <button type="button" className="btn btn-primary btn-sm" onClick={() => linkOne(row.id, match.studentId)} disabled={Boolean(actioningId)}>
+                            {actioningId === row.id ? <Spinner size="sm" /> : "Link & approve"}
+                          </button>
+                        )}
+                        <button type="button" className="btn btn-danger-outline btn-sm" onClick={() => dismissIds([row.id])} disabled={Boolean(actioningId)}>Dismiss</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {mode === "review" && <>
         <div className="card admin-panel">
           <div className="status-summary">
-            <MetricCard label="Pending" value={counts.pending || 0} tone="warning" />
-            <MetricCard label="Approved" value={counts.approved || 0} tone="success" />
-            <MetricCard label="Rejected" value={counts.rejected || 0} />
+            <MetricCard label="Pending" value={counts.pending || 0} tone="warning" onClick={() => setStatus("pending")} style={{ cursor: "pointer", outline: status === "pending" ? "2px solid var(--warning)" : "none" }} />
+            <MetricCard label="Approved" value={counts.approved || 0} tone="success" onClick={() => setStatus("approved")} style={{ cursor: "pointer", outline: status === "approved" ? "2px solid var(--success)" : "none" }} />
+            <MetricCard label="Rejected" value={counts.rejected || 0} onClick={() => setStatus("rejected")} style={{ cursor: "pointer", outline: status === "rejected" ? "2px solid var(--danger)" : "none" }} />
           </div>
           <div className="attendance-filter-grid">
             <select className="select" value={batch} onChange={e => setBatch(e.target.value)} aria-label="Attendance batch filter">

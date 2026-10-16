@@ -9,6 +9,8 @@ scripts/seed-staging.mjs
 scripts/staging-env.mjs
 scripts/student-health-card-phase-tests.mjs
 supabase/migrations/202610112*.sql
+supabase/migrations/20261011170000_*.sql
+supabase/migrations/20261011171000_*.sql
 .next
 .vercel
 artifacts

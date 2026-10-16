@@ -8,7 +8,7 @@ import { appendActivity } from '@/lib/activity-log'
 import { createNotification, NOTIFICATION_TYPE, NOTIFICATION_USER_TYPE } from '@/lib/notifications'
 import { HEALTH_CARD_EPOCH, isMissingHealthCardSchema, isUniqueViolation } from '@/lib/student-health-card'
 import { parseIsoDate } from '@/lib/health-card-admin'
-import { parseTeamsReport, buildUploadPreview } from '@/lib/attendance-upload'
+import { parseTeamsReport, buildUploadPreview, stripTeamsSuffix } from '@/lib/attendance-upload'
 
 export const dynamic = 'force-dynamic'
 
@@ -189,8 +189,40 @@ async function handleConfirm({ formData, supabase, batch, date, auth, resolvedNa
     }))
   }
 
+  const studentById = new Map((students || []).map(s => [String(s.id), s]))
+  const createdNames = verified
+    .filter(r => !errors.some(e => e.studentId === String(r.studentId).trim()))
+    .map(r => {
+      const s = studentById.get(String(r.studentId).trim())
+      return { studentId: r.studentId, studentName: s?.name || 'Unknown', fileName: r.fileName }
+    })
+
+  const rawUnmatched = formData.get('unmatched')
+  let unmatchedNames = []
+  try { unmatchedNames = JSON.parse(rawUnmatched) || [] } catch {}
+  let savedUnlinked = 0
+  if (Array.isArray(unmatchedNames) && unmatchedNames.length) {
+    const unlinkedRows = unmatchedNames
+      .filter(n => typeof n === 'string' && n.trim())
+      .slice(0, 200)
+      .map(name => ({
+        participant_name: stripTeamsSuffix(name),
+        batch,
+        attendance_date: date,
+        uploaded_by_role: auth.role,
+        uploaded_by_name: resolvedName,
+      }))
+    if (unlinkedRows.length) {
+      const { data: inserted } = await supabase
+        .from('unlinked_attendance')
+        .upsert(unlinkedRows, { onConflict: 'participant_name,batch,attendance_date', ignoreDuplicates: true })
+        .select('id')
+      savedUnlinked = inserted?.length || 0
+    }
+  }
+
   return jsonNoStore({
     success: true,
-    result: { created, skipped, errors: errors.length, total: verified.length },
+    result: { created, skipped, errors: errors.length, total: verified.length, createdNames, savedUnlinked },
   })
 }

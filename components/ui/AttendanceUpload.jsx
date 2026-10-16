@@ -77,17 +77,26 @@ export default function AttendanceUpload({ token, batches = [], role = "teacher"
       const records = [
         ...preview.matched.map(m => ({ studentId: m.studentId, fileName: m.fileName })),
         ...preview.uncertain.filter(u => uncertainSelections[u.fileName]).map(u => ({ studentId: u.studentId, fileName: u.fileName })),
+        ...preview.unmatched.filter(u => u.bestMatch && uncertainSelections[u.fileName]).map(u => ({ studentId: u.bestMatch.studentId, fileName: u.fileName })),
       ]
       if (!records.length) { setError("No records to confirm."); setConfirming(false); return }
+
+      const skippedNames = [
+        ...preview.uncertain.filter(u => !uncertainSelections[u.fileName]).map(u => u.fileName),
+        ...preview.unmatched.filter(u => !u.bestMatch || !uncertainSelections[u.fileName]).map(u => u.fileName),
+      ]
+      const alreadyMarkedNames = preview.alreadyMarked.map(a => `${a.fileName} → ${a.studentName}`)
+
       const fd = new FormData()
       fd.append("action", "confirm")
       fd.append("batch", batch)
       fd.append("date", date)
       fd.append("records", JSON.stringify(records))
+      if (skippedNames.length) fd.append("unmatched", JSON.stringify(skippedNames))
       const res = await fetch("/api/attendance-upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Confirm failed.")
-      setResult(data.result)
+      setResult({ ...data.result, skippedNames, alreadyMarkedNames, batch: preview.batch, date: preview.date, savedUnlinked: data.result.savedUnlinked || 0 })
       setPreview(null)
       if (onUploaded) onUploaded()
     } catch (err) {
@@ -101,7 +110,7 @@ export default function AttendanceUpload({ token, batches = [], role = "teacher"
     setUncertainSelections(prev => ({ ...prev, [fileName]: !prev[fileName] }))
   }
 
-  const totalToCreate = preview ? preview.matched.length + preview.uncertain.filter(u => uncertainSelections[u.fileName]).length : 0
+  const totalToCreate = preview ? preview.matched.length + preview.uncertain.filter(u => uncertainSelections[u.fileName]).length + preview.unmatched.filter(u => u.bestMatch && uncertainSelections[u.fileName]).length : 0
 
   return (
     <div className="grid gap-4">
@@ -127,14 +136,64 @@ export default function AttendanceUpload({ token, batches = [], role = "teacher"
       </div>
 
       {result && (
-        <div className="card admin-panel">
-          <SectionHeading title="Upload complete" />
-          <div className="attendance-upload-result">
-            <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--success)" }}>{result.created}</span><span className="upload-stat-label">Created</span></div>
-            <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--text-muted)" }}>{result.skipped}</span><span className="upload-stat-label">Already existed</span></div>
-            {result.errors > 0 && <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--danger)" }}>{result.errors}</span><span className="upload-stat-label">Errors</span></div>}
+        <div className="grid gap-4">
+          <div className="card admin-panel">
+            <SectionHeading title="Upload complete" detail={`${result.batch} · ${result.date}`} />
+            <div className="attendance-upload-result">
+              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--success)" }}>{result.created}</span><span className="upload-stat-label">Created</span></div>
+              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--text-muted)" }}>{result.skipped}</span><span className="upload-stat-label">Already existed</span></div>
+              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--danger)" }}>{result.skippedNames?.length || 0}</span><span className="upload-stat-label">Not matched</span></div>
+              {result.errors > 0 && <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--danger)" }}>{result.errors}</span><span className="upload-stat-label">Errors</span></div>}
+            </div>
           </div>
-          <button type="button" className="btn btn-secondary btn-sm mt-3" onClick={reset}>Upload another</button>
+
+          {result.createdNames?.length > 0 && (
+            <div className="card admin-panel">
+              <SectionHeading title={`Attendance created (${result.createdNames.length})`} detail="These students now have approved attendance for this date." />
+              <div className="upload-match-list">
+                {result.createdNames.map(r => (
+                  <div className="upload-match-row" key={r.studentId}>
+                    <span className="upload-match-file">{r.fileName}</span>
+                    <span className="upload-match-arrow">→</span>
+                    <span className="upload-match-student">{r.studentName}</span>
+                    <span className="upload-match-badge" style={{ color: "var(--success)" }}>Approved</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {result.alreadyMarkedNames?.length > 0 && (
+            <div className="card admin-panel">
+              <SectionHeading title={`Already marked (${result.alreadyMarkedNames.length})`} />
+              <div className="upload-match-list">
+                {result.alreadyMarkedNames.map(name => (
+                  <div className="upload-match-row upload-match-muted" key={name}>
+                    <span className="upload-match-file">{name}</span>
+                    <span className="upload-match-badge">Skipped</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {result.skippedNames?.length > 0 && (
+            <div className="card admin-panel">
+              <SectionHeading title={`Not matched (${result.skippedNames.length})`} detail={result.savedUnlinked > 0 ? "Saved for later — when these students register, you can re-match from the Review tab." : "These names could not be matched to any registered student."} />
+              <div className="upload-match-list">
+                {result.skippedNames.map(name => (
+                  <div className="upload-match-row upload-match-muted" key={name}>
+                    <span className="upload-match-file">{name}</span>
+                    <span className="upload-match-badge" style={{ color: result.savedUnlinked > 0 ? "var(--warning)" : "var(--danger)" }}>{result.savedUnlinked > 0 ? "Saved" : "Not matched"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="card admin-panel">
+            <button type="button" className="btn btn-secondary btn-sm" onClick={reset}>Upload another</button>
+          </div>
         </div>
       )}
 
@@ -201,15 +260,19 @@ export default function AttendanceUpload({ token, batches = [], role = "teacher"
 
           {preview.unmatched.length > 0 && (
             <div className="card admin-panel">
-              <SectionHeading title={`Unmatched (${preview.unmatched.length})`} detail="No registered student matched these names." />
+              <SectionHeading title={`Unmatched (${preview.unmatched.length})`} detail="Select a row to manually approve its best guess." />
               <div className="upload-match-list">
-                {preview.unmatched.map(u => (
+                {preview.unmatched.map(u => u.bestMatch ? (
+                  <label className="upload-match-row upload-match-selectable" key={u.fileName}>
+                    <input type="checkbox" checked={!!uncertainSelections[u.fileName]} onChange={() => toggleUncertain(u.fileName)} />
+                    <span className="upload-match-file">{u.fileName}</span>
+                    <span className="upload-match-arrow">≈</span>
+                    <span className="upload-match-student">{u.bestMatch.studentName} ({Math.round(u.bestMatch.similarity * 100)}%)</span>
+                    <span className="upload-match-badge" style={{ color: uncertainSelections[u.fileName] ? "var(--success)" : "var(--danger)" }}>{uncertainSelections[u.fileName] ? "Selected" : "No match"}</span>
+                  </label>
+                ) : (
                   <div className="upload-match-row upload-match-muted" key={u.fileName}>
                     <span className="upload-match-file">{u.fileName}</span>
-                    {u.bestMatch && <>
-                      <span className="upload-match-arrow">≈</span>
-                      <span className="upload-match-student">{u.bestMatch.studentName} ({Math.round(u.bestMatch.similarity * 100)}%)</span>
-                    </>}
                     <span className="upload-match-badge" style={{ color: "var(--danger)" }}>No match</span>
                   </div>
                 ))}
