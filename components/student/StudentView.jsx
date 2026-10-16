@@ -12,10 +12,12 @@ import StudentQueryPanel from "@/components/student/StudentQueryPanel"
 import ThemeToggle from "@/components/ui/ThemeToggle"
 import AiStatusBadge from "@/components/ui/AiStatusBadge"
 import NotificationBell from "@/components/ui/NotificationBell"
+import StudentHealthCard from "@/components/student/StudentHealthCard"
+import PageHeader from "@/components/ui/PageHeader"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
 import { ASSIGNMENT_PHASES, detectAssignmentLanguage, phaseMatchesDetectedLanguage } from "@/lib/assignment-analysis"
 
-const TABS = [{ id: "submit", label: "📤 Submit Assignment" }, { id: "feedback", label: "📋 My Feedback" }]
+const TABS = [{ id: "submit", label: "Submit assignment" }, { id: "feedback", label: "My feedback" }, { id: "health", label: "Student Health Card" }]
 const MAX_MB = 10
 
 const FEEDBACK_LANGUAGES = [
@@ -376,22 +378,19 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
     !phaseMatchesDetectedLanguage(selectedPhase, detectedAssignment)
 
   return (
-    <div className="min-h-screen p-6" style={{ background: "var(--bg-main)" }}>
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-          <div>
-            <h1 className="text-2xl font-black gradient-text">Assignment Portal</h1>
-            <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>👤 {student.name} &nbsp;•&nbsp; 📚 {student.batch}</p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <NotificationBell userType="student" student={student} />
-            <ThemeToggle />
-            <button className="btn btn-secondary btn-sm text-xs" onClick={onLogout}>🚪 Logout</button>
-          </div>
-        </div>
+    <div className="portal-shell">
+      <div className="portal-content">
+        <PageHeader
+          eyebrow="ConsoleFlare student portal"
+          title="Assignment Portal"
+          subtitle="Submit coursework, review feedback, and keep your Health Card progress in view."
+          meta={<><span className="portal-chip">{student.name}</span><span className="portal-chip">{student.batch}</span></>}
+          actions={<><NotificationBell userType="student" student={student} /><ThemeToggle /><button className="btn btn-secondary btn-sm" onClick={onLogout}>Log out</button></>}
+        />
 
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
+
+        {tab === "health" && <StudentHealthCard student={student} success={success} showError={showError} />}
 
         {/* Submit Tab */}
         {tab === "submit" && (
@@ -556,7 +555,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-between mt-8 flex-wrap gap-3">
+        <div className="portal-footer">
           <div className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
             <span>{"Built with ✨ by"}</span>
             <button

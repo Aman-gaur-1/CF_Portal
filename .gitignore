@@ -1,5 +1,14 @@
 node_modules
 .env.local
+.env.staging.local
+.env.production-db.local
+backups/
+.staging-test-credentials.json
+scripts/dev-staging.mjs
+scripts/seed-staging.mjs
+scripts/staging-env.mjs
+scripts/student-health-card-phase-tests.mjs
+supabase/migrations/202610112*.sql
 .next
 .vercel
 artifacts

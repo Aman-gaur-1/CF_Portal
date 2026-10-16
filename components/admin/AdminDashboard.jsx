@@ -14,6 +14,8 @@ import PhaseManagement from "@/components/admin/PhaseManagement"
 import WorkflowSettings from "@/components/admin/WorkflowSettings"
 import AdminQueriesPanel from "@/components/admin/AdminQueriesPanel"
 import AdminActivityLog from "@/components/admin/AdminActivityLog"
+import AdminHealthPanel from "@/components/admin/AdminHealthPanel"
+import PageHeader from "@/components/ui/PageHeader"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const TABS = [
@@ -22,6 +24,7 @@ const TABS = [
   { id: "ai", label: "AI Ops" },
   { id: "activity", label: "Activity Log" },
   { id: "queries", label: "Queries" },
+  { id: "health", label: "Student Health" },
   { id: "settings", label: "Settings" },
 ]
 
@@ -967,20 +970,15 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   }
 
   return (
-    <div className="min-h-screen admin-shell" style={{ background: "var(--bg-main)" }}>
+    <div className="min-h-screen admin-shell">
       <div className="max-w-6xl mx-auto">
-        <div className="admin-header">
-          <div>
-            <h1 className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>ConsoleFlare Admin</h1>
-            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{adminName} - operations and review control</p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <NotificationBell userType="admin" authToken={adminToken} />
-            <ThemeToggle />
-            <RefreshButton onClick={refreshAction.refresh} refreshing={refreshAction.refreshing} updatedLabel={refreshAction.updatedLabel} />
-            <button className="btn btn-secondary btn-sm" onClick={onLogout}>Logout</button>
-          </div>
-        </div>
+        <PageHeader
+          eyebrow="ConsoleFlare administration"
+          title="Admin control center"
+          subtitle="Keep the portal, review operations, and Student Health configuration clear and accountable."
+          meta={<span className="portal-chip">{adminName}</span>}
+          actions={<><NotificationBell userType="admin" authToken={adminToken} /><ThemeToggle /><RefreshButton onClick={refreshAction.refresh} refreshing={refreshAction.refreshing} updatedLabel={refreshAction.updatedLabel} /><button className="btn btn-secondary btn-sm" onClick={onLogout}>Log out</button></>}
+        />
 
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
         <div className="teacher-global-search admin-global-search" role="search">
@@ -998,6 +996,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             {tab === "ai" && renderAiOps()}
             {tab === "activity" && <AdminActivityLog adminToken={adminToken} success={success} showError={showError} globalSearch={globalSearch} />}
             {tab === "queries" && <AdminQueriesPanel adminToken={adminToken} showError={showError} globalSearch={globalSearch} />}
+            {tab === "health" && <AdminHealthPanel adminToken={adminToken} showError={showError} success={success} batches={batches} />}
             {tab === "settings" && renderSettings()}
           </>
         )}

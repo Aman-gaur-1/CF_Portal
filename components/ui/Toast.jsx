@@ -1,13 +1,27 @@
 "use client"
-import { useState } from "react"
+import { useCallback, useRef, useState } from "react"
 
 export function useToast() {
   const [toasts, setToasts] = useState([])
-  const show = (message, type = "success") => {
-    const id = Date.now()
-    setToasts(prev => [...prev, { id, message, type }])
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500)
-  }
+  const nextId = useRef(0)
+  const activeMessages = useRef(new Set())
+
+  const show = useCallback((message, type = "success") => {
+    const normalizedMessage = String(message || "").trim()
+    if (!normalizedMessage) return
+
+    const messageKey = `${type}:${normalizedMessage}`
+    if (activeMessages.current.has(messageKey)) return
+    activeMessages.current.add(messageKey)
+
+    const id = `${Date.now()}-${nextId.current++}`
+    setToasts(prev => [...prev, { id, message: normalizedMessage, type }])
+    setTimeout(() => {
+      activeMessages.current.delete(messageKey)
+      setToasts(prev => prev.filter(t => t.id !== id))
+    }, 3500)
+  }, [])
+
   return { toasts, success: (m) => show(m, "success"), error: (m) => show(m, "error") }
 }
 
