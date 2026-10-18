@@ -16,7 +16,7 @@ import NotificationBell from "@/components/ui/NotificationBell"
 import StudentHealthCard from "@/components/student/StudentHealthCard"
 import PageHeader from "@/components/ui/PageHeader"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
-import { ASSIGNMENT_PHASES, detectAssignmentLanguage, phaseMatchesDetectedLanguage } from "@/lib/assignment-analysis"
+import { detectAssignmentLanguage } from "@/lib/assignment-analysis"
 
 const TABS = [{ id: "submit", label: "Submit assignment" }, { id: "feedback", label: "My feedback" }, { id: "health", label: "Student Health Card" }]
 const MAX_MB = 10
@@ -114,23 +114,27 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
     const [tab, setTab] = useState("submit")
   const [submissions, setSubmissions] = useState([])
   const [lifetimeCoursework, setLifetimeCoursework] = useState(null)
+  const [activeCoursework, setActiveCoursework] = useState([])
+  const [loadingCoursework, setLoadingCoursework] = useState(false)
+  const [selectedType, setSelectedType] = useState("assignment")
+  const [selectedCourseworkId, setSelectedCourseworkId] = useState("")
+  const [selectedPhaseFilter, setSelectedPhaseFilter] = useState("")
   const [loadingSubs, setLoadingSubs] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [defaultPhaseName, setDefaultPhaseName] = useState("")
-  const [phaseOptions, setPhaseOptions] = useState(ASSIGNMENT_PHASES)
-  const [selectedPhase, setSelectedPhase] = useState("")
   const [detectedAssignment, setDetectedAssignment] = useState({ language: "Unknown", phase: "Unknown", confidence: "none", evidence: [] })
-  const [phaseWarningAcknowledged, setPhaseWarningAcknowledged] = useState(false)
   const [studentQueryEnabled, setStudentQueryEnabled] = useState(false)
   const [assignmentQueries, setAssignmentQueries] = useState([])
   const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
   const showErrorRef = useRef(showError)
 
-  const [topic, setTopic] = useState("")
   const [file, setFile] = useState(null)
   const [code, setCode] = useState("")
   const [comment, setComment] = useState("")
+
+  const selectedCoursework = useMemo(() => activeCoursework.find(item => String(item.id) === String(selectedCourseworkId)) || null, [activeCoursework, selectedCourseworkId])
+  const topic = selectedCoursework?.title || ""
+  const selectedPhase = selectedCoursework?.phase || ""
 
   function displayFileName(submission) {
     return submission.original_file_name || submission.file_name
@@ -139,26 +143,6 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
   useEffect(() => {
     showErrorRef.current = showError
   }, [showError])
-
-  useEffect(() => {
-    let cancelled = false
-    fetch("/api/assignment-phases", { cache: "no-store" })
-      .then(res => res.ok ? res.json() : {})
-      .then(data => {
-        if (cancelled) return
-        const activeNames = (data.phases || []).map(phase => phase.name).filter(Boolean)
-        const merged = [...ASSIGNMENT_PHASES, ...activeNames].filter((name, index, list) => list.indexOf(name) === index)
-        setPhaseOptions(merged)
-        if (data.defaultPhaseName) {
-          setDefaultPhaseName(data.defaultPhaseName)
-          setSelectedPhase(current => current || data.defaultPhaseName)
-        } else {
-          setSelectedPhase(current => current || merged[0] || "")
-        }
-      })
-      .catch(() => {})
-    return () => { cancelled = true }
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -209,6 +193,24 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
     setAssignmentQueries(data.queries || [])
   }, [authenticatedFetch])
 
+  const loadActiveCoursework = useCallback(async () => {
+    setLoadingCoursework(true)
+    try {
+      const res = await authenticatedFetch("/api/student-coursework", { cache: "no-store" })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not load active coursework.")
+      const items = Array.isArray(data.coursework) ? data.coursework : []
+      setActiveCoursework(items)
+      setSelectedCourseworkId(current => items.some(item => String(item.id) === String(current)) ? current : String(items.find(item => item.item_type === selectedType && !item.completed)?.id || items.find(item => item.item_type === selectedType)?.id || ""))
+    } catch (err) {
+      showErrorRef.current(err.message || "Could not load active coursework.")
+      setActiveCoursework([])
+      setSelectedCourseworkId("")
+    } finally {
+      setLoadingCoursework(false)
+    }
+  }, [authenticatedFetch, selectedType])
+
   const loadSubmissions = useCallback(async ({ silent = false } = {}) => {
     if (loadAbortRef.current) loadAbortRef.current.abort()
     const controller = new AbortController()
@@ -238,6 +240,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
   }, [authenticatedFetch])
 
   useEffect(() => {
+    if (tab === "submit") loadActiveCoursework()
     if (tab === "feedback") {
       loadSubmissions()
       loadQueries().catch(() => {})
@@ -245,7 +248,19 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
     return () => {
       if (loadAbortRef.current) loadAbortRef.current.abort()
     }
-  }, [tab, loadSubmissions, loadQueries])
+  }, [tab, loadActiveCoursework, loadSubmissions, loadQueries])
+
+  const typedCoursework = useMemo(() => activeCoursework.filter(item => item.item_type === selectedType), [activeCoursework, selectedType])
+  const activePhases = useMemo(() => [...new Set(typedCoursework.map(item => item.phase).filter(Boolean))], [typedCoursework])
+  const visibleCoursework = useMemo(() => typedCoursework.filter(item => !selectedPhaseFilter || item.phase === selectedPhaseFilter), [selectedPhaseFilter, typedCoursework])
+
+  useEffect(() => {
+    setSelectedPhaseFilter(current => activePhases.includes(current) ? current : (activePhases[0] || ""))
+  }, [activePhases])
+
+  useEffect(() => {
+    setSelectedCourseworkId(current => visibleCoursework.some(item => String(item.id) === String(current)) ? current : String(visibleCoursework.find(item => !item.completed)?.id || visibleCoursework[0]?.id || ""))
+  }, [visibleCoursework])
 
   const needsSubmissionPolling = tab === "feedback" && submissions.some(
     s => !s.feedback && (s.ai_status === "pending" || s.ai_status === "processing")
@@ -291,8 +306,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
 
     async function handleSubmit(e) {
     e.preventDefault()
-    if (!topic.trim()) { showError("Topic is required."); return }
-    if (!selectedPhase.trim()) { showError("Assignment phase is required."); return }
+    if (!selectedCoursework || selectedCoursework.completed) { showError("Select an active coursework item that is not already completed."); return }
     if (!file && !code.trim()) { showError("Upload a file or paste your code."); return }
 
     // Comprehensive file validation
@@ -327,23 +341,11 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
         const { error: uploadErr } = await supabase.storage.from("assignments").upload(storedName, file, { contentType: prepareData.upload.mimeType })
         if (uploadErr) throw uploadErr
       }
-      let resolvedPhaseName = selectedPhase || defaultPhaseName
-      if (!resolvedPhaseName) {
-        try {
-          const phaseRes = await fetch("/api/assignment-phases", { cache: "no-store" })
-          const phaseData = phaseRes.ok ? await phaseRes.json() : {}
-          resolvedPhaseName = phaseData.defaultPhaseName || ""
-          if (resolvedPhaseName) setDefaultPhaseName(resolvedPhaseName)
-        } catch {
-          resolvedPhaseName = ""
-        }
-      }
-
       const submissionPayload = {
-        topic: topic.trim(), file_name: storedName, original_file_name: originalFileName, file_url: fileUrl,
+        coursework_item_id: selectedCoursework.id,
+        file_name: storedName, original_file_name: originalFileName, file_url: fileUrl,
         code_text: code.trim() || null,
         comment: comment.trim(),
-        phase: resolvedPhaseName,
         detected_assignment_language: detectedAssignment.language !== "Unknown" ? detectedAssignment.language : null,
         detected_assignment_phase: detectedAssignment.phase !== "Unknown" ? detectedAssignment.phase : null,
       }
@@ -367,7 +369,8 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
         })
       }
 
-      setTopic(""); setFile(null); setCode(""); setComment(""); setPhaseWarningAcknowledged(false)
+      setFile(null); setCode(""); setComment("")
+      await loadActiveCoursework()
       const fi = document.getElementById("fileInput"); if (fi) fi.value = ""
     } catch (err) {
       showError(`Submission failed: ${err.message}`)
@@ -377,11 +380,6 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
   }
 
   const pending = submissions.filter(r => !isReviewedSubmission(r)).length
-  const showPhaseWarning = selectedPhase &&
-    Number(detectedAssignment.confidence || 0) > 0 &&
-    detectedAssignment.phase !== "Unknown" &&
-    !phaseMatchesDetectedLanguage(selectedPhase, detectedAssignment)
-
   return (
     <div className="portal-shell">
       <div className="portal-content">
@@ -406,32 +404,27 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
               <div className="line" />
             </div>
             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-              <div>
-                <label className="label">Assignment Topic *</label>
-                <input className="input" value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. Functions, OOP, Pandas..." />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <label className="label">Type
+                  <select className="input mt-1" value={selectedType} onChange={event => setSelectedType(event.target.value)}>
+                    <option value="assignment">Assignment</option>
+                    <option value="project">Project</option>
+                  </select>
+                </label>
+                <label className="label">Phase
+                  <select className="input mt-1" value={selectedPhaseFilter} onChange={event => setSelectedPhaseFilter(event.target.value)} disabled={!activePhases.length}>
+                    <option value="">{activePhases.length ? "Select coursework" : "No active phase"}</option>
+                    {activePhases.map(phase => <option key={phase} value={phase}>{phase}</option>)}
+                  </select>
+                </label>
+                <label className="label">Coursework
+                  <select className="input mt-1" value={selectedCourseworkId} onChange={event => setSelectedCourseworkId(event.target.value)} disabled={loadingCoursework || !visibleCoursework.length}>
+                    <option value="">{loadingCoursework ? "Loading active coursework…" : "Select coursework"}</option>
+                    {visibleCoursework.map(item => <option key={item.id} value={item.id}>{item.title}{item.completed ? " · Completed" : ""}</option>)}
+                  </select>
+                </label>
               </div>
-
-              <div>
-                <label className="label">Assignment Phase *</label>
-                <select className="input" value={selectedPhase} onChange={e => setSelectedPhase(e.target.value)}>
-                  <option value="">Select phase</option>
-                  {phaseOptions.map(phase => <option key={phase} value={phase}>{phase}</option>)}
-                </select>
-              </div>
-
-              {showPhaseWarning && (
-                <div className="rounded-lg p-4 text-sm" style={{ border: "1px solid var(--warning)", background: "var(--surface)" }}>
-                  <p className="font-semibold mb-2" style={{ color: "var(--warning)" }}>Phase and detected work may not match.</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
-                    <span><b>Selected Phase:</b> {selectedPhase}</span>
-                    <span><b>Detected:</b> {detectedAssignment.language}</span>
-                  </div>
-                  <label className="flex items-start gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
-                    <input type="checkbox" checked={phaseWarningAcknowledged} onChange={e => setPhaseWarningAcknowledged(e.target.checked)} />
-                    I want to continue with the selected phase.
-                  </label>
-                </div>
-              )}
+              {!loadingCoursework && !activeCoursework.length && <p className="text-sm" style={{ color: "var(--text-secondary)" }}>No active coursework is available for your batch yet.</p>}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="rounded-xl p-4" style={{ border: "1px dashed var(--border)", background: "var(--surface)" }}>
@@ -456,8 +449,8 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
                 <textarea className="input" rows={3} value={comment} onChange={e => setComment(e.target.value)} placeholder="Any question or note for the trainer..." />
               </div>
 
-              <button type="submit" className="btn btn-primary flex items-center justify-center gap-2" disabled={submitting || (showPhaseWarning && !phaseWarningAcknowledged)}>
-                {submitting ? <Spinner /> : "🚀 Submit Assignment"}
+              <button type="submit" className="btn btn-primary flex items-center justify-center gap-2" disabled={submitting || !selectedCoursework || selectedCoursework.completed}>
+                {submitting ? <Spinner /> : `🚀 Submit ${selectedType === "project" ? "Project" : "Assignment"}`}
               </button>
             </form>
           </div>

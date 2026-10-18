@@ -13,14 +13,11 @@ import SectionHeading from "@/components/ui/SectionHeading"
 const TABS = [
   ["overview", "Overview"],
   ["attendance", "Attendance"],
-  ["coursework-setup", "Coursework Setup"],
-  ["coursework", "Coursework"],
-  ["calendar", "Working Calendar"],
-  ["rules", "Point Rules"],
+  ["advanced", "Optional Advanced"],
 ]
 
-export default function AdminHealthPanel({ adminToken, showError, success, batches = [] }) {
-  const [tab, setTab] = useState("overview")
+export default function AdminHealthPanel({ adminToken, showError, success, batches = [], initialTab = "overview" }) {
+  const [tab, setTab] = useState(initialTab)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [attendanceFocus, setAttendanceFocus] = useState("")
@@ -51,22 +48,20 @@ export default function AdminHealthPanel({ adminToken, showError, success, batch
         <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Student Health sections">{TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab-item ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}</div>
       </div>
       {tab === "attendance" && <AdminAttendancePanel adminToken={adminToken} batches={batches} success={success} showError={showError} focusMode={attendanceFocus} />}
-      {tab === "coursework-setup" && <AdminCourseworkSetupPanel adminToken={adminToken} success={success} showError={showError} />}
-      {tab === "coursework" && <AdminCourseworkPanel adminToken={adminToken} batches={batches} success={success} showError={showError} />}
-      {tab === "calendar" && <AdminCalendarPanel adminToken={adminToken} batches={batches} success={success} showError={showError} />}
+      {tab === "advanced" && <div className="grid gap-4"><AdminCourseworkSetupPanel adminToken={adminToken} success={success} showError={showError} /><AdminCourseworkPanel adminToken={adminToken} batches={batches} success={success} showError={showError} /><AdminCalendarPanel adminToken={adminToken} batches={batches} success={success} showError={showError} /></div>}
       {tab === "overview" && (loading ? <div className="card admin-panel flex justify-center"><Spinner size="lg" /></div> : data && <>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <MetricCard label="Total coursework" value={data.counts?.courseworkItems || 0} />
           <MetricCard label="Assignments" value={data.counts?.activeAssignments || 0} hint="Active" tone="primary" />
           <MetricCard label="Projects" value={data.counts?.activeProjects || 0} hint="Active" />
-          <MetricCard label="Working days" value={data.counts?.workingCalendarDays || 0} />
+           <MetricCard label="Tracked attendance dates" value={data.counts?.trackedAttendanceDates || 0} />
           <MetricCard label="Needs matching" value={data.counts?.needsMatching || 0} tone="warning" onClick={() => { setAttendanceFocus("needs"); setTab("attendance") }} style={{ cursor: "pointer" }} />
           <MetricCard label="Attendance pending" value={data.counts?.pendingAttendance || 0} tone="warning" onClick={() => { setAttendanceFocus(""); setTab("attendance") }} style={{ cursor: "pointer" }} />
           <MetricCard label="Approved attendance" value={data.counts?.approvedAttendance || 0} tone="success" />
         </div>
         <div className="card admin-panel">
           <SectionHeading title="Health Card overview" detail="Configuration currently used by scoring and attendance." />
-          <div className="grid gap-2"><div className="admin-summary-row"><span>Epoch start</span><b>{data.epochStart}</b></div><div className="admin-summary-row"><span>Calendar entries</span><b>{data.counts?.calendarDays || 0}</b></div><div className="admin-summary-row"><span>Active point rules</span><b>{data.counts?.activePointRules || 0}</b></div><div className="admin-summary-row"><span>Timezone</span><b>{data.timezone}</b></div></div>
+           <div className="grid gap-2"><div className="admin-summary-row"><span>Epoch start</span><b>{data.epochStart}</b></div><div className="admin-summary-row"><span>Tracked attendance dates</span><b>{data.counts?.trackedAttendanceDates || 0}</b></div><div className="admin-summary-row"><span>Active point rules</span><b>{data.counts?.activePointRules || 0}</b></div><div className="admin-summary-row"><span>Timezone</span><b>{data.timezone}</b></div></div>
           <p className="text-xs mt-4" style={{ color: "var(--portal-text-muted)" }}>AI evaluation scores remain separate from Health Card points.</p>
         </div>
       </>)}

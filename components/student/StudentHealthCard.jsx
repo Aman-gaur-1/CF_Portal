@@ -188,6 +188,7 @@ export default function StudentHealthCard({ student, success, showError }) {
   const recentActivity = Array.isArray(healthCard.recentActivity) ? healthCard.recentActivity : []
   const attendanceHistory = Array.isArray(healthCard.attendanceHistory) ? healthCard.attendanceHistory : []
   const currentRank = numeric(metrics.rank, 0)
+  const courseworkPoints = numeric(metrics.courseworkPoints, numeric(metrics.assignmentPoints) + numeric(metrics.projectPoints))
   const assignmentExpected = numeric(metrics.assignmentExpected)
   const projectExpected = numeric(metrics.projectExpected)
   const eligibleWorkingDays = numeric(metrics.eligibleWorkingDays)
@@ -205,11 +206,12 @@ export default function StudentHealthCard({ student, success, showError }) {
           actions={<RefreshButton onClick={load} disabled={loading} />}
         />
         <div className="health-card-kpis">
-          <MetricCard label="Total points" value={numeric(metrics.totalPoints)} hint="Health Card points since 1 Oct 2026" tone="primary" />
+           <MetricCard label="Coursework points" value={courseworkPoints} hint="Assignments and projects only" tone="primary" />
           <MetricCard label="Batch rank" value={currentRank ? `#${currentRank}` : "—"} hint="Current position" />
-          <MetricCard label="Attendance" value={percent(metrics.attendancePercentage, eligibleWorkingDays)} hint={`${numeric(metrics.approvedAttendanceDays)} approved`} />
-          <MetricCard label="Assignments" value={assignmentExpected > 0 ? percent(metrics.assignmentCompletionPercentage, assignmentExpected) : "—"} hint={assignmentExpected > 0 ? `${numeric(metrics.assignmentCompleted)} / ${assignmentExpected}` : "No assignments configured yet"} />
-          <MetricCard label="Projects" value={projectExpected > 0 ? percent(metrics.projectCompletionPercentage, projectExpected) : "—"} hint={projectExpected > 0 ? `${numeric(metrics.projectCompleted)} / ${projectExpected}` : "No projects configured yet"} />
+           <MetricCard label="Assignments" value={`${numeric(metrics.assignmentCompleted)} / ${assignmentExpected}`} hint={`${numeric(metrics.assignmentPending)} pending`} />
+           <MetricCard label="Projects" value={`${numeric(metrics.projectCompleted)} / ${projectExpected}`} hint={`${numeric(metrics.projectPending)} pending`} />
+           <MetricCard label="Attendance" value={percent(metrics.attendancePercentage, eligibleWorkingDays)} hint={`${numeric(metrics.approvedAttendanceDays)} present / ${eligibleWorkingDays} tracked`} />
+           <MetricCard label="Health Card total" value={numeric(metrics.totalPoints)} hint="Coursework + attendance" tone="success" />
         </div>
       </section>
 
@@ -296,8 +298,8 @@ export default function StudentHealthCard({ student, success, showError }) {
 
       <div className="health-card-lower-grid">
         <section className="card health-card-panel">
-          <SectionHeading title="Batch leaderboard" detail="Top 10 in your batch." />
-          {top10.length === 0 ? <EmptyState icon="★" title="No ranked activity yet" message="Complete coursework or attendance to appear here." /> : (
+           <SectionHeading title="Batch leaderboard" detail="Coursework points · top 10 in your batch." />
+           {top10.length === 0 ? <EmptyState icon="★" title="No ranked activity yet" message="Complete an Assignment or Project to appear here." /> : (
             <div className="health-card-list">
               {top10.map(row => {
                 const current = String(row.studentId) === String(student.id)

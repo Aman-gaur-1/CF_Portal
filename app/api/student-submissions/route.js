@@ -7,6 +7,7 @@ import { withSignedAssignmentUrls } from '@/lib/assignment-file-access'
 import { detectAssignmentLanguage, detectAssignmentType, normalizeAssignmentPhase, phaseMatchesDetectedLanguage } from '@/lib/assignment-analysis'
 import { calculateLifetimeCoursework, getCourseworkPoints } from '@/lib/coursework-scoring'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
+import { normalizeHealthCourseworkType } from '@/lib/health-card-domain'
 
 export const dynamic = 'force-dynamic'
 
@@ -112,15 +113,26 @@ export async function POST(request) {
     if (!student) return jsonNoStore({ error: 'Student authorization required' }, { status: 401 })
 
     const body = await request.json().catch(() => ({}))
-    const topic = sanitizeStudentText(body?.topic, 240)
+    const courseworkItemId = String(body?.coursework_item_id || body?.courseworkItemId || '').trim()
     const codeText = sanitizeStudentText(body?.code_text, 50000)
     const fileName = String(body?.file_name || '').trim()
     const originalFileName = String(body?.original_file_name || '').trim().slice(0, 240) || null
-    const phase = normalizeAssignmentPhase(body?.phase)
-
-    if (!topic) return jsonNoStore({ error: 'Topic is required' }, { status: 400 })
-    if (!phase) return jsonNoStore({ error: 'Assignment phase is required' }, { status: 400 })
+    if (!courseworkItemId) return jsonNoStore({ error: 'Select active coursework before submitting.' }, { status: 400 })
     if (!fileName && !codeText) return jsonNoStore({ error: 'Upload a file or paste your code' }, { status: 400 })
+
+    const [{ data: item, error: itemError }, { data: activation, error: activationError }] = await Promise.all([
+      supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').eq('id', courseworkItemId).maybeSingle(),
+      supabase.from('batch_coursework_assignments').select('id,coursework_item_id,batch,active').eq('coursework_item_id', courseworkItemId).eq('batch', student.batch).eq('active', true).maybeSingle(),
+    ])
+    if (itemError) throw itemError
+    if (activationError) throw activationError
+    const itemType = normalizeHealthCourseworkType(item?.item_type)
+    if (!item || !item.active || !itemType || (item.batch && item.batch !== student.batch) || !activation) {
+      return jsonNoStore({ error: 'That coursework is not active for your batch.' }, { status: 409 })
+    }
+    const topic = sanitizeStudentText(item.title, 240)
+    const phase = normalizeAssignmentPhase(item.phase) || sanitizeStudentText(item.phase, 160)
+    if (!topic || !phase) return jsonNoStore({ error: 'The selected coursework is missing its phase.' }, { status: 409 })
 
     const detected = detectAssignmentLanguage({
       text: codeText,
@@ -144,7 +156,8 @@ export async function POST(request) {
       code_text: codeText || null,
       comment: sanitizeStudentText(body?.comment, 2000),
       submitted_at: new Date().toISOString(),
-      submission_type: 'assignment',
+       coursework_item_id: item.id,
+       submission_type: itemType,
       phase,
       detected_assignment_language: sanitizeStudentText(body?.detected_assignment_language, 80) || detected.language,
       detected_assignment_phase: normalizeAssignmentPhase(body?.detected_assignment_phase) || detected.phase,

@@ -1,0 +1,55 @@
+"use client"
+
+import { useCallback, useEffect, useMemo, useState } from "react"
+import Tabs from "@/components/ui/Tabs"
+import AttendanceTab from "@/components/teacher/AttendanceTab"
+import StudentsTab from "@/components/teacher/StudentsTab"
+import Spinner from "@/components/ui/Spinner"
+
+const TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "attendance", label: "Attendance" },
+  { id: "students", label: "Students" },
+  { id: "coursework", label: "Coursework" },
+]
+
+export default function StudentHealthPanel({ teacherToken }) {
+  const [tab, setTab] = useState("overview")
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [selectedBatch, setSelectedBatch] = useState("")
+  const [selectedIds, setSelectedIds] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch("/api/teacher-curriculum", { cache: "no-store", headers: { Authorization: `Bearer ${teacherToken}` } })
+      const payload = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(payload.error || "Could not load Student Health.")
+      setData(payload); setSelectedBatch(current => current || payload.batchNames?.[0] || "")
+    } catch (err) { setError(err.message) } finally { setLoading(false) }
+  }, [teacherToken])
+
+  useEffect(() => { load() }, [load])
+
+  const selectedAssignments = useMemo(() => (data?.assignments || []).filter(row => row.batch === selectedBatch), [data, selectedBatch])
+  const activeIds = new Set(selectedAssignments.filter(row => row.active).map(row => String(row.coursework_item_id)))
+  const itemById = new Map((data?.items || []).map(item => [String(item.id), item]))
+  const available = (data?.items || []).filter(item => item.active && (!item.batch || item.batch === selectedBatch))
+
+  async function activate() {
+    setSaving(true); setError("")
+    try {
+      const res = await fetch("/api/teacher-curriculum", { method: "POST", headers: { Authorization: `Bearer ${teacherToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ batch: selectedBatch, courseworkItemIds: selectedIds }) })
+      const payload = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(payload.error || "Could not activate coursework.")
+      setSelectedIds([]); await load()
+    } catch (err) { setError(err.message) } finally { setSaving(false) }
+  }
+
+  if (loading) return <div className="card p-8 flex justify-center"><Spinner size="lg" /></div>
+  if (error && !data) return <div className="card p-6"><p className="text-sm" style={{ color: "var(--danger)" }}>{error}</p></div>
+  return <div className="grid gap-4"><div className="card admin-panel"><div className="flex items-center justify-between gap-3 flex-wrap"><div><h3 className="text-lg font-bold">Student Health</h3><p className="text-sm" style={{ color: "var(--text-secondary)" }}>Assigned batches only. Attendance, students, and activated coursework stay in one focused workspace.</p></div>{error && <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span>}</div><Tabs tabs={TABS} active={tab} onChange={setTab} /></div>{tab === "overview" && <section className="grid grid-cols-2 md:grid-cols-4 gap-3"><div className="stat-card"><div className="stat-label">Assigned batches</div><div className="stat-num">{data?.batchNames?.length || 0}</div></div><div className="stat-card"><div className="stat-label">Active assignments</div><div className="stat-num">{selectedAssignments.filter(row => itemById.get(String(row.coursework_item_id))?.item_type === "assignment" && row.active).length}</div></div><div className="stat-card"><div className="stat-label">Active projects</div><div className="stat-num">{selectedAssignments.filter(row => itemById.get(String(row.coursework_item_id))?.item_type === "project" && row.active).length}</div></div><div className="stat-card"><div className="stat-label">Selected batch</div><div className="stat-num text-base">{selectedBatch || "—"}</div></div></section>}{tab === "attendance" && <AttendanceTab teacherToken={teacherToken} />}{tab === "students" && <StudentsTab teacherToken={teacherToken} />}{tab === "coursework" && <section className="card admin-panel grid gap-3"><div className="grid grid-cols-1 md:grid-cols-3 gap-2"><select className="select" value={selectedBatch} onChange={event => { setSelectedBatch(event.target.value); setSelectedIds([]) }}><option value="">Select assigned batch</option>{(data?.batchNames || []).map(name => <option key={name} value={name}>{name}</option>)}</select><button type="button" className="btn btn-primary" onClick={activate} disabled={saving || !selectedIds.length}>{saving ? <Spinner size="sm" /> : `Activate selected (${selectedIds.length})`}</button></div><div className="grid gap-2">{available.map(item => <label className="admin-row" key={item.id}><span className="flex gap-2 items-start"><input type="checkbox" checked={selectedIds.includes(item.id)} onChange={event => setSelectedIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} disabled={activeIds.has(String(item.id))} /><span><b>{item.title}</b><small className="block" style={{ color: "var(--text-muted)" }}>{item.item_type} · {item.phase || "No phase"}</small></span></span><span className={activeIds.has(String(item.id)) ? "badge-done" : "badge-pending"}>{activeIds.has(String(item.id)) ? "Active" : "Catalog"}</span></label>)}{!available.length && <p className="text-sm" style={{ color: "var(--text-secondary)" }}>No compatible catalog items are available for this assigned batch.</p>}</div></section>}</div>
+}

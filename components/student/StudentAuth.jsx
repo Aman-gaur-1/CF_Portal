@@ -33,14 +33,14 @@ export default function StudentAuth({ onLogin }) {
 
   async function handleLogin(e) {
     e.preventDefault()
-    if (!loginName.trim() || !loginPass.trim()) { showError("Name and password are required."); return }
+    if (!loginName.trim() || !loginPass.trim()) { showError("Login ID or name and password are required."); return }
     if (!loginBatch) { showError("Please select your batch."); return }
     setLoading(true)
     try {
       const res = await fetch("/api/student-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: loginName, batch: loginBatch, password: loginPass }),
+        body: JSON.stringify({ name: loginName, loginId: loginName, batch: loginBatch, password: loginPass }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data.success || !data.student) {
@@ -97,7 +97,7 @@ export default function StudentAuth({ onLogin }) {
 
           {tab === "login" && (
             <form onSubmit={handleLogin} className="flex flex-col gap-4">
-              <div><label className="label">Full Name</label><input className="input" value={loginName} onChange={e => setLoginName(e.target.value)} placeholder="Enter your full name" /></div>
+              <div><label className="label">Login ID or full name</label><input className="input" value={loginName} onChange={e => setLoginName(e.target.value)} placeholder="Enter your login ID or full name" /></div>
               <div>
                 <label className="label">Batch</label>
                 <BatchPicker value={loginBatch} onChange={setLoginBatch} batches={batches} label="Batch" />

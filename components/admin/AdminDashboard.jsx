@@ -15,17 +15,18 @@ import WorkflowSettings from "@/components/admin/WorkflowSettings"
 import AdminQueriesPanel from "@/components/admin/AdminQueriesPanel"
 import AdminActivityLog from "@/components/admin/AdminActivityLog"
 import AdminHealthPanel from "@/components/admin/AdminHealthPanel"
+import BatchSetupPanel from "@/components/admin/BatchSetupPanel"
+import CurriculumPanel from "@/components/admin/CurriculumPanel"
 import PageHeader from "@/components/ui/PageHeader"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const TABS = [
   { id: "overview", label: "Overview" },
-  { id: "people", label: "People" },
-  { id: "ai", label: "AI Ops" },
-  { id: "activity", label: "Activity Log" },
-  { id: "queries", label: "Queries" },
-  { id: "health", label: "Student Health" },
-  { id: "settings", label: "Settings" },
+  { id: "attendance", label: "Attendance" },
+  { id: "students", label: "Students" },
+  { id: "batch-setup", label: "Batch Setup" },
+  { id: "curriculum", label: "Curriculum" },
+  { id: "advanced", label: "Optional Advanced" },
 ]
 
 const EMPTY_AI_SETTING = {
@@ -969,6 +970,19 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
     )
   }
 
+  function renderAdvanced() {
+    return (
+      <div className="grid gap-5">
+        <div className="card admin-panel"><SectionTitle title="Optional Advanced" detail="Technical operations remain available without crowding the primary workflow." /><p className="text-sm mt-3" style={{ color: "var(--text-secondary)" }}>AI operations, activity logs, queries, workflow settings, raw catalog matching, working calendar, and point rules are advanced tools.</p></div>
+        {renderAiOps()}
+        <AdminActivityLog adminToken={adminToken} success={success} showError={showError} globalSearch={globalSearch} />
+        <AdminQueriesPanel adminToken={adminToken} showError={showError} globalSearch={globalSearch} />
+        <AdminHealthPanel adminToken={adminToken} showError={showError} success={success} batches={batches} initialTab="advanced" />
+        {renderSettings()}
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen admin-shell">
       <div className="max-w-6xl mx-auto">
@@ -992,12 +1006,11 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
         ) : (
           <>
             {tab === "overview" && renderOverview()}
-            {tab === "people" && renderPeople()}
-            {tab === "ai" && renderAiOps()}
-            {tab === "activity" && <AdminActivityLog adminToken={adminToken} success={success} showError={showError} globalSearch={globalSearch} />}
-            {tab === "queries" && <AdminQueriesPanel adminToken={adminToken} showError={showError} globalSearch={globalSearch} />}
-            {tab === "health" && <AdminHealthPanel adminToken={adminToken} showError={showError} success={success} batches={batches} />}
-            {tab === "settings" && renderSettings()}
+            {tab === "attendance" && <AdminHealthPanel adminToken={adminToken} showError={showError} success={success} batches={batches} initialTab="attendance" />}
+            {tab === "students" && renderPeople()}
+            {tab === "batch-setup" && <BatchSetupPanel adminToken={adminToken} batches={batches} students={students} success={success} showError={showError} />}
+            {tab === "curriculum" && <CurriculumPanel adminToken={adminToken} batches={batches} success={success} showError={showError} />}
+            {tab === "advanced" && renderAdvanced()}
           </>
         )}
       </div>

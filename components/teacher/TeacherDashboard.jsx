@@ -6,7 +6,7 @@ import StudentsTab from "@/components/teacher/StudentsTab"
 import BatchesTab from "@/components/teacher/BatchesTab"
 import ThemeToggle from "@/components/ui/ThemeToggle"
 import NotificationBell from "@/components/ui/NotificationBell"
-import AttendanceTab from "@/components/teacher/AttendanceTab"
+import StudentHealthPanel from "@/components/teacher/StudentHealthPanel"
 import PageHeader from "@/components/ui/PageHeader"
 
 const TABS = [
@@ -56,7 +56,7 @@ export default function TeacherDashboard({ teacherName, teacherToken, onLogout }
         {tab === "reviews" && <SubmissionsTab teacherName={teacherName} teacherToken={teacherToken} requestedFilter={reviewFilter} globalSearch={globalSearch} />}
         {tab === "students" && <StudentsTab teacherToken={teacherToken} globalSearch={globalSearch} />}
         {tab === "batches" && <BatchesTab teacherName={teacherName} teacherToken={teacherToken} globalSearch={globalSearch} />}
-        {tab === "health" && <AttendanceTab teacherToken={teacherToken} />}
+        {tab === "health" && <StudentHealthPanel teacherToken={teacherToken} />}
 
         <div className="portal-footer">
           <div className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>

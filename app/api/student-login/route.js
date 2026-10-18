@@ -11,6 +11,7 @@ import {
   STUDENT_REFRESH_COOKIE,
   STUDENT_REFRESH_TTL_MS,
 } from '@/lib/student-auth'
+import { isMissingHealthCardSchema } from '@/lib/student-health-card'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,15 +38,37 @@ export async function POST(request) {
     const input = validateStudentCredentialsInput(await request.json())
     if (input.error) return jsonNoStore({ success: false, error: input.error }, { status: 400 })
 
-    const { name, batch, password } = input.value
+    const { name, loginId, batch, password } = input.value
     const supabase = getSupabaseAdmin()
-    const { data, error } = await supabase
+    let supportsLoginId = true
+    let { data, error } = await supabase
       .from('students')
-      .select('id,name,batch,password_hash')
-      .ilike('name', name)
+      .select('id,name,batch,password_hash,login_id,must_change_password')
+      .ilike('name', name || loginId)
       .eq('batch', batch)
       .limit(1)
       .maybeSingle()
+
+    if (error && isMissingHealthCardSchema(error)) {
+      supportsLoginId = false
+      ({ data, error } = await supabase
+        .from('students')
+        .select('id,name,batch,password_hash')
+        .ilike('name', name || loginId)
+        .eq('batch', batch)
+        .limit(1)
+        .maybeSingle())
+    }
+
+    if (!data && !error && loginId && supportsLoginId) {
+      ({ data, error } = await supabase
+        .from('students')
+        .select('id,name,batch,password_hash,login_id,must_change_password')
+        .eq('login_id', loginId)
+        .eq('batch', batch)
+        .limit(1)
+        .maybeSingle())
+    }
 
     if (error) throw new Error(error.message)
     const passwordResult = await verifyStudentPassword(password, data?.password_hash)

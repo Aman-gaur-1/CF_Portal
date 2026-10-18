@@ -12,6 +12,8 @@ function safeStudentProfile(student) {
     id: student.id,
     name: student.name,
     batch: student.batch,
+    login_id: student.login_id || null,
+    must_change_password: Boolean(student.must_change_password),
     token: typeof student.token === 'string' ? student.token : '',
   }
 }
