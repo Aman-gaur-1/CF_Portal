@@ -13,7 +13,9 @@ function numeric(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function percent(value) {
+function percent(value, denominator = null) {
+  if (denominator !== null && (!(Number(denominator) > 0))) return "Not available"
+  if (value === null || value === undefined || value === "") return "Not available"
   const parsed = Number(value)
   return Number.isFinite(parsed) ? `${parsed.toFixed(2)}%` : "Not available"
 }
@@ -29,12 +31,43 @@ function statusClass(status) {
   return "badge-pending"
 }
 
-function MetricProgress({ label, completed, expected, pending, percentage }) {
+function formatSessionTime(value) {
+  if (!value) return "Time to be announced"
+  try {
+    return new Intl.DateTimeFormat("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(value))
+  } catch {
+    return "Time to be announced"
+  }
+}
+
+function sessionWindow(session) {
+  if (!session?.startsAt) return session?.title || "Attendance session"
+  const start = formatSessionTime(session.startsAt)
+  const end = session.endsAt ? ` – ${formatSessionTime(session.endsAt)}` : ""
+  return `${session.title || "Attendance session"} · ${start}${end}`
+}
+
+function MetricProgress({ label, completed, expected, pending, percentage, emptyMessage }) {
+  if (!(Number(expected) > 0)) {
+    return (
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <span>{label}</span>
+          <span style={{ color: "var(--text-secondary)" }}>{emptyMessage}</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="grid gap-2">
       <div className="flex items-center justify-between gap-3 text-sm">
         <span>{label}</span>
-        <span style={{ color: "var(--text-secondary)" }}>{completed} / {expected} · {percent(percentage)} · {pending} pending</span>
+        <span style={{ color: "var(--text-secondary)" }}>{completed} / {expected} · {percent(percentage, expected)} · {pending} pending</span>
       </div>
       <div className="progress-bar-wrap" aria-label={`${label} progress`}>
         <div className="progress-bar-fill" style={{ width: `${progress(percentage)}%` }} />
@@ -46,6 +79,9 @@ function MetricProgress({ label, completed, expected, pending, percentage }) {
 export default function StudentHealthCard({ student, success, showError }) {
   const [healthCard, setHealthCard] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [todaySessions, setTodaySessions] = useState([])
+  const [loadingSessions, setLoadingSessions] = useState(true)
+  const [selectedSessionId, setSelectedSessionId] = useState("")
   const [marking, setMarking] = useState(false)
   const [showQuery, setShowQuery] = useState(false)
   const [queryDate, setQueryDate] = useState("")
@@ -72,7 +108,32 @@ export default function StudentHealthCard({ student, success, showError }) {
     }
   }, [student.token])
 
+  const loadSessions = useCallback(async () => {
+    setLoadingSessions(true)
+    try {
+      const res = await fetch("/api/student-attendance", {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${student.token}` },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not load eligible attendance sessions.")
+      const sessions = Array.isArray(data.sessions) ? data.sessions : []
+      setTodaySessions(sessions)
+      setSelectedSessionId(current => {
+        if (sessions.some(session => String(session.id) === String(current))) return current
+        return String(sessions.find(session => !session.alreadyMarked)?.id || sessions[0]?.id || "")
+      })
+    } catch (error) {
+      showErrorRef.current(error.message || "Could not load eligible attendance sessions.")
+      setTodaySessions([])
+      setSelectedSessionId("")
+    } finally {
+      setLoadingSessions(false)
+    }
+  }, [student.token])
+
   useEffect(() => { load() }, [load])
+  useEffect(() => { loadSessions() }, [loadSessions])
 
   async function markAttendance() {
     if (marking) return
@@ -81,12 +142,12 @@ export default function StudentHealthCard({ student, success, showError }) {
       const res = await fetch("/api/student-attendance", {
         method: "POST",
         headers: { Authorization: `Bearer ${student.token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ sessionId: selectedSessionId }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not mark attendance.")
       success("Attendance marked and sent for mentor approval.")
-      await load()
+      await Promise.all([load(), loadSessions()])
     } catch (error) {
       showErrorRef.current(error.message || "Could not mark attendance.")
     } finally {
@@ -106,7 +167,7 @@ export default function StudentHealthCard({ student, success, showError }) {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not submit attendance request.")
-      success("Missing attendance request submitted for teacher review.")
+      success("Attendance issue submitted for teacher review.")
       setQueryDate("")
       setQueryReason("")
       setShowQuery(false)
@@ -127,6 +188,11 @@ export default function StudentHealthCard({ student, success, showError }) {
   const recentActivity = Array.isArray(healthCard.recentActivity) ? healthCard.recentActivity : []
   const attendanceHistory = Array.isArray(healthCard.attendanceHistory) ? healthCard.attendanceHistory : []
   const currentRank = numeric(metrics.rank, 0)
+  const assignmentExpected = numeric(metrics.assignmentExpected)
+  const projectExpected = numeric(metrics.projectExpected)
+  const eligibleWorkingDays = numeric(metrics.eligibleWorkingDays)
+  const selectedSession = todaySessions.find(session => String(session.id) === String(selectedSessionId)) || null
+  const canMarkSelectedSession = Boolean(selectedSession && !selectedSession.alreadyMarked)
 
   return (
     <div className="health-card-layout">
@@ -139,11 +205,11 @@ export default function StudentHealthCard({ student, success, showError }) {
           actions={<RefreshButton onClick={load} disabled={loading} />}
         />
         <div className="health-card-kpis">
-          <MetricCard label="Total points" value={numeric(metrics.totalPoints)} hint="Health Card points" tone="primary" />
+          <MetricCard label="Total points" value={numeric(metrics.totalPoints)} hint="Health Card points since 1 Oct 2026" tone="primary" />
           <MetricCard label="Batch rank" value={currentRank ? `#${currentRank}` : "—"} hint="Current position" />
-          <MetricCard label="Attendance" value={percent(metrics.attendancePercentage)} hint={`${numeric(metrics.approvedAttendanceDays)} approved`} />
-          <MetricCard label="Assignments" value={percent(metrics.assignmentCompletionPercentage)} hint={`${numeric(metrics.assignmentCompleted)} / ${numeric(metrics.assignmentExpected)}`} />
-          <MetricCard label="Projects" value={percent(metrics.projectCompletionPercentage)} hint={`${numeric(metrics.projectCompleted)} / ${numeric(metrics.projectExpected)}`} />
+          <MetricCard label="Attendance" value={percent(metrics.attendancePercentage, eligibleWorkingDays)} hint={`${numeric(metrics.approvedAttendanceDays)} approved`} />
+          <MetricCard label="Assignments" value={assignmentExpected > 0 ? percent(metrics.assignmentCompletionPercentage, assignmentExpected) : "—"} hint={assignmentExpected > 0 ? `${numeric(metrics.assignmentCompleted)} / ${assignmentExpected}` : "No assignments configured yet"} />
+          <MetricCard label="Projects" value={projectExpected > 0 ? percent(metrics.projectCompletionPercentage, projectExpected) : "—"} hint={projectExpected > 0 ? `${numeric(metrics.projectCompleted)} / ${projectExpected}` : "No projects configured yet"} />
         </div>
       </section>
 
@@ -159,19 +225,19 @@ export default function StudentHealthCard({ student, success, showError }) {
       <div className="health-card-progress-grid">
         <section className="card health-card-panel">
           <SectionHeading title="Assignments" detail="Completion against expected work." />
-          <MetricProgress label="Completion" completed={numeric(metrics.assignmentCompleted)} expected={numeric(metrics.assignmentExpected)} pending={numeric(metrics.assignmentPending)} percentage={metrics.assignmentCompletionPercentage} />
+          <MetricProgress label="Completion" completed={numeric(metrics.assignmentCompleted)} expected={assignmentExpected} pending={numeric(metrics.assignmentPending)} percentage={metrics.assignmentCompletionPercentage} emptyMessage="No assignments configured yet" />
           <p className="text-xs mt-4" style={{ color: "var(--portal-text-secondary)" }}>Points earned: {numeric(metrics.assignmentPoints)} · {numeric(metrics.assignmentPending)} pending</p>
         </section>
         <section className="card health-card-panel">
           <SectionHeading title="Projects" detail="Completion against expected work." />
-          <MetricProgress label="Completion" completed={numeric(metrics.projectCompleted)} expected={numeric(metrics.projectExpected)} pending={numeric(metrics.projectPending)} percentage={metrics.projectCompletionPercentage} />
+          <MetricProgress label="Completion" completed={numeric(metrics.projectCompleted)} expected={projectExpected} pending={numeric(metrics.projectPending)} percentage={metrics.projectCompletionPercentage} emptyMessage="No projects configured yet" />
           <p className="text-xs mt-4" style={{ color: "var(--portal-text-secondary)" }}>Points earned: {numeric(metrics.projectPoints)} · {numeric(metrics.projectPending)} pending</p>
         </section>
       </div>
 
       <section className="card health-card-panel">
         <div className="health-card-attendance-head">
-          <SectionHeading title="Attendance" detail="Only eligible working days count toward your percentage." />
+          <SectionHeading title="Attendance" detail="Attendance is based on your eligible class sessions." />
           <span className="portal-chip">Asia/Kolkata</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -181,14 +247,26 @@ export default function StudentHealthCard({ student, success, showError }) {
           <MetricCard label="Eligible days" value={numeric(metrics.eligibleWorkingDays)} />
         </div>
         <div className="grid gap-2 mt-5">
-          <div className="flex items-center justify-between gap-3 text-sm"><span>Attendance percentage</span><b>{percent(metrics.attendancePercentage)}</b></div>
+          <div className="flex items-center justify-between gap-3 text-sm"><span>Attendance percentage</span><b>{percent(metrics.attendancePercentage, eligibleWorkingDays)}</b></div>
           <div className="progress-bar-wrap"><div className="progress-bar-fill" style={{ width: `${progress(metrics.attendancePercentage)}%` }} /></div>
         </div>
         <div className="health-card-attendance-cta">
           <p className="text-sm" style={{ color: "var(--portal-text-secondary)" }}>New attendance stays pending until a teacher reviews it.</p>
+          {loadingSessions ? (
+            <div className="flex items-center gap-2 text-sm" style={{ color: "var(--portal-text-secondary)" }}><Spinner size="sm" /> Loading eligible sessions…</div>
+          ) : todaySessions.length === 0 ? (
+            <p className="text-sm" style={{ color: "var(--portal-text-secondary)" }}>No eligible class session is available today. Attendance can be marked after a session is scheduled.</p>
+          ) : (
+            <label className="grid gap-2 text-sm" style={{ color: "var(--portal-text-secondary)" }}>
+              Eligible class session
+              <select className="input" value={selectedSessionId} onChange={event => setSelectedSessionId(event.target.value)} aria-label="Eligible class session">
+                {todaySessions.map(session => <option key={session.id} value={session.id}>{sessionWindow(session)}{session.alreadyMarked ? " · already submitted" : ""}</option>)}
+              </select>
+            </label>
+          )}
           <div className="flex gap-2 flex-wrap">
-            <button className="btn btn-primary" type="button" onClick={markAttendance} disabled={marking}>{marking ? <Spinner size="sm" /> : "Mark today’s attendance"}</button>
-            <button className="btn btn-secondary" type="button" onClick={() => setShowQuery(v => !v)}>{showQuery ? "Cancel" : "Report missing attendance"}</button>
+            <button className="btn btn-primary" type="button" onClick={markAttendance} disabled={marking || loadingSessions || !canMarkSelectedSession}>{marking ? <Spinner size="sm" /> : selectedSession?.alreadyMarked ? "Attendance already submitted" : "Mark selected session"}</button>
+            <button className="btn btn-secondary" type="button" onClick={() => setShowQuery(v => !v)}>{showQuery ? "Cancel" : "Report attendance issue"}</button>
           </div>
         </div>
         {showQuery && (
@@ -223,7 +301,8 @@ export default function StudentHealthCard({ student, success, showError }) {
             <div className="health-card-list">
               {top10.map(row => {
                 const current = String(row.studentId) === String(student.id)
-                return <div key={row.studentId} className={`health-card-list-row${current ? " is-current" : ""}`}><span className="text-sm"><b>#{row.rank}</b> {current ? "You" : "Student"}</span><span className="text-sm font-semibold">{row.totalPoints} pts</span></div>
+                const displayName = row.name || row.studentName || row.student_name || (current ? "You" : "Student")
+                return <div key={row.studentId} className={`health-card-list-row${current ? " is-current" : ""}`}><span className="text-sm"><b>#{row.rank}</b> {displayName}</span><span className="text-sm font-semibold">{row.totalPoints} pts</span></div>
               })}
               {leaderboard.current && currentRank > 10 && <div className="text-sm mt-3" style={{ color: "var(--portal-text-secondary)" }}>Your position: #{currentRank} · {leaderboard.current.totalPoints} pts</div>}
             </div>

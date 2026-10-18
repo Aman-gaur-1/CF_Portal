@@ -8,6 +8,8 @@ import EmptyState from "@/components/ui/EmptyState"
 import MetricCard from "@/components/ui/MetricCard"
 import SectionHeading from "@/components/ui/SectionHeading"
 import AttendanceUpload from "@/components/ui/AttendanceUpload"
+import AttendanceResolveDialog from "@/components/ui/AttendanceResolveDialog"
+import AttendanceImportHistory from "@/components/ui/AttendanceImportHistory"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
 
 function statusClass(status) {
@@ -34,6 +36,7 @@ export default function AttendanceTab({ teacherToken }) {
   const [unlinkedLoading, setUnlinkedLoading] = useState(false)
   const [rematchResults, setRematchResults] = useState({})
   const [actioningId, setActioningId] = useState("")
+  const [resolvingRow, setResolvingRow] = useState(null)
   const { toasts, success, error: showError } = useToast()
   const showErrorRef = useRef(showError)
 
@@ -81,7 +84,7 @@ export default function AttendanceTab({ teacherToken }) {
     }
   }, [teacherToken, batch, date])
 
-  useEffect(() => { if (mode === "unlinked") loadUnlinked() }, [mode, loadUnlinked])
+  useEffect(() => { loadUnlinked() }, [loadUnlinked])
 
   const pendingVisibleIds = useMemo(() => attendance.filter(row => row.status === "pending").map(row => row.id), [attendance])
   const allVisibleSelected = pendingVisibleIds.length > 0 && pendingVisibleIds.every(id => selectedIds.includes(id))
@@ -159,17 +162,18 @@ export default function AttendanceTab({ teacherToken }) {
     }
   }
 
-  async function linkOne(unlinkedId, studentId) {
+  async function linkOne({ id: unlinkedId, studentId, correctedDisplayName, rememberAlias }) {
     setActioningId(unlinkedId)
     try {
       const res = await fetch("/api/admin-attendance/unlinked", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${teacherToken}` },
-        body: JSON.stringify({ action: "link", id: unlinkedId, studentId }),
+        body: JSON.stringify({ action: "link", id: unlinkedId, studentId, correctedDisplayName, rememberAlias }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Link failed.")
       success("Attendance linked and approved.")
+      setResolvingRow(null)
       await loadUnlinked()
       await load()
     } catch (error) {
@@ -204,18 +208,24 @@ export default function AttendanceTab({ teacherToken }) {
         <SectionHeading
           title="Student Health attendance"
           detail="Review and upload attendance for batches assigned to you."
-          action={<RefreshButton onClick={mode === "unlinked" ? loadUnlinked : load} disabled={loading || unlinkedLoading} />}
+          action={<RefreshButton onClick={mode === "needs" ? loadUnlinked : load} disabled={loading || unlinkedLoading} />}
         />
+        <div className="status-summary mt-4">
+          <MetricCard label="Needs matching" value={unlinked.length} tone="warning" onClick={() => setMode("needs")} style={{ cursor: "pointer" }} />
+          <MetricCard label="Pending attendance" value={counts.pending || 0} tone="primary" onClick={() => { setMode("review"); setStatus("pending") }} style={{ cursor: "pointer" }} />
+        </div>
         <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Attendance sections">
           <button type="button" role="tab" aria-selected={mode === "review"} className={`tab-item ${mode === "review" ? "active" : ""}`} onClick={() => setMode("review")}>Review</button>
           <button type="button" role="tab" aria-selected={mode === "upload"} className={`tab-item ${mode === "upload" ? "active" : ""}`} onClick={() => setMode("upload")}>Upload report</button>
-          <button type="button" role="tab" aria-selected={mode === "unlinked"} className={`tab-item ${mode === "unlinked" ? "active" : ""}`} onClick={() => setMode("unlinked")}>Unlinked</button>
+          <button type="button" role="tab" aria-selected={mode === "needs"} className={`tab-item ${mode === "needs" ? "active" : ""}`} onClick={() => setMode("needs")}>Needs Matching</button>
+          <button type="button" role="tab" aria-selected={mode === "history"} className={`tab-item ${mode === "history" ? "active" : ""}`} onClick={() => setMode("history")}>Import History</button>
         </div>
       </div>
 
       {mode === "upload" && <AttendanceUpload token={teacherToken} batches={batches} role="teacher" onUploaded={() => { setStatus("all"); load() }} />}
+      {mode === "history" && <AttendanceImportHistory token={teacherToken} batches={batches} />}
 
-      {mode === "unlinked" && (
+      {mode === "needs" && (
         <div className="grid gap-4">
           <div className="card admin-panel">
             <div className="attendance-filter-grid">
@@ -232,28 +242,29 @@ export default function AttendanceTab({ teacherToken }) {
 
           <div className="card admin-panel">
             {unlinkedLoading ? <div className="flex justify-center py-8"><Spinner size="lg" /></div> : unlinked.length === 0 ? (
-              <EmptyState icon="✓" title="No unlinked records" message="All uploaded attendance has been matched to registered students." />
+              <EmptyState icon="✓" title="No participants need matching" message="All uploaded attendance has been matched or resolved." />
             ) : (
               <div className="attendance-list">
-                <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>{unlinked.length} name{unlinked.length === 1 ? "" : "s"} waiting for student registration</p>
+                <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>{unlinked.length} participant{unlinked.length === 1 ? "" : "s"} need matching</p>
                 {unlinked.map(row => {
                   const match = rematchResults[row.id]
                   return (
                     <div key={row.id} className="attendance-row">
                       <div className="min-w-0">
-                        <p className="font-semibold">{row.participant_name}</p>
+                        <p className="font-semibold">{row.original_participant_name || row.participant_name}</p>
                         <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{row.batch} · {row.attendance_date} · uploaded {String(row.created_at || "").slice(0, 16).replace("T", " ")}</p>
                         {match && match.studentId && (
-                          <p className="text-xs mt-2" style={{ color: "var(--success)" }}>Matched: <b>{match.studentName}</b> ({Math.round(match.similarity * 100)}% {match.confidence})</p>
+                          <p className="text-xs mt-2" style={{ color: "var(--success)" }}>Suggested: <b>{match.studentName}</b> ({Math.round(match.similarity * 100)}% {match.matchType || match.confidence})</p>
                         )}
                         {match && !match.studentId && (
                           <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>Still no match — student may not have registered yet</p>
                         )}
                       </div>
                       <div className="flex items-center gap-2 flex-wrap justify-end">
-                        <span className="badge-pending">Waiting</span>
+                        <span className="badge-pending">Needs matching</span>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setResolvingRow(row)} disabled={Boolean(actioningId)}>Resolve</button>
                         {match && match.studentId && row.session_id && (
-                          <button type="button" className="btn btn-primary btn-sm" onClick={() => linkOne(row.id, match.studentId)} disabled={Boolean(actioningId)}>
+                          <button type="button" className="btn btn-primary btn-sm" onClick={() => linkOne({ id: row.id, studentId: match.studentId })} disabled={Boolean(actioningId)}>
                             {actioningId === row.id ? <Spinner size="sm" /> : "Link & approve"}
                           </button>
                         )}
@@ -315,6 +326,7 @@ export default function AttendanceTab({ teacherToken }) {
         </div>
       </>}
       {confirmReject && <ConfirmDialog message={`Reject ${selectedIds.length} selected attendance record${selectedIds.length === 1 ? "" : "s"}?`} confirmLabel="Reject selected" onCancel={() => setConfirmReject(false)} onConfirm={() => { setConfirmReject(false); rejectIds(selectedIds) }} />}
+      {resolvingRow && <AttendanceResolveDialog token={teacherToken} row={resolvingRow} suggestion={rematchResults[resolvingRow.id]} onClose={() => setResolvingRow(null)} onResolve={linkOne} onDismiss={id => { setResolvingRow(null); dismissIds([id]) }} />}
       <ToastContainer toasts={toasts} />
     </div>
   )

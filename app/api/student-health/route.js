@@ -52,7 +52,7 @@ export async function GET(request) {
 
     const { data: attendanceHistory, error: attendanceError } = await supabase
       .from('student_attendance')
-      .select('id,attendance_date,status,marked_at,reviewed_at,reviewed_by,review_note')
+      .select('id,attendance_date,status,session_id,source,original_participant_name,marked_at,reviewed_at,reviewed_by,review_note')
       .eq('student_id', student.id)
       .eq('batch', student.batch)
       .order('attendance_date', { ascending: false })

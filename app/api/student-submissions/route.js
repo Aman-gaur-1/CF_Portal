@@ -5,6 +5,8 @@ import { getStudentFromRequest } from '@/lib/student-auth'
 import { sanitizeStudentText } from '@/lib/ai/sanitize'
 import { withSignedAssignmentUrls } from '@/lib/assignment-file-access'
 import { detectAssignmentLanguage, detectAssignmentType, normalizeAssignmentPhase, phaseMatchesDetectedLanguage } from '@/lib/assignment-analysis'
+import { calculateLifetimeCoursework, getCourseworkPoints } from '@/lib/coursework-scoring'
+import { isMissingHealthCardSchema } from '@/lib/student-health-card'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +23,7 @@ const STUDENT_SUBMISSION_SELECT = [
   'comment',
   'submitted_at',
   'submission_type',
+  'coursework_item_id',
   'phase',
   'feedback',
   'feedback_by',
@@ -61,14 +64,40 @@ export async function GET(request) {
     const student = await requireStudent(request, supabase)
     if (!student) return jsonNoStore({ error: 'Student authorization required' }, { status: 401 })
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('submissions')
       .select(STUDENT_SUBMISSION_SELECT)
       .eq('student_id', student.id)
       .order('submitted_at', { ascending: false })
 
+    if (error && isMissingHealthCardSchema(error)) {
+      ({ data, error } = await supabase
+        .from('submissions')
+        .select(STUDENT_SUBMISSION_SELECT.replace('coursework_item_id,', ''))
+        .eq('student_id', student.id)
+        .order('submitted_at', { ascending: false }))
+    }
     if (error) throw new Error(error.message)
-    return jsonNoStore({ success: true, submissions: await withSignedAssignmentUrls(data || [], { supabase }) })
+
+    const submissions = data || []
+    let courseworkItems = []
+    const { data: catalog, error: catalogError } = await supabase
+      .from('coursework_items')
+      .select('id,item_type,title,batch,active')
+    if (!catalogError) courseworkItems = catalog || []
+    else if (!isMissingHealthCardSchema(catalogError)) throw new Error(catalogError.message)
+
+    const { canonicalSubmissionIds, ...lifetimeCoursework } = calculateLifetimeCoursework(submissions, courseworkItems)
+    const canonicalIds = new Set(canonicalSubmissionIds.map(id => String(id)))
+    const decoratedSubmissions = submissions.map(row => ({
+      ...row,
+      coursework_points: canonicalIds.has(String(row.id)) ? getCourseworkPoints(row.submission_type) : 0,
+    }))
+    return jsonNoStore({
+      success: true,
+      submissions: await withSignedAssignmentUrls(decoratedSubmissions, { supabase }),
+      lifetimeCoursework,
+    })
   } catch (err) {
     console.error('[student-submissions] load failed', err?.message)
     return jsonNoStore({ error: 'Could not load submissions' }, { status: 500 })

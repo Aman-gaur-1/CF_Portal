@@ -18,16 +18,17 @@ export async function GET(request) {
     if (!admin) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
 
     const supabase = getSupabaseAdmin()
-    const [rulesResult, itemsResult, calendarResult, workingCalendarResult, pendingResult, approvedResult] = await Promise.all([
+    const [rulesResult, itemsResult, calendarResult, workingCalendarResult, pendingResult, approvedResult, needsMatchingResult] = await Promise.all([
       supabase.from('point_rules').select('id,activity_type,points,effective_from,effective_to,active').order('activity_type').order('effective_from', { ascending: false }),
       supabase.from('coursework_items').select('id,item_type,title,phase,batch,due_at,active,updated_at').order('active', { ascending: false }).order('updated_at', { ascending: false }).limit(500),
       supabase.from('batch_calendar_days').select('id', { count: 'exact', head: true }),
       supabase.from('batch_calendar_days').select('id', { count: 'exact', head: true }).eq('is_working_day', true),
       supabase.from('student_attendance').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('student_attendance').select('id', { count: 'exact', head: true }).eq('status', 'approved'),
+      supabase.from('unlinked_attendance').select('id', { count: 'exact', head: true }).eq('status', 'waiting'),
     ])
 
-    const error = rulesResult.error || itemsResult.error || calendarResult.error || workingCalendarResult.error || pendingResult.error || approvedResult.error
+    const error = rulesResult.error || itemsResult.error || calendarResult.error || workingCalendarResult.error || pendingResult.error || approvedResult.error || needsMatchingResult.error
     if (error) {
       if (isMissingHealthCardSchema(error)) return jsonNoStore({ error: 'Student Health Card is not configured yet.' }, { status: 503 })
       throw error
@@ -48,6 +49,7 @@ export async function GET(request) {
         workingCalendarDays: workingCalendarResult.count || 0,
         pendingAttendance: pendingResult.count || 0,
         approvedAttendance: approvedResult.count || 0,
+        needsMatching: needsMatchingResult.count || 0,
         activePointRules: (rulesResult.data || []).filter(rule => rule.active).length,
       },
     })

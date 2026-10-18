@@ -10,7 +10,7 @@
 - The app is a Next.js 14 client portal with route handlers under `app/api`.
 - Server routes use `getSupabaseAdmin()` and signed local session tokens. Student identity is reloaded from `students`; teacher batch ownership is resolved fresh through `getTeacherScope()`.
 - Existing assignment feedback, review, AI evaluation, auto-approval, notification, query, and admin activity flows use the existing `submissions` fields and are intentionally not rewritten.
-- Legacy `getPoints()` in `lib/utils.js` and `calcPhaseScores()` in `lib/scoring.ts` still represent the historical 100/200-point feedback view. Health Card scoring does not call or modify them.
+- Coursework display scoring is shared through `lib/coursework-scoring.js`: assignments are 5 points and projects are 10 points. Lifetime feedback points use canonical, deduplicated submission facts; Health Card points remain a separate epoch-scoped calculation.
 - The repository does not contain a canonical coursework catalog, attendance table, working-day calendar, or effective-dated point-rule table. Existing `submissions` rows use a bigint id and `student_id` is treated as uuid by existing migrations.
 
 ## Phase B decisions implemented locally

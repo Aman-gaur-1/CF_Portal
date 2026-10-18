@@ -1,7 +1,8 @@
 "use client"
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { supabase } from "@/lib/supabase"
-import { getPoints, BROWSER_RENDERABLE, formatDate, getTypeLabel, getTypeEmoji, getFileValidationError, isFileAllowed } from "@/lib/utils"
+import { BROWSER_RENDERABLE, formatDate, getTypeLabel, getTypeEmoji, getFileValidationError, isFileAllowed } from "@/lib/utils"
+import { getCourseworkPoints } from "@/lib/coursework-scoring"
 import { triggerAiEvaluation } from "@/lib/ai/trigger-evaluation"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
 import Tabs from "@/components/ui/Tabs"
@@ -112,6 +113,7 @@ async function readFileForDetection(file) {
 export default function StudentView({ student, onLogout, onSessionRefresh }) {
     const [tab, setTab] = useState("submit")
   const [submissions, setSubmissions] = useState([])
+  const [lifetimeCoursework, setLifetimeCoursework] = useState(null)
   const [loadingSubs, setLoadingSubs] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [defaultPhaseName, setDefaultPhaseName] = useState("")
@@ -221,7 +223,10 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not load submissions.")
 
-      if (!controller.signal.aborted) setSubmissions(data.submissions || [])
+      if (!controller.signal.aborted) {
+        setSubmissions(data.submissions || [])
+        setLifetimeCoursework(data.lifetimeCoursework || null)
+      }
     } catch (err) {
       if (err.name !== "AbortError") showErrorRef.current(err.message || "Could not load submissions.")
     } finally {
@@ -470,7 +475,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
               </div>
             ) : (
               <>
-                <ScoreSection submissions={submissions} />
+                <ScoreSection submissions={submissions} lifetimeCoursework={lifetimeCoursework} />
 
                 <div className="grid grid-cols-3 gap-3 mb-6">
                   {[[submissions.length, "Total Submitted"], [pending, "Pending Feedback"], [submissions.length - pending, "Feedback Done"]].map(([n, l]) => (
@@ -480,7 +485,8 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
 
                 {submissions.map(r => {
                   const hasFb = isReviewedSubmission(r)
-                  const pts = getPoints(r.submission_type)
+                  const pts = Number.isFinite(Number(r.coursework_points)) ? Number(r.coursework_points) : getCourseworkPoints(r.submission_type)
+                  const pointLabel = pts ? ` • +${pts} pts` : ""
                   const rawType = r.submission_type || "assignment"
                   const typeLabel = getTypeLabel(rawType)
                   const typeEmoji = getTypeEmoji(rawType)
@@ -489,7 +495,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
                   return (
                     <Expander
                       key={r.id}
-                      title={`${hasFb ? "✅" : "⏳"} ${r.topic} • ${formatDate(r.submitted_at)} • +${pts}pts`}
+                      title={`${hasFb ? "✅" : "⏳"} ${r.topic} • ${formatDate(r.submitted_at)}${pointLabel}`}
                       badge={(
                         <span className="flex items-center gap-2 flex-wrap">
                           {queryBadge}
@@ -500,7 +506,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
                       <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm mb-3">
                         <span><b>Topic:</b> {r.topic}</span>
                         <span><b>Date:</b> {formatDate(r.submitted_at)}</span>
-                        <span><b>Type:</b> {typeEmoji} {typeLabel} &nbsp;<span className="text-xs" style={{ color: "var(--primary)" }}>+{pts}pts</span></span>
+                        <span><b>Type:</b> {typeEmoji} {typeLabel} {pts > 0 && <span className="text-xs" style={{ color: "var(--primary)" }}>+{pts} pts</span>}</span>
                         <span><b>Phase:</b> {r.phase || "Unassigned"}</span>
                       </div>
                       {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "var(--surface)", color: "var(--text-secondary)" }}>💬 {r.comment}</p>}

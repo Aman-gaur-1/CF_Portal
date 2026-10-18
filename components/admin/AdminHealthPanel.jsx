@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import AdminCalendarPanel from "@/components/admin/AdminCalendarPanel"
 import AdminCourseworkPanel from "@/components/admin/AdminCourseworkPanel"
+import AdminCourseworkSetupPanel from "@/components/admin/AdminCourseworkSetupPanel"
 import AdminAttendancePanel from "@/components/admin/AdminAttendancePanel"
 import RefreshButton from "@/components/ui/RefreshButton"
 import Spinner from "@/components/ui/Spinner"
@@ -12,6 +13,7 @@ import SectionHeading from "@/components/ui/SectionHeading"
 const TABS = [
   ["overview", "Overview"],
   ["attendance", "Attendance"],
+  ["coursework-setup", "Coursework Setup"],
   ["coursework", "Coursework"],
   ["calendar", "Working Calendar"],
   ["rules", "Point Rules"],
@@ -21,6 +23,7 @@ export default function AdminHealthPanel({ adminToken, showError, success, batch
   const [tab, setTab] = useState("overview")
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [attendanceFocus, setAttendanceFocus] = useState("")
   const showErrorRef = useRef(showError)
 
   useEffect(() => { showErrorRef.current = showError }, [showError])
@@ -47,7 +50,8 @@ export default function AdminHealthPanel({ adminToken, showError, success, batch
         />
         <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Student Health sections">{TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab-item ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}</div>
       </div>
-      {tab === "attendance" && <AdminAttendancePanel adminToken={adminToken} batches={batches} success={success} showError={showError} />}
+      {tab === "attendance" && <AdminAttendancePanel adminToken={adminToken} batches={batches} success={success} showError={showError} focusMode={attendanceFocus} />}
+      {tab === "coursework-setup" && <AdminCourseworkSetupPanel adminToken={adminToken} success={success} showError={showError} />}
       {tab === "coursework" && <AdminCourseworkPanel adminToken={adminToken} batches={batches} success={success} showError={showError} />}
       {tab === "calendar" && <AdminCalendarPanel adminToken={adminToken} batches={batches} success={success} showError={showError} />}
       {tab === "overview" && (loading ? <div className="card admin-panel flex justify-center"><Spinner size="lg" /></div> : data && <>
@@ -56,7 +60,8 @@ export default function AdminHealthPanel({ adminToken, showError, success, batch
           <MetricCard label="Assignments" value={data.counts?.activeAssignments || 0} hint="Active" tone="primary" />
           <MetricCard label="Projects" value={data.counts?.activeProjects || 0} hint="Active" />
           <MetricCard label="Working days" value={data.counts?.workingCalendarDays || 0} />
-          <MetricCard label="Attendance pending" value={data.counts?.pendingAttendance || 0} tone="warning" />
+          <MetricCard label="Needs matching" value={data.counts?.needsMatching || 0} tone="warning" onClick={() => { setAttendanceFocus("needs"); setTab("attendance") }} style={{ cursor: "pointer" }} />
+          <MetricCard label="Attendance pending" value={data.counts?.pendingAttendance || 0} tone="warning" onClick={() => { setAttendanceFocus(""); setTab("attendance") }} style={{ cursor: "pointer" }} />
           <MetricCard label="Approved attendance" value={data.counts?.approvedAttendance || 0} tone="success" />
         </div>
         <div className="card admin-panel">
