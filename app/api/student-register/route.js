@@ -6,6 +6,7 @@ import {
   normalizeStudentName,
   validateStudentRegistrationInput,
 } from '@/lib/student-auth'
+import { reconcileWaitingAttendanceSafely } from '@/lib/attendance-reconciliation'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,12 +57,12 @@ export async function POST(request) {
     if (batchError) throw new Error(batchError.message)
     if (!validBatch) return jsonNoStore({ success: false, error: 'Select a valid batch.' }, { status: 400 })
 
-    const { error } = await supabase.from('students').insert({
+    const { data: student, error } = await supabase.from('students').insert({
       name: normalizeStudentName(name),
       batch,
       password_hash: await hashStudentPasswordSecure(password),
       created_at: new Date().toISOString(),
-    })
+    }).select('id,name,batch').single()
 
     if (error) {
       if (/duplicate|unique/i.test(error.message)) {
@@ -69,6 +70,8 @@ export async function POST(request) {
       }
       throw new Error(error.message)
     }
+
+    await reconcileWaitingAttendanceSafely({ supabase, student })
 
     return jsonNoStore({ success: true })
   } catch (err) {

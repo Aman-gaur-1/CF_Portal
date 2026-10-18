@@ -26,6 +26,7 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
   const [loading, setLoading] = useState(true)
   const [reviewingId, setReviewingId] = useState("")
   const [selectedIds, setSelectedIds] = useState([])
+  const [sessionSelections, setSessionSelections] = useState({})
   const [confirmReject, setConfirmReject] = useState(false)
   const [unlinked, setUnlinked] = useState([])
   const [unlinkedLoading, setUnlinkedLoading] = useState(false)
@@ -50,6 +51,7 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
       setAttendance(data.attendance || [])
       setCounts(data.counts || { pending: 0, approved: 0, rejected: 0 })
       setSelectedIds([])
+      setSessionSelections({})
     } catch (error) {
       showErrorRef.current(error.message || "Could not load attendance.")
     } finally {
@@ -81,6 +83,7 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
 
   const pendingVisibleIds = useMemo(() => attendance.filter(row => row.status === "pending").map(row => row.id), [attendance])
   const allVisibleSelected = pendingVisibleIds.length > 0 && pendingVisibleIds.every(id => selectedIds.includes(id))
+  const selectedSessionless = attendance.some(row => selectedIds.includes(row.id) && row.status === "pending" && !row.session_id)
 
   function toggleSelected(id) {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id])
@@ -90,10 +93,11 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
     setSelectedIds(allVisibleSelected ? [] : pendingVisibleIds)
   }
 
-  async function review(ids, action, reviewNote = null) {
+  async function review(ids, action, reviewNote = null, { sessionId = "" } = {}) {
     setReviewingId(ids.join(","))
     try {
       const body = { action, reviewNote }
+      if (sessionId) body.sessionId = sessionId
       if (ids.length === 1) body.attendanceId = ids[0]
       else body.attendanceIds = ids
       const res = await fetch("/api/admin-attendance", {
@@ -103,13 +107,19 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not review attendance.")
-      successRef.current(`${data.updated?.length || 1} attendance record${(data.updated?.length || 1) === 1 ? "" : "s"} ${action === "approve" ? "approved" : "rejected"}.`)
+      const result = action === "approve" ? "approved" : action === "reject" ? "rejected" : "linked to the authoritative session"
+      successRef.current(`${data.updated?.length || 1} attendance record${(data.updated?.length || 1) === 1 ? "" : "s"} ${result}.`)
       await load()
     } catch (error) {
       showErrorRef.current(error.message || "Could not review attendance.")
     } finally {
       setReviewingId("")
     }
+  }
+
+  function resolveSession(row) {
+    const sessionId = sessionSelections[row.id]
+    if (sessionId) review([row.id], "resolve_session", null, { sessionId })
   }
 
   function rejectIds(ids) {
@@ -235,11 +245,12 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
                       </div>
                       <div className="flex items-center gap-2 flex-wrap justify-end">
                         <span className="badge-pending">Waiting</span>
-                        {match && match.studentId && (
+                        {match && match.studentId && row.session_id && (
                           <button type="button" className="btn btn-primary btn-sm" onClick={() => linkOne(row.id, match.studentId)} disabled={Boolean(actioningId)}>
                             {actioningId === row.id ? <Spinner size="sm" /> : "Link & approve"}
                           </button>
                         )}
+                        {!row.session_id && <span className="badge-pending">Session required</span>}
                         <button type="button" className="btn btn-danger-outline btn-sm" onClick={() => dismissIds([row.id])} disabled={Boolean(actioningId)}>Dismiss</button>
                       </div>
                     </div>
@@ -276,7 +287,7 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
             <div className="flex items-center justify-between gap-3 flex-wrap mb-4 p-3 rounded-lg" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
               <span className="text-sm">{selectedIds.length} pending selected</span>
               <div className="flex gap-2">
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => review(selectedIds, "approve")} disabled={Boolean(reviewingId)}>Approve selected</button>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => review(selectedIds, "approve")} disabled={Boolean(reviewingId) || selectedSessionless} title={selectedSessionless ? "Remove sessionless rows before approving." : undefined}>Approve selected</button>
                 <button type="button" className="btn btn-danger-outline btn-sm" onClick={() => { if (selectedIds.length) setConfirmReject(true) }} disabled={Boolean(reviewingId)}>Reject selected</button>
               </div>
             </div>
@@ -294,12 +305,13 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
                       <p className="font-semibold">{row.student?.name || "Inactive student"}</p>
                       <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{row.batch} · {row.attendance_date} · marked {String(row.marked_at || "").slice(0, 16).replace("T", " ")}</p>
                       {row.review_note && <p className="text-xs mt-2" style={{ color: "var(--text-secondary)" }}>{row.review_note}</p>}
+                      {row.status === "pending" && !row.session_id && <div className="flex flex-wrap items-center gap-2 mt-2"><span className="badge-pending">Legacy attendance request</span><span className="badge-pending">Session required</span><select className="select" value={sessionSelections[row.id] || ""} onChange={event => setSessionSelections(prev => ({ ...prev, [row.id]: event.target.value }))} aria-label={`Authoritative session for ${row.student?.name || "attendance"}`}><option value="">{row.available_sessions?.length ? "Choose authoritative session" : "No authoritative session available"}</option>{(row.available_sessions || []).map(session => <option key={session.id} value={session.id}>{session.title}{session.starts_at ? ` · ${String(session.starts_at).slice(11, 16)}` : ""}</option>)}</select><button type="button" className="btn btn-secondary btn-sm" onClick={() => resolveSession(row)} disabled={Boolean(reviewingId) || !sessionSelections[row.id]}>{reviewingId === row.id ? <Spinner size="sm" /> : "Resolve session"}</button></div>}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap justify-end">
                     <span className={statusClass(row.status)}>{row.status}</span>
                     {row.status === "pending" && <>
-                      <button type="button" className="btn btn-primary btn-sm" onClick={() => review([row.id], "approve")} disabled={Boolean(reviewingId)}>{reviewingId === row.id ? <Spinner size="sm" /> : "Approve"}</button>
+                      {row.session_id && <button type="button" className="btn btn-primary btn-sm" onClick={() => review([row.id], "approve")} disabled={Boolean(reviewingId)}>{reviewingId === row.id ? <Spinner size="sm" /> : "Approve"}</button>}
                       <button type="button" className="btn btn-danger-outline btn-sm" onClick={() => rejectIds([row.id])} disabled={Boolean(reviewingId)}>Reject</button>
                     </>}
                   </div>

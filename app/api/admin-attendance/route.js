@@ -7,6 +7,7 @@ import { createNotification, NOTIFICATION_TYPE, NOTIFICATION_USER_TYPE } from '@
 import { sanitizeStudentText } from '@/lib/ai/sanitize'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
 import { parseIsoDate } from '@/lib/health-card-admin'
+import { getAttendanceApprovalConflict } from '@/lib/attendance-session'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,6 +16,32 @@ function jsonNoStore(body, init) {
     ...init,
     headers: { 'Cache-Control': 'no-store, max-age=0', ...(init?.headers || {}) },
   })
+}
+
+async function loadAvailableSessions(supabase, rows, { batch, date } = {}) {
+  if (!rows.length) return rows
+  let query = supabase
+    .from('attendance_sessions')
+    .select('id,batch,session_date,title,starts_at,ends_at,source')
+    .neq('source', 'legacy_backfill')
+    .order('session_date', { ascending: false })
+    .order('starts_at', { ascending: false })
+    .limit(500)
+  if (batch) query = query.eq('batch', batch)
+  if (date) query = query.eq('session_date', date)
+  const { data: sessions, error } = await query
+  if (error) throw error
+  const sessionsByKey = new Map()
+  for (const session of sessions || []) {
+    const key = `${session.batch}|${session.session_date}`
+    const list = sessionsByKey.get(key) || []
+    list.push(session)
+    sessionsByKey.set(key, list)
+  }
+  return rows.map(row => ({
+    ...row,
+    available_sessions: sessionsByKey.get(`${row.batch}|${row.attendance_date}`) || [],
+  }))
 }
 
 export async function GET(request) {
@@ -37,7 +64,7 @@ export async function GET(request) {
 
     let query = supabase
       .from('student_attendance')
-      .select('id,student_id,batch,attendance_date,status,marked_at,reviewed_at,reviewed_by,review_note')
+      .select('id,student_id,batch,attendance_date,session_id,source,original_participant_name,status,marked_at,reviewed_at,reviewed_by,review_note')
       .order('attendance_date', { ascending: false })
       .order('marked_at', { ascending: false })
       .limit(500)
@@ -57,7 +84,7 @@ export async function GET(request) {
     }
     if (countError) throw countError
 
-    const rawRows = rows || []
+    const rawRows = await loadAvailableSessions(supabase, rows || [], { batch, date })
     const allCountRows = countRows || []
     const studentIds = [...new Set(rawRows.map(r => r.student_id).filter(Boolean))]
     const { data: students, error: studentError } = studentIds.length
@@ -97,19 +124,23 @@ export async function PATCH(request) {
 
     const body = await request.json().catch(() => ({}))
     const action = String(body?.action || '').trim().toLowerCase()
+    const sessionId = String(body?.sessionId || '').trim()
     const rawIds = Array.isArray(body?.attendanceIds) ? body.attendanceIds : [body?.attendanceId]
     const attendanceIds = [...new Set(rawIds.map(id => String(id || '').trim()).filter(Boolean))]
     const reviewNote = sanitizeStudentText(body?.reviewNote, 1000) || null
 
-    if (!attendanceIds.length || !['approve', 'reject'].includes(action)) {
+    if (!attendanceIds.length || !['approve', 'reject', 'resolve_session'].includes(action)) {
       return jsonNoStore({ error: 'attendanceId(s) and a valid action are required.' }, { status: 400 })
+    }
+    if (action === 'resolve_session' && (attendanceIds.length !== 1 || !sessionId)) {
+      return jsonNoStore({ error: 'One attendance record and an authoritative session are required.' }, { status: 400 })
     }
     if (attendanceIds.length > 50) return jsonNoStore({ error: 'Select no more than 50 attendance records at once.' }, { status: 400 })
 
     const supabase = getSupabaseAdmin()
     const { data: rows, error: loadError } = await supabase
       .from('student_attendance')
-      .select('id,student_id,batch,attendance_date,status')
+      .select('id,student_id,batch,attendance_date,session_id,status')
       .in('id', attendanceIds)
     if (loadError) {
       if (isMissingHealthCardSchema(loadError)) return jsonNoStore({ error: 'Student Health Card is not configured yet.' }, { status: 503 })
@@ -118,6 +149,42 @@ export async function PATCH(request) {
 
     const pendingRows = (rows || []).filter(r => r.status === 'pending')
     if (!pendingRows.length) return jsonNoStore({ error: 'No pending attendance records to review.' }, { status: 409 })
+
+    if (action === 'resolve_session') {
+      const row = pendingRows[0]
+      if (row.session_id) return jsonNoStore({ error: 'Attendance already has a class session.' }, { status: 409 })
+      const { data: session, error: sessionError } = await supabase
+        .from('attendance_sessions')
+        .select('id,batch,session_date,source')
+        .eq('id', sessionId)
+        .maybeSingle()
+      if (sessionError) throw sessionError
+      if (!session || session.source === 'legacy_backfill' || String(session.batch) !== String(row.batch) || String(session.session_date) !== String(row.attendance_date)) {
+        return jsonNoStore({ error: 'Choose an authoritative session matching this attendance batch and date.' }, { status: 409 })
+      }
+      const { data: linked, error: linkError } = await supabase
+        .from('student_attendance')
+        .update({ session_id: session.id, updated_at: new Date().toISOString() })
+        .eq('id', row.id)
+        .eq('status', 'pending')
+        .is('session_id', null)
+        .select('id,student_id,batch,attendance_date,session_id,source,status,marked_at,reviewed_at,reviewed_by,review_note')
+      if (linkError) throw linkError
+      if (!linked?.length) return jsonNoStore({ error: 'Attendance was already resolved.' }, { status: 409 })
+      await appendActivity({
+        eventType: 'attendance_session_linked',
+        description: `linked attendance to an authoritative class session for ${row.attendance_date}`,
+        actorName: admin.name,
+        actorRole: 'admin',
+        action: 'resolve_session',
+        metadata: { attendance_id: row.id, student_id: row.student_id, batch: row.batch, session_id: session.id },
+        supabase,
+      })
+      return jsonNoStore({ success: true, attendance: linked[0], updated: linked, skipped: 0 })
+    }
+
+    const approvalConflict = getAttendanceApprovalConflict(pendingRows, action)
+    if (approvalConflict) return jsonNoStore({ error: approvalConflict }, { status: 409 })
 
     const reviewedAt = new Date().toISOString()
     const ids = pendingRows.map(r => r.id)
@@ -132,7 +199,7 @@ export async function PATCH(request) {
       })
       .in('id', ids)
       .eq('status', 'pending')
-      .select('id,student_id,batch,attendance_date,status,marked_at,reviewed_at,reviewed_by,review_note')
+      .select('id,student_id,batch,attendance_date,session_id,source,status,marked_at,reviewed_at,reviewed_by,review_note')
 
     if (updateError) throw updateError
     if (!updated?.length) return jsonNoStore({ error: 'Attendance was already reviewed.' }, { status: 409 })

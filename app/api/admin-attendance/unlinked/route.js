@@ -4,8 +4,9 @@ import { getAdminFromRequest } from '@/lib/admin-auth'
 import { getTeacherFromRequest } from '@/lib/teacher-auth'
 import { getTeacherScope } from '@/lib/teacher-scope'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
-import { buildUploadPreview } from '@/lib/attendance-upload'
-import { HEALTH_CARD_EPOCH } from '@/lib/student-health-card'
+import { appendActivity } from '@/lib/activity-log'
+import { matchParticipantName } from '@/lib/attendance-matching'
+import { buildMatchFields, linkUnlinkedAttendance, loadBatchAliases } from '@/lib/attendance-domain'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,7 +45,7 @@ export async function GET(request) {
 
     let query = supabase
       .from('unlinked_attendance')
-      .select('id,participant_name,batch,attendance_date,uploaded_by_role,uploaded_by_name,status,linked_student_id,linked_at,created_at')
+      .select('id,participant_name,original_participant_name,normalized_participant_name,corrected_display_name,batch,attendance_date,uploaded_by_role,uploaded_by_name,status,linked_student_id,linked_at,created_at,import_id,session_id,suggested_student_id,match_score,match_type,match_reason,resolved_by_role,resolved_by_name,resolved_at')
       .eq('status', 'waiting')
       .order('created_at', { ascending: false })
       .limit(500)
@@ -94,7 +95,7 @@ async function handleRematch({ body, auth }) {
   const supabase = getSupabaseAdmin()
   const { data: unlinked, error } = await supabase
     .from('unlinked_attendance')
-    .select('id,participant_name,batch,attendance_date')
+    .select('*')
     .in('id', validIds)
     .eq('status', 'waiting')
   if (error) throw error
@@ -108,44 +109,55 @@ async function handleRematch({ body, auth }) {
     .from('students').select('id,name,batch').in('batch', batches)
   if (studentError) throw studentError
 
+  const aliasesByBatch = new Map()
+  for (const batch of batches) aliasesByBatch.set(batch, await loadBatchAliases(supabase, batch))
+
   const results = []
   for (const row of unlinked) {
-    const batchStudents = (students || []).filter(s => s.batch === row.batch)
-    const preview = buildUploadPreview({
-      fileNames: [row.participant_name],
-      students: batchStudents,
-      existingAttendance: [],
-      date: row.attendance_date,
-      batch: row.batch,
+    const match = matchParticipantName({
+      participantName: row.original_participant_name || row.participant_name,
+      students: (students || []).filter(s => s.batch === row.batch),
+      aliases: aliasesByBatch.get(row.batch) || [],
     })
-
-    const match = preview.matched[0] || preview.uncertain[0]
-    if (match) {
-      results.push({
-        unlinkedId: row.id,
-        participantName: row.participant_name,
-        studentId: match.studentId,
-        studentName: match.studentName,
-        confidence: match.confidence,
-        similarity: match.similarity || 1,
-      })
-    } else {
-      results.push({
-        unlinkedId: row.id,
-        participantName: row.participant_name,
-        studentId: null,
-        studentName: null,
-        confidence: null,
-        similarity: 0,
-      })
-    }
+    const { error: updateError } = await supabase.from('unlinked_attendance').update(buildMatchFields(match)).eq('id', row.id).eq('status', 'waiting')
+    if (updateError) throw updateError
+    results.push({
+      unlinkedId: row.id,
+      participantName: row.original_participant_name || row.participant_name,
+      studentId: match.student?.id || null,
+      studentName: match.student?.name || null,
+      matchType: match.type,
+      confidence: match.type,
+      similarity: match.score || 0,
+      reason: match.reason,
+      candidates: match.candidates || [],
+    })
   }
+
+  await appendActivity({
+    eventType: 'attendance_participants_rematched',
+    description: `re-matched ${results.length} unmatched attendance participant${results.length === 1 ? '' : 's'}`,
+    actorName: auth.name,
+    actorRole: auth.role,
+    action: 'rematch',
+    metadata: {
+      ids: results.map(result => result.unlinkedId),
+      matched_count: results.filter(result => result.studentId).length,
+      batch_count: batches.length,
+    },
+    supabase,
+  })
 
   return jsonNoStore({ success: true, results })
 }
 
 async function handleLink({ body, auth }) {
-  const links = Array.isArray(body?.links) ? body.links : [{ id: body?.id, studentId: body?.studentId }]
+  const links = Array.isArray(body?.links) ? body.links : [{
+    id: body?.id,
+    studentId: body?.studentId,
+    correctedDisplayName: body?.correctedDisplayName,
+    rememberAlias: body?.rememberAlias,
+  }]
   if (!links.length) return jsonNoStore({ error: 'No links provided.' }, { status: 400 })
 
   const supabase = getSupabaseAdmin()
@@ -153,7 +165,7 @@ async function handleLink({ body, auth }) {
   if (!validIds.length) return jsonNoStore({ success: true, linked: 0, skipped: 0, errors: links.length }, { status: 200 })
   const { data: waitingRows, error: waitingError } = await supabase
     .from('unlinked_attendance')
-    .select('id,participant_name,batch,attendance_date')
+    .select('*')
     .in('id', validIds)
     .eq('status', 'waiting')
   if (waitingError) throw waitingError
@@ -162,12 +174,12 @@ async function handleLink({ body, auth }) {
   if (scopeError) return scopeError
 
   const rowById = new Map((waitingRows || []).map(row => [String(row.id), row]))
-  const now = new Date().toISOString()
   let linked = 0
   let skipped = 0
   const errors = []
 
-  for (const { id, studentId } of links) {
+  for (const link of links) {
+    const { id, studentId } = link
     if (!id || !studentId) { errors.push({ id, error: 'Missing id or studentId' }); continue }
 
     const row = rowById.get(String(id))
@@ -176,31 +188,29 @@ async function handleLink({ body, auth }) {
     const { data: student } = await supabase
       .from('students').select('id,name,batch').eq('id', studentId).eq('batch', row.batch).single()
     if (!student) { errors.push({ id, error: 'Student not in this batch' }); continue }
-
-    const { error: insertError } = await supabase
-      .from('student_attendance')
-      .insert({
-        student_id: studentId,
-        batch: row.batch,
-        attendance_date: row.attendance_date,
-        status: 'approved',
-        marked_at: now,
-        reviewed_at: now,
-        reviewed_by: auth.name,
-        review_note: `Linked from unmatched upload (${row.participant_name})`,
+    try {
+      const result = await linkUnlinkedAttendance({
+        supabase,
+        row,
+        student,
+        actor: auth,
+        correctedDisplayName: link.correctedDisplayName,
+        rememberAlias: Boolean(link.rememberAlias),
       })
-
-    if (insertError) {
-      if (insertError.code === '23505') skipped++
-      else { errors.push({ id, error: insertError.message }); continue }
-    } else {
-      linked++
+      if (result.created) linked++
+      else skipped++
+      await appendActivity({
+        eventType: 'attendance_participant_resolved',
+        description: `resolved unmatched participant ${row.original_participant_name || row.participant_name}`,
+        actorName: auth.name,
+        actorRole: auth.role,
+        action: 'resolve',
+        metadata: { unlinked_id: id, student_id: studentId, batch: row.batch, alias_created: result.aliasRemembered },
+        supabase,
+      })
+    } catch (error) {
+      errors.push({ id, error: error.message || 'Could not link attendance.' })
     }
-
-    await supabase
-      .from('unlinked_attendance')
-      .update({ status: 'linked', linked_student_id: studentId, linked_at: now })
-      .eq('id', id)
   }
 
   return jsonNoStore({ success: true, linked, skipped, errors: errors.length })
@@ -222,13 +232,26 @@ async function handleDismiss({ body, auth }) {
   const scopeError = await assertUnlinkedScope({ supabase, auth, rows: waitingRows || [] })
   if (scopeError) return scopeError
 
+  const now = new Date().toISOString()
   const { data, error } = await supabase
     .from('unlinked_attendance')
-    .update({ status: 'dismissed' })
+    .update({ status: 'dismissed', resolved_by_role: auth.role, resolved_by_name: auth.name, resolved_at: now })
     .in('id', validIds)
     .eq('status', 'waiting')
     .select('id')
   if (error) throw error
+
+  if (data?.length) {
+    await appendActivity({
+      eventType: 'attendance_participant_dismissed',
+      description: `dismissed ${data.length} unmatched attendance participant${data.length === 1 ? '' : 's'}`,
+      actorName: auth.name,
+      actorRole: auth.role,
+      action: 'dismiss',
+      metadata: { ids: data.map(row => row.id) },
+      supabase,
+    })
+  }
 
   return jsonNoStore({ success: true, dismissed: data?.length || 0 })
 }
