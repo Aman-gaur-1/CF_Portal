@@ -8,6 +8,8 @@ import {
   safeStudentProfile,
   validateStudentLoginInput,
   verifyStudentPassword,
+  escapeStudentNameForIlike,
+  resolveLegacyStudentCandidates,
   STUDENT_REFRESH_COOKIE,
   STUDENT_REFRESH_TTL_MS,
 } from '@/lib/student-auth'
@@ -23,6 +25,19 @@ function jsonNoStore(body, init) {
       ...(init?.headers || {}),
     },
   })
+}
+
+async function findLegacyStudent(supabase, selectFields, name, batch) {
+  const { data, error } = await supabase
+    .from('students')
+    .select(selectFields)
+    .eq('batch', batch)
+    .ilike('name', escapeStudentNameForIlike(name))
+    .limit(2)
+
+  if (error) return { error, status: null, student: null }
+  const resolution = resolveLegacyStudentCandidates(data, { name, batch })
+  return { error: null, ...resolution }
 }
 
 export async function POST(request) {
@@ -42,6 +57,7 @@ export async function POST(request) {
     const supabase = getSupabaseAdmin()
     let data = null
     let error = null
+    let legacyResolution = null
 
     if (loginId) {
       ({ data, error } = await supabase
@@ -51,29 +67,32 @@ export async function POST(request) {
         .limit(1)
         .maybeSingle())
     } else {
-      ({ data, error } = await supabase
-        .from('students')
-        .select('id,name,batch,password_hash,login_id,must_change_password')
-        .ilike('name', name)
-        .eq('batch', batch)
-        .limit(1)
-        .maybeSingle())
+      legacyResolution = await findLegacyStudent(
+        supabase,
+        'id,name,batch,password_hash,login_id,must_change_password',
+        name,
+        batch
+      )
+      data = legacyResolution.student
+      error = legacyResolution.error
     }
 
     if (error && isMissingHealthCardSchema(error)) {
       if (loginId) {
         return jsonNoStore({ success: false, error: 'Roster login is not configured yet.' }, { status: 503 });
       }
-      ({ data, error } = await supabase
-        .from('students')
-        .select('id,name,batch,password_hash')
-        .ilike('name', name)
-        .eq('batch', batch)
-        .limit(1)
-        .maybeSingle())
+      legacyResolution = await findLegacyStudent(supabase, 'id,name,batch,password_hash', name, batch)
+      data = legacyResolution.student
+      error = legacyResolution.error
     }
 
     if (error) throw new Error(error.message)
+    if (legacyResolution?.status === 'ambiguous') {
+      return jsonNoStore(
+        { success: false, error: 'Legacy login is unavailable for duplicate names in this batch. Use your Login ID or contact an administrator.' },
+        { status: 409 }
+      )
+    }
     const passwordResult = await verifyStudentPassword(password, data?.password_hash)
     if (!data || !passwordResult.ok) {
       return jsonNoStore({ success: false, error: 'Invalid Login ID or password.' }, { status: 401 })
@@ -92,6 +111,7 @@ export async function POST(request) {
       success: true,
       student: {
         ...safeStudentProfile(data),
+        legacyLogin: !loginId,
         token: createStudentToken(data),
       },
     })

@@ -16,6 +16,9 @@ export default function StudentAuth({ onLogin }) {
 
   const [loginId, setLoginId] = useState("")
   const [loginPass, setLoginPass] = useState("")
+  const [legacyLogin, setLegacyLogin] = useState(false)
+  const [legacyName, setLegacyName] = useState("")
+  const [legacyBatch, setLegacyBatch] = useState("")
 
   const [regName, setRegName] = useState("")
   const [regBatch, setRegBatch] = useState("")
@@ -32,21 +35,31 @@ export default function StudentAuth({ onLogin }) {
 
   async function handleLogin(e) {
     e.preventDefault()
-    if (!loginId.trim() || !loginPass.trim()) { showError("Login ID and password are required."); return }
+    if (legacyLogin) {
+      if (!legacyName.trim() || !legacyBatch || !loginPass.trim()) {
+        showError("Student Name, Batch, and password are required.")
+        return
+      }
+    } else if (!loginId.trim() || !loginPass.trim()) {
+      showError("Login ID and password are required.")
+      return
+    }
     setLoading(true)
     try {
       const res = await fetch("/api/student-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ loginId, password: loginPass }),
+        body: JSON.stringify(legacyLogin
+          ? { name: legacyName, batch: legacyBatch, password: loginPass }
+          : { loginId, password: loginPass }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || !data.success || !data.student) {
         showError(data.error || "Invalid Login ID or password.")
         return
       }
-      success(`Welcome back, ${data.student.name}! 🎉`)
-      setTimeout(() => onLogin(data.student), 800)
+      success(`Welcome back, ${data.student.name}!`)
+      setTimeout(() => onLogin({ ...data.student, legacyLogin: Boolean(data.student.legacyLogin) }), 800)
     } catch {
       showError("Student login is unavailable. Please try again.")
     } finally {
@@ -93,14 +106,48 @@ export default function StudentAuth({ onLogin }) {
         <div className="card p-6">
           <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
-          {tab === "login" && (
-            <form onSubmit={handleLogin} className="flex flex-col gap-4">
-              <div><label className="label">Login ID</label><input className="input" value={loginId} onChange={e => setLoginId(e.target.value)} placeholder="Enter your Login ID" autoComplete="username" /></div>
-              <div><label className="label">Password</label><input type="password" className="input" value={loginPass} onChange={e => setLoginPass(e.target.value)} placeholder="Enter password" autoComplete="current-password" /></div>
-              <button type="submit" className="btn btn-primary w-full flex items-center justify-center gap-2 mt-2" disabled={loading}>
-                {loading ? <Spinner /> : "🔓 Login"}
+          {tab === "login" && !legacyLogin && (
+            <div className="flex flex-col gap-4">
+              <form onSubmit={handleLogin} className="flex flex-col gap-4">
+                <div><label className="label">Login ID</label><input className="input" value={loginId} onChange={e => setLoginId(e.target.value)} placeholder="Enter your Login ID" autoComplete="username" /></div>
+                <div><label className="label">Password</label><input type="password" className="input" value={loginPass} onChange={e => setLoginPass(e.target.value)} placeholder="Enter password" autoComplete="current-password" /></div>
+                <button type="submit" className="btn btn-primary w-full flex items-center justify-center gap-2 mt-2" disabled={loading}>
+                  {loading ? <Spinner /> : "Login"}
+                </button>
+              </form>
+              <button
+                type="button"
+                className="text-sm underline underline-offset-4"
+                style={{ color: "var(--text-secondary)" }}
+                onClick={() => { setLegacyLogin(true); setLoginId(""); setLoginPass("") }}
+              >
+                Existing student? Login with Name &amp; Batch
               </button>
-            </form>
+            </div>
+          )}
+
+          {tab === "login" && legacyLogin && (
+            <div className="flex flex-col gap-4">
+              <form onSubmit={handleLogin} className="flex flex-col gap-4">
+                <div><label className="label">Student Name</label><input className="input" value={legacyName} onChange={e => setLegacyName(e.target.value)} placeholder="Enter your full name" autoComplete="name" /></div>
+                <div>
+                  <label className="label">Batch</label>
+                  <BatchPicker value={legacyBatch} onChange={setLegacyBatch} batches={batches} label="Select your batch" />
+                </div>
+                <div><label className="label">Password</label><input type="password" className="input" value={loginPass} onChange={e => setLoginPass(e.target.value)} placeholder="Enter password" autoComplete="current-password" /></div>
+                <button type="submit" className="btn btn-primary w-full flex items-center justify-center gap-2 mt-2" disabled={loading}>
+                  {loading ? <Spinner /> : "Login"}
+                </button>
+              </form>
+              <button
+                type="button"
+                className="text-sm underline underline-offset-4"
+                style={{ color: "var(--text-secondary)" }}
+                onClick={() => { setLegacyLogin(false); setLegacyName(""); setLegacyBatch(""); setLoginPass("") }}
+              >
+                Back to Login ID
+              </button>
+            </div>
           )}
 
           {tab === "register" && (

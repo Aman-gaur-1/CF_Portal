@@ -139,7 +139,7 @@ export default function HomePage() {
     const profile = safeStudentProfile(s)
     if (!profile) return
     localStorage.setItem(SESSION_KEY, JSON.stringify(profile))
-    setStudent(profile)
+    setStudent({ ...profile, legacyLogin: Boolean(s.legacyLogin) })
   }
   function handleLogout() {
     localStorage.removeItem(SESSION_KEY)

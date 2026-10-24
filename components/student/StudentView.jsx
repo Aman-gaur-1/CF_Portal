@@ -127,6 +127,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
   const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
   const showErrorRef = useRef(showError)
+  const [showLegacyLoginId, setShowLegacyLoginId] = useState(Boolean(student.legacyLogin && student.login_id))
 
   const [file, setFile] = useState(null)
   const [code, setCode] = useState("")
@@ -138,6 +139,15 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
 
   function displayFileName(submission) {
     return submission.original_file_name || submission.file_name
+  }
+
+  async function copyLoginId() {
+    try {
+      await navigator.clipboard.writeText(student.login_id)
+      success("Login ID copied.")
+    } catch {
+      showError("Could not copy the Login ID. You can select it manually.")
+    }
   }
 
   useEffect(() => {
@@ -390,6 +400,19 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
           meta={<><span className="portal-chip">{student.name}</span><span className="portal-chip">{student.batch}</span></>}
           actions={<><NotificationBell userType="student" student={student} /><ThemeToggle /><button className="btn btn-secondary btn-sm" onClick={onLogout}>Log out</button></>}
         />
+
+        {showLegacyLoginId && student.login_id && (
+          <div className="card p-4 mb-5 flex flex-wrap items-center justify-between gap-3" role="status" aria-live="polite">
+            <div>
+              <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Your Login ID is: <span className="font-mono">{student.login_id}</span></p>
+              <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>Use this Login ID for faster login next time.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={copyLoginId}>Copy Login ID</button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowLegacyLoginId(false)} aria-label="Dismiss Login ID tip">Dismiss</button>
+            </div>
+          </div>
+        )}
 
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 
 process.env.NODE_ENV = 'test'
 process.env.STUDENT_SESSION_SECRET = 'student-test-secret'
@@ -19,6 +20,47 @@ assert.equal(
   studentAuth.validateStudentLoginInput({ loginId: '', password: 'temporary-password' }).error,
   'Login ID and password are required.'
 )
+assert.deepEqual(
+  studentAuth.validateStudentLoginInput({ name: '  Student   One ', batch: 'Batch A', password: 'legacy-password' }).value,
+  { name: 'Student One', loginId: '', batch: 'Batch A', password: 'legacy-password' },
+  'legacy login accepts normalized name plus exact batch'
+)
+
+const sameNameAcrossBatches = [
+  { id: 'student-a', name: 'Asha Rao', batch: 'Batch A' },
+  { id: 'student-b', name: 'Asha Rao', batch: 'Batch B' },
+]
+assert.equal(
+  studentAuth.resolveLegacyStudentCandidates(sameNameAcrossBatches, { name: ' asha   rao ', batch: 'Batch B' }).student.id,
+  'student-b',
+  'legacy login resolves the exact batch for duplicate names across batches'
+)
+assert.equal(
+  studentAuth.resolveLegacyStudentCandidates(sameNameAcrossBatches, { name: 'Asha Rao', batch: 'Batch C' }).status,
+  'not_found',
+  'legacy login rejects the wrong batch'
+)
+assert.equal(
+  studentAuth.resolveLegacyStudentCandidates([
+    { id: 'student-a1', name: 'Asha Rao', batch: 'Batch A' },
+    { id: 'student-a2', name: 'Asha Rao', batch: 'Batch A' },
+  ], { name: 'Asha Rao', batch: 'Batch A' }).status,
+  'ambiguous',
+  'same-name records in one batch require Login ID assistance'
+)
+assert.equal(studentAuth.escapeStudentNameForIlike('Asha_100%'), 'Asha\\_100\\%')
+
+const legacyHash = studentAuth.hashStudentPassword('legacy-password')
+assert.deepEqual(await studentAuth.verifyStudentPassword('legacy-password', legacyHash), { ok: true, needsUpgrade: true })
+const secureHash = await studentAuth.hashStudentPasswordSecure('secure-password')
+assert.deepEqual(await studentAuth.verifyStudentPassword('secure-password', secureHash), { ok: true, needsUpgrade: false })
+assert.equal((await studentAuth.verifyStudentPassword('wrong-password', secureHash)).ok, false)
+
+const studentLoginRoute = fs.readFileSync(new URL('../app/api/student-login/route.js', import.meta.url), 'utf8')
+assert.match(studentLoginRoute, /consumeLoginAttempt\(request, ['"]student['"]\)/, 'student login rate limiting remains shared by both login modes')
+assert.match(studentLoginRoute, /clearLoginAttempts\(request, ['"]student['"]\)/, 'successful student login clears the shared rate limit')
+assert.ok(studentLoginRoute.indexOf('consumeLoginAttempt') < studentLoginRoute.indexOf('const { name, loginId, batch, password }'), 'rate limiting runs before either Login ID or legacy lookup')
+assert.match(studentLoginRoute, /legacyLogin: !loginId/, 'legacy login returns the onboarding marker without changing the session shape')
 
 const profile = { id: 'student-1', name: 'Student One', batch: 'Batch A' }
 const originalNow = Date.now
@@ -33,6 +75,8 @@ assert.equal(studentAuth.verifyStudentToken(refresh), null)
 assert.equal(studentAuth.verifyStudentRefreshToken(access), null)
 const requestWith = token => ({ headers: new Headers({ Authorization: `Bearer ${token}` }) })
 assert.deepEqual(studentAuth.getStudentFromRequest(requestWith(access)), profile, 'fresh protected request is authorized')
+const legacyAccess = studentAuth.createStudentToken(profile)
+assert.deepEqual(studentAuth.getStudentFromRequest(requestWith(legacyAccess)), studentAuth.getStudentFromRequest(requestWith(access)), 'legacy and Login ID authentication use identical student authorization')
 
 process.env.STUDENT_ACCESS_TOKEN_TTL_SECONDS = '60'
 const shortAccess = studentAuth.createStudentToken(profile)
