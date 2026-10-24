@@ -21,7 +21,7 @@ export async function GET(request) {
 
     const { data: assignments, error: assignmentError } = await supabase
       .from('batch_coursework_assignments')
-      .select('id,batch,coursework_item_id,activated_at,due_at,active')
+      .select('id,batch,coursework_item_id,activated_at,active')
       .eq('batch', student.batch)
       .eq('active', true)
       .order('activated_at', { ascending: true })

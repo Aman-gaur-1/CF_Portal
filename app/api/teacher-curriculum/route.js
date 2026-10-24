@@ -55,3 +55,36 @@ export async function POST(request) {
     return jsonNoStore({ error: 'Could not activate coursework.' }, { status: 500 })
   }
 }
+
+export async function PATCH(request) {
+  try {
+    const teacher = getTeacherFromRequest(request)
+    if (!teacher) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
+    const body = await request.json().catch(() => ({}))
+    const id = String(body?.id || '').trim()
+    if (!id || typeof body?.active !== 'boolean') return jsonNoStore({ error: 'Activation id and active state are required.' }, { status: 400 })
+
+    const supabase = getSupabaseAdmin()
+    const scope = await getTeacherScope(supabase, teacher.name)
+    const { data: assignment, error: lookupError } = await supabase
+      .from('batch_coursework_assignments')
+      .select('id,batch')
+      .eq('id', id)
+      .maybeSingle()
+    if (lookupError) throw lookupError
+    if (!assignment || !scope.batchNames.includes(assignment.batch)) return jsonNoStore({ error: 'This activation is outside your assigned batches.' }, { status: 403 })
+
+    const { data, error } = await supabase
+      .from('batch_coursework_assignments')
+      .update({ active: body.active, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('*')
+      .single()
+    if (error) throw error
+    return jsonNoStore({ success: true, activation: data })
+  } catch (error) {
+    console.error('[teacher-curriculum] update failed', error?.message)
+    if (isMissingHealthCardSchema(error)) return jsonNoStore({ error: 'Curriculum activation is not configured yet.' }, { status: 503 })
+    return jsonNoStore({ error: 'Could not update coursework activation.' }, { status: 500 })
+  }
+}

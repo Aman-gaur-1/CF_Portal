@@ -6,7 +6,7 @@ import {
   createStudentRefreshToken,
   hashStudentPasswordSecure,
   safeStudentProfile,
-  validateStudentCredentialsInput,
+  validateStudentLoginInput,
   verifyStudentPassword,
   STUDENT_REFRESH_COOKIE,
   STUDENT_REFRESH_TTL_MS,
@@ -35,36 +35,39 @@ export async function POST(request) {
       )
     }
 
-    const input = validateStudentCredentialsInput(await request.json())
+    const input = validateStudentLoginInput(await request.json())
     if (input.error) return jsonNoStore({ success: false, error: input.error }, { status: 400 })
 
     const { name, loginId, batch, password } = input.value
     const supabase = getSupabaseAdmin()
-    let supportsLoginId = true
-    let { data, error } = await supabase
-      .from('students')
-      .select('id,name,batch,password_hash,login_id,must_change_password')
-      .ilike('name', name || loginId)
-      .eq('batch', batch)
-      .limit(1)
-      .maybeSingle()
+    let data = null
+    let error = null
 
-    if (error && isMissingHealthCardSchema(error)) {
-      supportsLoginId = false
+    if (loginId) {
       ({ data, error } = await supabase
         .from('students')
-        .select('id,name,batch,password_hash')
-        .ilike('name', name || loginId)
+        .select('id,name,batch,password_hash,login_id,must_change_password')
+        .eq('login_id', loginId)
+        .limit(1)
+        .maybeSingle())
+    } else {
+      ({ data, error } = await supabase
+        .from('students')
+        .select('id,name,batch,password_hash,login_id,must_change_password')
+        .ilike('name', name)
         .eq('batch', batch)
         .limit(1)
         .maybeSingle())
     }
 
-    if (!data && !error && loginId && supportsLoginId) {
+    if (error && isMissingHealthCardSchema(error)) {
+      if (loginId) {
+        return jsonNoStore({ success: false, error: 'Roster login is not configured yet.' }, { status: 503 });
+      }
       ({ data, error } = await supabase
         .from('students')
-        .select('id,name,batch,password_hash,login_id,must_change_password')
-        .eq('login_id', loginId)
+        .select('id,name,batch,password_hash')
+        .ilike('name', name)
         .eq('batch', batch)
         .limit(1)
         .maybeSingle())
@@ -73,7 +76,7 @@ export async function POST(request) {
     if (error) throw new Error(error.message)
     const passwordResult = await verifyStudentPassword(password, data?.password_hash)
     if (!data || !passwordResult.ok) {
-      return jsonNoStore({ success: false, error: 'Invalid name, batch, or password.' }, { status: 401 })
+      return jsonNoStore({ success: false, error: 'Invalid Login ID or password.' }, { status: 401 })
     }
 
     if (passwordResult.needsUpgrade) {

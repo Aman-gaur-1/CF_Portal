@@ -7,6 +7,7 @@ import Spinner from "@/components/ui/Spinner"
 import RefreshButton from "@/components/ui/RefreshButton"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
 import { useRefreshAction } from "@/lib/use-refresh-action"
+import StaffStudentHealthCard from "@/components/ui/StaffStudentHealthCard"
 
 const SCOPE_REFRESH_MS = 5000
 
@@ -24,6 +25,7 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
   const [editingStudent, setEditingStudent] = useState(null)
   const [profileForm, setProfileForm] = useState({ name: "", password: "" })
   const [savingProfile, setSavingProfile] = useState(false)
+  const [healthStudent, setHealthStudent] = useState(null)
   const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
   useEffect(() => setSearch(globalSearch), [globalSearch])
@@ -170,6 +172,9 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
               <div className="flex gap-2 flex-wrap">
                 <span className="badge-pending">{subMap[student.id] || 0} submissions</span>
                 <span className="badge-done">{reviewedMap[student.id] || 0} reviewed</span>
+                <button className="btn btn-secondary btn-sm" type="button" onClick={() => setHealthStudent(student)}>
+                  Health Card
+                </button>
                 <button className="btn btn-secondary btn-sm" onClick={() => openProfileEditor(student)}>
                   Edit Profile
                 </button>
@@ -215,6 +220,7 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
           </div>
         </div>
       )}
+      {healthStudent && <StaffStudentHealthCard studentId={healthStudent.id} token={teacherToken} onClose={() => setHealthStudent(null)} />}
       <ToastContainer toasts={toasts} />
     </div>
   )

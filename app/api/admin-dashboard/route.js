@@ -144,7 +144,7 @@ export async function GET(request) {
 
     const supabase = getSupabaseAdmin()
     const [students, batches, trainers, submissions] = await Promise.all([
-      fetchAllRows(supabase, 'students', 'id, name, batch, created_at', 'created_at'),
+      fetchAllRows(supabase, 'students', 'id, name, batch, login_id, created_at', 'created_at'),
       fetchAllRows(supabase, 'batches', '*', 'created_at'),
       fetchAllRows(supabase, 'trainers', '*', 'created_at'),
       fetchAllRows(supabase, 'submissions', 'id,student_id,batch,topic,submitted_at,feedback,feedback_at,ai_feedback,ai_feedback_at,ai_status,phase,submission_type'),

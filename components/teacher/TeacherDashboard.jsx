@@ -3,23 +3,29 @@ import { useEffect, useState } from "react"
 import Tabs from "@/components/ui/Tabs"
 import SubmissionsTab from "@/components/teacher/SubmissionsTab"
 import StudentsTab from "@/components/teacher/StudentsTab"
-import BatchesTab from "@/components/teacher/BatchesTab"
+import AttendanceTab from "@/components/teacher/AttendanceTab"
 import ThemeToggle from "@/components/ui/ThemeToggle"
 import NotificationBell from "@/components/ui/NotificationBell"
 import StudentHealthPanel from "@/components/teacher/StudentHealthPanel"
 import PageHeader from "@/components/ui/PageHeader"
 
 const TABS = [
-  { id: "reviews", label: "My Reviews" },
-  { id: "students", label: "My Students" },
-  { id: "batches", label: "My Batches" },
-  { id: "health", label: "Student Health" },
+  { id: "overview", label: "Overview" },
+  { id: "attendance", label: "Attendance" },
+  { id: "students", label: "Students" },
+  { id: "coursework", label: "Coursework" },
 ]
+
+const LEGACY_TAB_ALIASES = {
+  reviews: "overview",
+  batches: "overview",
+  health: "coursework",
+}
 
 const openLinkedIn = () => window.open("https://www.linkedin.com/in/aman-gaur-39077214a", "_blank")
 
 export default function TeacherDashboard({ teacherName, teacherToken, onLogout }) {
-  const [tab, setTab] = useState("reviews")
+  const [tab, setTab] = useState("overview")
   const [reviewFilter, setReviewFilter] = useState("")
   const [globalSearch, setGlobalSearch] = useState("")
 
@@ -27,9 +33,10 @@ export default function TeacherDashboard({ teacherName, teacherToken, onLogout }
     const params = new URLSearchParams(window.location.search)
     const requestedTab = params.get("tab")
     const requestedFilter = params.get("filter")
-    if (requestedTab && TABS.some(item => item.id === requestedTab)) setTab(requestedTab)
+    const resolvedTab = LEGACY_TAB_ALIASES[requestedTab] || requestedTab
+    if (resolvedTab && TABS.some(item => item.id === resolvedTab)) setTab(resolvedTab)
     if (requestedFilter === "open-queries") {
-      setTab("reviews")
+      setTab("overview")
       setReviewFilter("Open Queries")
     }
   }, [])
@@ -53,10 +60,10 @@ export default function TeacherDashboard({ teacherName, teacherToken, onLogout }
           {globalSearch && <button type="button" onClick={() => setGlobalSearch("")} aria-label="Clear search">×</button>}
         </div>
 
-        {tab === "reviews" && <SubmissionsTab teacherName={teacherName} teacherToken={teacherToken} requestedFilter={reviewFilter} globalSearch={globalSearch} />}
+        {tab === "overview" && <SubmissionsTab teacherName={teacherName} teacherToken={teacherToken} requestedFilter={reviewFilter} globalSearch={globalSearch} />}
+        {tab === "attendance" && <AttendanceTab teacherToken={teacherToken} />}
         {tab === "students" && <StudentsTab teacherToken={teacherToken} globalSearch={globalSearch} />}
-        {tab === "batches" && <BatchesTab teacherName={teacherName} teacherToken={teacherToken} globalSearch={globalSearch} />}
-        {tab === "health" && <StudentHealthPanel teacherToken={teacherToken} />}
+        {tab === "coursework" && <StudentHealthPanel teacherToken={teacherToken} initialTab="coursework" hideNavigation />}
 
         <div className="portal-footer">
           <div className="text-xs flex items-center gap-1" style={{ color: "var(--text-muted)" }}>

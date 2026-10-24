@@ -17,6 +17,7 @@ import AdminActivityLog from "@/components/admin/AdminActivityLog"
 import AdminHealthPanel from "@/components/admin/AdminHealthPanel"
 import BatchSetupPanel from "@/components/admin/BatchSetupPanel"
 import CurriculumPanel from "@/components/admin/CurriculumPanel"
+import StaffStudentHealthCard from "@/components/ui/StaffStudentHealthCard"
 import PageHeader from "@/components/ui/PageHeader"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
@@ -272,6 +273,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [studentBatchFilter, setStudentBatchFilter] = useState("All Batches")
   const [editingStudentId, setEditingStudentId] = useState(null)
   const [studentProfileForm, setStudentProfileForm] = useState({ name: "", batch: "", password: "" })
+  const [healthStudent, setHealthStudent] = useState(null)
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const { toasts, success, error: showError } = useToast()
 
@@ -690,7 +692,10 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   function renderPeople() {
     return (
       <div className="grid gap-5">
-        <div className="grid gap-4 lg:grid-cols-2">
+        <details className="card admin-panel">
+          <summary className="cursor-pointer font-semibold">Manage teachers and batches <span className="text-xs ml-2" style={{ color: "var(--text-muted)" }}>Advanced setup</span></summary>
+          <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>Student roster work stays below; use this section only when assigning teachers or creating batches.</p>
+        <div className="grid gap-4 lg:grid-cols-2 mt-4">
           <div className="card admin-panel">
             <SectionTitle title="Teachers" detail={`${trainerNames.length} total`} />
             <div className="flex gap-2 mb-4">
@@ -737,6 +742,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             </div>
           </div>
         </div>
+        </details>
 
         <div className="card admin-panel">
           <SectionTitle title="Students" detail={`${filteredStudents.length} visible`} />
@@ -758,7 +764,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
                   <div key={student.id} className="admin-row">
                     <div className="min-w-0">
                       <p className="font-semibold truncate">{student.name}</p>
-                      <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{student.batch || "No batch"} - {count} submissions</p>
+                      <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{student.batch || "No batch"} · {count} submissions{student.login_id ? ` · Login ID: ${student.login_id}` : ""}</p>
                       {count > 0 && <button type="button" className="admin-student-submissions-toggle" onClick={() => setExpandedStudentId(expanded ? null : student.id)}>{expanded ? "Hide submissions" : "View submissions"}</button>}
                       {expanded && <div className="admin-student-submissions">
                         {studentSubmissions.map(submission => <div className="admin-student-submission" key={submission.id}>
@@ -785,6 +791,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
                         </>
                       ) : (
                         <>
+                          <button className="btn btn-secondary btn-sm" type="button" onClick={() => setHealthStudent(student)}>Health Card</button>
                           <select className="select text-sm max-w-[180px]" value={student.batch || ""} onChange={e => moveStudent(student.id, e.target.value)} disabled={saving}>
                             <option value="">No batch</option>
                             {batches.map(batch => <option key={batch.id} value={batch.name}>{batch.name}</option>)}
@@ -813,6 +820,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           </div>
         </div>
       )}
+      {healthStudent && <StaffStudentHealthCard studentId={healthStudent.id} token={adminToken} onClose={() => setHealthStudent(null)} />}
       </div>
     )
   }
@@ -1006,7 +1014,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
         ) : (
           <>
             {tab === "overview" && renderOverview()}
-            {tab === "attendance" && <AdminHealthPanel adminToken={adminToken} showError={showError} success={success} batches={batches} initialTab="attendance" />}
+            {tab === "attendance" && <AdminHealthPanel adminToken={adminToken} showError={showError} success={success} batches={batches} initialTab="attendance" hideNavigation />}
             {tab === "students" && renderPeople()}
             {tab === "batch-setup" && <BatchSetupPanel adminToken={adminToken} batches={batches} students={students} success={success} showError={showError} />}
             {tab === "curriculum" && <CurriculumPanel adminToken={adminToken} batches={batches} success={success} showError={showError} />}

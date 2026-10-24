@@ -16,7 +16,7 @@ const TABS = [
   ["advanced", "Optional Advanced"],
 ]
 
-export default function AdminHealthPanel({ adminToken, showError, success, batches = [], initialTab = "overview" }) {
+export default function AdminHealthPanel({ adminToken, showError, success, batches = [], initialTab = "overview", hideNavigation = false }) {
   const [tab, setTab] = useState(initialTab)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -41,11 +41,11 @@ export default function AdminHealthPanel({ adminToken, showError, success, batch
     <div className="grid gap-5">
       <div className="card admin-panel">
         <SectionHeading
-          title="Student Health"
-          detail="Health Card catalog, calendar, scoring, and attendance operations."
+          title={hideNavigation ? "Attendance review" : "Student Health"}
+          detail={hideNavigation ? "Upload attendance, resolve matches, and review attendance requests." : "Health Card catalog, calendar, scoring, and attendance operations."}
           action={<RefreshButton onClick={load} disabled={loading} />}
         />
-        <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Student Health sections">{TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab-item ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}</div>
+        {!hideNavigation && <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Student Health sections">{TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab-item ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}</div>}
       </div>
       {tab === "attendance" && <AdminAttendancePanel adminToken={adminToken} batches={batches} success={success} showError={showError} focusMode={attendanceFocus} />}
       {tab === "advanced" && <div className="grid gap-4"><AdminCourseworkSetupPanel adminToken={adminToken} success={success} showError={showError} /><AdminCourseworkPanel adminToken={adminToken} batches={batches} success={success} showError={showError} /><AdminCalendarPanel adminToken={adminToken} batches={batches} success={success} showError={showError} /></div>}
@@ -65,7 +65,6 @@ export default function AdminHealthPanel({ adminToken, showError, success, batch
           <p className="text-xs mt-4" style={{ color: "var(--portal-text-muted)" }}>AI evaluation scores remain separate from Health Card points.</p>
         </div>
       </>)}
-      {tab === "rules" && (loading ? <div className="card admin-panel flex justify-center"><Spinner size="lg" /></div> : data && <div className="card admin-panel"><SectionHeading title="Effective point rules" detail="Rules are applied by activity type and effective date." /><div className="grid gap-2">{(data.pointRules || []).map(rule => <div className="admin-row" key={rule.id}><span className="font-semibold">{rule.activity_type}</span><span className="text-sm" style={{ color: "var(--portal-text-secondary)" }}>{rule.points} pts · from {rule.effective_from}{rule.effective_to ? ` to ${rule.effective_to}` : " onward"}{rule.active ? " · active" : " · inactive"}</span></div>)}</div></div>)}
     </div>
   )
 }

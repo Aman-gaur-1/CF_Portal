@@ -18,7 +18,7 @@ import PageHeader from "@/components/ui/PageHeader"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
 import { detectAssignmentLanguage } from "@/lib/assignment-analysis"
 
-const TABS = [{ id: "submit", label: "Submit assignment" }, { id: "feedback", label: "My feedback" }, { id: "health", label: "Student Health Card" }]
+const TABS = [{ id: "submit", label: "Submit coursework" }, { id: "feedback", label: "My submissions" }, { id: "health", label: "Health Card" }]
 const MAX_MB = 10
 
 const FEEDBACK_LANGUAGES = [

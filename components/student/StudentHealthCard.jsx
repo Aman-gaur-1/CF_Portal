@@ -201,7 +201,7 @@ export default function StudentHealthCard({ student, success, showError }) {
         <PageHeader
           eyebrow="Student Health Card"
           title={healthCard.student?.name || student.name}
-          subtitle="A clear view of coursework progress, attendance, and your standing in the batch."
+          subtitle="Coursework points determine your batch rank. Attendance is added separately to your Health Card total."
           meta={<><span className="portal-chip">{healthCard.student?.batch || student.batch}</span><span className="portal-chip">Points tracked from 1 Oct 2026</span></>}
           actions={<RefreshButton onClick={load} disabled={loading} />}
         />
@@ -216,7 +216,7 @@ export default function StudentHealthCard({ student, success, showError }) {
       </section>
 
       <section className="card health-card-panel">
-        <SectionHeading title="Points breakdown" detail="Earned from coursework and approved attendance." />
+        <SectionHeading title="Points breakdown" detail="Coursework points determine rank; approved attendance contributes to the Health Card total." />
         <div className="health-card-points">
           <MetricCard label="Assignment points" value={numeric(metrics.assignmentPoints)} tone="primary" />
           <MetricCard label="Project points" value={numeric(metrics.projectPoints)} />
@@ -239,7 +239,7 @@ export default function StudentHealthCard({ student, success, showError }) {
 
       <section className="card health-card-panel">
         <div className="health-card-attendance-head">
-          <SectionHeading title="Attendance" detail="Attendance is based on your eligible class sessions." />
+          <SectionHeading title="Attendance" detail="Attendance contributes to your Health Card total, not your leaderboard rank." />
           <span className="portal-chip">Asia/Kolkata</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -298,7 +298,7 @@ export default function StudentHealthCard({ student, success, showError }) {
 
       <div className="health-card-lower-grid">
         <section className="card health-card-panel">
-           <SectionHeading title="Batch leaderboard" detail="Coursework points · top 10 in your batch." />
+           <SectionHeading title="Batch leaderboard" detail="Leaderboard score = assignment + project points only. Attendance does not affect rank." />
            {top10.length === 0 ? <EmptyState icon="★" title="No ranked activity yet" message="Complete an Assignment or Project to appear here." /> : (
             <div className="health-card-list">
               {top10.map(row => {

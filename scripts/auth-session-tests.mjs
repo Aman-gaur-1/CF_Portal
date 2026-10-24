@@ -10,6 +10,16 @@ const studentAuth = await import('../lib/student-auth.js')
 const teacherAuth = await import('../lib/teacher-auth.js')
 const adminAuth = await import('../lib/admin-auth.js')
 
+assert.deepEqual(
+  studentAuth.validateStudentLoginInput({ loginId: 'Student-01', password: 'temporary-password' }).value,
+  { name: '', loginId: 'student-01', batch: '', password: 'temporary-password' },
+  'roster login accepts login ID without a manually selected batch'
+)
+assert.equal(
+  studentAuth.validateStudentLoginInput({ loginId: '', password: 'temporary-password' }).error,
+  'Login ID and password are required.'
+)
+
 const profile = { id: 'student-1', name: 'Student One', batch: 'Batch A' }
 const originalNow = Date.now
 const issuedAt = 2_000_000_000_000

@@ -29,6 +29,10 @@ function jsonNoStore(body, init) {
   })
 }
 
+function isOptionalQuerySourceMissing(error) {
+  return /assignment_queries|Could not find the table.*assignment_queries/i.test(String(error?.message || error || ''))
+}
+
 function normalizeStudentIdentity(value = {}) {
   return {
     id: String(value.studentId || value.id || '').trim(),
@@ -111,7 +115,12 @@ async function ensureOperationalNotifications({ supabase, userType, userIdentifi
   }
 
   const { data, error } = await query
-  if (error) throw new Error(error.message)
+  if (error) {
+    // Query notifications are optional on Health Card-only staging schemas.
+    // Keep the notification bell usable without weakening auth or review APIs.
+    if (isOptionalQuerySourceMissing(error)) return
+    throw new Error(error.message)
+  }
 
   for (const row of data || []) {
     const submission = row.submissions || {}
