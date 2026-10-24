@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getAdminFromRequest } from '@/lib/admin-auth'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { hashStudentPasswordSecure } from '@/lib/student-auth'
-import { classifyRosterRows, generateLoginId, generateTemporaryPassword, hashRosterFile, parseRosterBuffer } from '@/lib/roster-import'
+import { classifyRosterRows, generateLoginId, generateTemporaryPassword, hashRosterFile, loadUsedLoginIds, parseRosterBuffer } from '@/lib/roster-import'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
 
 export const dynamic = 'force-dynamic'
@@ -70,7 +70,7 @@ export async function POST(request) {
     }
     if (upload.action !== 'commit') return jsonNoStore({ success: true, batch: upload.batch, summary, rows: classified })
 
-    const usedLoginIds = new Set(existing.map(row => String(row.login_id || '').toLowerCase()).filter(Boolean))
+    const usedLoginIds = await loadUsedLoginIds(supabase)
     const credentials = []
     const createdRows = []
     for (const row of classified.filter(candidate => candidate.status === 'new')) {

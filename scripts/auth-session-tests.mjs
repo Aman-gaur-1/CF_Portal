@@ -8,6 +8,7 @@ process.env.TEACHER_SESSION_SECRET = 'teacher-test-secret'
 process.env.ADMIN_SESSION_SECRET = 'admin-test-secret'
 
 const studentAuth = await import('../lib/student-auth.js')
+const rosterImport = await import('../lib/roster-import.js')
 const teacherAuth = await import('../lib/teacher-auth.js')
 const adminAuth = await import('../lib/admin-auth.js')
 
@@ -50,6 +51,11 @@ assert.equal(
 )
 assert.equal(studentAuth.escapeStudentNameForIlike('Asha_100%'), 'Asha\\_100\\%')
 
+const usedLoginIds = new Set(['asha-rao-01', 'asha-rao-02'])
+assert.equal(rosterImport.generateLoginId('Asha Rao', usedLoginIds), 'asha-rao-03', 'duplicate names receive the next unique login ID')
+assert.equal(rosterImport.generateLoginId('Asha Rao', usedLoginIds), 'asha-rao-04', 'same name across batches remains globally unique')
+assert.equal(rosterImport.generateLoginId('Asha Rao', new Set(['asha-rao-01'])), 'asha-rao-02', 'allocator advances on a collision instead of duplicating')
+
 const legacyHash = studentAuth.hashStudentPassword('legacy-password')
 assert.deepEqual(await studentAuth.verifyStudentPassword('legacy-password', legacyHash), { ok: true, needsUpgrade: true })
 const secureHash = await studentAuth.hashStudentPasswordSecure('secure-password')
@@ -57,10 +63,18 @@ assert.deepEqual(await studentAuth.verifyStudentPassword('secure-password', secu
 assert.equal((await studentAuth.verifyStudentPassword('wrong-password', secureHash)).ok, false)
 
 const studentLoginRoute = fs.readFileSync(new URL('../app/api/student-login/route.js', import.meta.url), 'utf8')
+const studentRegisterRoute = fs.readFileSync(new URL('../app/api/student-register/route.js', import.meta.url), 'utf8')
+const adminRosterRoute = fs.readFileSync(new URL('../app/api/admin-roster/route.js', import.meta.url), 'utf8')
+const adminProfileRoute = fs.readFileSync(new URL('../app/api/admin-student-profile/route.js', import.meta.url), 'utf8')
 assert.match(studentLoginRoute, /consumeLoginAttempt\(request, ['"]student['"]\)/, 'student login rate limiting remains shared by both login modes')
 assert.match(studentLoginRoute, /clearLoginAttempts\(request, ['"]student['"]\)/, 'successful student login clears the shared rate limit')
 assert.ok(studentLoginRoute.indexOf('consumeLoginAttempt') < studentLoginRoute.indexOf('const { name, loginId, batch, password }'), 'rate limiting runs before either Login ID or legacy lookup')
 assert.match(studentLoginRoute, /legacyLogin: !loginId/, 'legacy login returns the onboarding marker without changing the session shape')
+assert.match(studentRegisterRoute, /loadUsedLoginIds\(supabase\)/, 'legacy registration allocates from the global Login ID set')
+assert.match(studentRegisterRoute, /login_id: loginId/, 'new registration always inserts a Login ID')
+assert.match(studentRegisterRoute, /hashStudentPasswordSecure\(password\)/, 'new registration stores only the password hash')
+assert.match(adminRosterRoute, /loadUsedLoginIds\(supabase\)/, 'roster import allocates from the global Login ID set')
+assert.doesNotMatch(adminProfileRoute, /login_id\s*:/, 'editing an existing student does not change its Login ID')
 
 const profile = { id: 'student-1', name: 'Student One', batch: 'Batch A' }
 const originalNow = Date.now
