@@ -22,3 +22,28 @@ Current insertion policy:
 Rows with no authoritative session remain pending or are rejected according to
 the review decision. They must not be converted into fabricated historical
 sessions.
+
+## Database defense in depth
+
+`supabase/manual/attendance_session_safety_guard.sql` adds a controlled
+`student_attendance` trigger for future writes. It preserves existing legacy
+rows, blocks new sessionless normal attendance, requires batch/date agreement
+with the referenced session, rejects self-marking against `legacy_backfill`
+sessions, and prevents approval without a session. A pending
+`student_attendance_query` may remain sessionless until it is reviewed; it is
+still non-approvable. Rejection and session linking remain available.
+
+The companion `supabase/manual/attendance_session_safety_rehearsal.sql` first
+demonstrates the old omitted-session write in a staging transaction, then
+rehearses the trigger, valid attendance, issue-request rejection, duplicate
+protection, and multiple sessions on one day. The entire rehearsal rolls back.
+
+The safe production order is:
+
+1. Deploy the session-safe attendance runtime fix and observe that no new
+   `source = legacy`, `status = pending`, `session_id IS NULL` rows appear.
+2. Apply the attendance database guard in a separately verified transaction.
+3. Only then apply the Health Card product-model migration and its compatibility
+   backfill/security transaction.
+4. Deploy the remaining Health Card application release and rerun the release
+   gate.
