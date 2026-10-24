@@ -52,7 +52,7 @@ export async function POST(request) {
       if (!batchRow) return jsonNoStore({ error: 'Select a valid batch.' }, { status: 400 })
       const { data: items, error: itemError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').in('id', courseworkItemIds)
       if (itemError) throw itemError
-      if ((items || []).length !== courseworkItemIds.length || (items || []).some(item => !itemIsCompatibleWithBatch(item, batch))) return jsonNoStore({ error: 'Each item must be an active Assignment/Project compatible with the selected batch.' }, { status: 400 })
+      if ((items || []).length !== courseworkItemIds.length || (items || []).some(item => !itemIsCompatibleWithBatch(item, batch))) return jsonNoStore({ error: 'Each item must be an active Assignment/Project with a valid Python, Data Analytics, or SQL phase and compatible with the selected batch.' }, { status: 400 })
       const now = new Date().toISOString()
       const rows = courseworkItemIds.map(courseworkItemId => ({ batch, coursework_item_id: courseworkItemId, activated_at: now, activated_by_role: 'admin', activated_by_name: admin.name, due_at: dueAt, active: true, updated_at: now }))
       const { data: activated, error } = await supabase.from('batch_coursework_assignments').upsert(rows, { onConflict: 'batch,coursework_item_id' }).select('*')
@@ -81,7 +81,17 @@ export async function PATCH(request) {
     const body = await request.json().catch(() => ({}))
     const id = String(body.id || '').trim()
     if (!id || typeof body.active !== 'boolean') return jsonNoStore({ error: 'Activation id and active status are required.' }, { status: 400 })
-    const { data, error } = await getSupabaseAdmin().from('batch_coursework_assignments').update({ active: body.active, updated_at: new Date().toISOString() }).eq('id', id).select('*').maybeSingle()
+    const supabase = getSupabaseAdmin()
+    if (body.active === true) {
+      const { data: activation, error: activationError } = await supabase.from('batch_coursework_assignments').select('id,batch,coursework_item_id').eq('id', id).maybeSingle()
+      if (activationError) throw activationError
+      const { data: item, error: itemError } = activation
+        ? await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').eq('id', activation.coursework_item_id).maybeSingle()
+        : { data: null, error: null }
+      if (itemError) throw itemError
+      if (!activation || !itemIsCompatibleWithBatch(item, activation.batch)) return jsonNoStore({ error: 'This coursework cannot be activated without a valid Python, Data Analytics, or SQL phase.' }, { status: 400 })
+    }
+    const { data, error } = await supabase.from('batch_coursework_assignments').update({ active: body.active, updated_at: new Date().toISOString() }).eq('id', id).select('*').maybeSingle()
     if (error) throw error
     if (!data) return jsonNoStore({ error: 'Activation not found.' }, { status: 404 })
     return jsonNoStore({ success: true, activation: data })

@@ -92,7 +92,7 @@ export default function AdminCourseworkPanel({ adminToken, batches = [], success
           <input className="input" value={form.title} onChange={event => updateForm("title", event.target.value)} placeholder="Coursework title" required />
           <select className="select" value={form.itemType} onChange={event => updateForm("itemType", event.target.value)}><option value="assignment">Assignment</option><option value="project">Project</option></select>
           <select className="select" value={form.batch} onChange={event => updateForm("batch", event.target.value)}><option value="">All batches</option>{batches.map(batch => <option key={batch.name} value={batch.name}>{batch.name}</option>)}</select>
-          <input className="input" value={form.phase} onChange={event => updateForm("phase", event.target.value)} placeholder="Phase (optional)" />
+          <select className="select" value={form.phase} onChange={event => updateForm("phase", event.target.value)} required><option value="">Select phase</option><option value="Python">Python</option><option value="Data Analytics">Data Analytics</option><option value="SQL">SQL</option></select>
           <label className="grid gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>Due date<input className="input" type="datetime-local" value={form.dueAt} onChange={event => updateForm("dueAt", event.target.value)} /></label>
           <label className="flex items-center gap-2 text-sm mt-5"><input type="checkbox" checked={form.active} onChange={event => updateForm("active", event.target.checked)} /> Active</label>
         </div>

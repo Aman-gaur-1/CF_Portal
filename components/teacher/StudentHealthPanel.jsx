@@ -49,7 +49,7 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
   )
   const activeIds = new Set(selectedAssignments.filter(row => row.active).map(row => String(row.coursework_item_id)))
   const itemById = new Map((data?.items || []).map(item => [String(item.id), item]))
-  const available = (data?.items || []).filter(item => item.active && (!item.batch || item.batch === selectedBatch))
+  const available = (data?.items || []).filter(item => item.active && ["Python", "Data Analytics", "SQL"].includes(item.phase) && (!item.batch || item.batch === selectedBatch))
 
   async function activate() {
     setSaving(true)

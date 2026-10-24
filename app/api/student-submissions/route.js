@@ -8,6 +8,7 @@ import { detectAssignmentLanguage, detectAssignmentType, normalizeAssignmentPhas
 import { calculateLifetimeCoursework, getCourseworkPoints } from '@/lib/coursework-scoring'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
 import { normalizeHealthCourseworkType } from '@/lib/health-card-domain'
+import { isSupportedHealthCardPhase } from '@/lib/health-card-admin'
 
 export const dynamic = 'force-dynamic'
 
@@ -132,7 +133,7 @@ export async function POST(request) {
     }
     const topic = sanitizeStudentText(item.title, 240)
     const phase = normalizeAssignmentPhase(item.phase) || sanitizeStudentText(item.phase, 160)
-    if (!topic || !phase) return jsonNoStore({ error: 'The selected coursework is missing its phase.' }, { status: 409 })
+    if (!topic || !phase || !isSupportedHealthCardPhase(phase)) return jsonNoStore({ error: 'The selected coursework is missing a valid phase.' }, { status: 409 })
 
     const detected = detectAssignmentLanguage({
       text: codeText,

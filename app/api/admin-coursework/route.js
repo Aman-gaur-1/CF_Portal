@@ -3,7 +3,7 @@ import { getAdminFromRequest } from '@/lib/admin-auth'
 import { appendActivity } from '@/lib/activity-log'
 import { createNotification, NOTIFICATION_TYPE, NOTIFICATION_USER_TYPE } from '@/lib/notifications'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
-import { isUniqueViolation, normalizeCourseworkPayload } from '@/lib/health-card-admin'
+import { isSupportedHealthCardPhase, isUniqueViolation, normalizeCourseworkPayload } from '@/lib/health-card-admin'
 
 export const dynamic = 'force-dynamic'
 
@@ -132,6 +132,11 @@ export async function PATCH(request) {
     const normalized = normalizeCourseworkPayload(body, { partial: true })
     if (normalized.error) return jsonNoStore({ error: normalized.error }, { status: 400 })
     const supabase = getSupabaseAdmin()
+    if (normalized.value.active === true) {
+      const { data: existing, error: existingError } = await supabase.from('coursework_items').select('phase').eq('id', id).maybeSingle()
+      if (existingError) throw existingError
+      if (!existing || !isSupportedHealthCardPhase(normalized.value.phase ?? existing.phase)) return jsonNoStore({ error: 'Coursework cannot be activated without a valid Python, Data Analytics, or SQL phase.' }, { status: 400 })
+    }
     if (Object.prototype.hasOwnProperty.call(normalized.value, 'batch') && !(await validateBatch(supabase, normalized.value.batch))) {
       return jsonNoStore({ error: 'Select a valid batch.' }, { status: 400 })
     }

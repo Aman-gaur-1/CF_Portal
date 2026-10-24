@@ -201,16 +201,17 @@ export default function StudentHealthCard({ student, success, showError }) {
         <PageHeader
           eyebrow="Student Health Card"
           title={healthCard.student?.name || student.name}
-          subtitle="Coursework points determine your batch rank. Attendance is added separately to your Health Card total."
-          meta={<><span className="portal-chip">{healthCard.student?.batch || student.batch}</span><span className="portal-chip">Points tracked from 1 Oct 2026</span></>}
+          subtitle="Current coursework points determine your batch rank. Attendance is added separately to your Health Card total."
+          meta={<><span className="portal-chip">{healthCard.student?.batch || student.batch}</span><span className="portal-chip">Health Card scoring started 1 Oct 2026</span></>}
           actions={<RefreshButton onClick={load} disabled={loading} />}
         />
+        <p className="text-sm mt-4" style={{ color: "var(--portal-text-secondary)" }}>Earlier coursework remains available under My Submissions. Health Card points and batch rank use activated coursework tracked from 1 Oct 2026 onward.</p>
         <div className="health-card-kpis">
-           <MetricCard label="Coursework points" value={courseworkPoints} hint="Assignments and projects only" tone="primary" />
+           <MetricCard label="Coursework points" value={courseworkPoints} hint="Activated coursework since 1 Oct 2026" tone="primary" />
           <MetricCard label="Batch rank" value={currentRank ? `#${currentRank}` : "—"} hint="Current position" />
-           <MetricCard label="Assignments" value={`${numeric(metrics.assignmentCompleted)} / ${assignmentExpected}`} hint={`${numeric(metrics.assignmentPending)} pending`} />
-           <MetricCard label="Projects" value={`${numeric(metrics.projectCompleted)} / ${projectExpected}`} hint={`${numeric(metrics.projectPending)} pending`} />
-           <MetricCard label="Attendance" value={percent(metrics.attendancePercentage, eligibleWorkingDays)} hint={`${numeric(metrics.approvedAttendanceDays)} present / ${eligibleWorkingDays} tracked`} />
+           <MetricCard label="Assignments" value={`${numeric(metrics.assignmentCompleted)} / ${assignmentExpected}`} hint={`Current activated assignments · ${numeric(metrics.assignmentPending)} pending`} />
+           <MetricCard label="Projects" value={`${numeric(metrics.projectCompleted)} / ${projectExpected}`} hint={`Current activated projects · ${numeric(metrics.projectPending)} pending`} />
+           <MetricCard label="Attendance" value={percent(metrics.attendancePercentage, eligibleWorkingDays)} hint={eligibleWorkingDays > 0 ? `${numeric(metrics.approvedAttendanceDays)} present / ${eligibleWorkingDays} tracked` : "No attendance sessions tracked yet"} />
            <MetricCard label="Health Card total" value={numeric(metrics.totalPoints)} hint="Coursework + attendance" tone="success" />
         </div>
       </section>
@@ -226,13 +227,13 @@ export default function StudentHealthCard({ student, success, showError }) {
 
       <div className="health-card-progress-grid">
         <section className="card health-card-panel">
-          <SectionHeading title="Assignments" detail="Completion against expected work." />
-          <MetricProgress label="Completion" completed={numeric(metrics.assignmentCompleted)} expected={assignmentExpected} pending={numeric(metrics.assignmentPending)} percentage={metrics.assignmentCompletionPercentage} emptyMessage="No assignments configured yet" />
+          <SectionHeading title="Assignments" detail="Current activated assignments." />
+          <MetricProgress label="Completion" completed={numeric(metrics.assignmentCompleted)} expected={assignmentExpected} pending={numeric(metrics.assignmentPending)} percentage={metrics.assignmentCompletionPercentage} emptyMessage="No current activated assignments yet" />
           <p className="text-xs mt-4" style={{ color: "var(--portal-text-secondary)" }}>Points earned: {numeric(metrics.assignmentPoints)} · {numeric(metrics.assignmentPending)} pending</p>
         </section>
         <section className="card health-card-panel">
-          <SectionHeading title="Projects" detail="Completion against expected work." />
-          <MetricProgress label="Completion" completed={numeric(metrics.projectCompleted)} expected={projectExpected} pending={numeric(metrics.projectPending)} percentage={metrics.projectCompletionPercentage} emptyMessage="No projects configured yet" />
+          <SectionHeading title="Projects" detail="Current activated projects." />
+          <MetricProgress label="Completion" completed={numeric(metrics.projectCompleted)} expected={projectExpected} pending={numeric(metrics.projectPending)} percentage={metrics.projectCompletionPercentage} emptyMessage="No current activated projects yet" />
           <p className="text-xs mt-4" style={{ color: "var(--portal-text-secondary)" }}>Points earned: {numeric(metrics.projectPoints)} · {numeric(metrics.projectPending)} pending</p>
         </section>
       </div>
@@ -298,7 +299,7 @@ export default function StudentHealthCard({ student, success, showError }) {
 
       <div className="health-card-lower-grid">
         <section className="card health-card-panel">
-           <SectionHeading title="Batch leaderboard" detail="Leaderboard score = assignment + project points only. Attendance does not affect rank." />
+           <SectionHeading title="Current Health Card Leaderboard" detail="Rank uses assignment + project points from current tracked coursework. Attendance and Lifetime Coursework points do not affect rank." />
            {top10.length === 0 ? <EmptyState icon="★" title="No ranked activity yet" message="Complete an Assignment or Project to appear here." /> : (
             <div className="health-card-list">
               {top10.map(row => {

@@ -43,7 +43,7 @@ export async function POST(request) {
     if (!scope.batchNames.includes(normalized.value.batch)) return jsonNoStore({ error: 'This batch is not assigned to you.' }, { status: 403 })
     const { data: items, error: itemError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').in('id', normalized.value.courseworkItemIds)
     if (itemError) throw itemError
-    if ((items || []).length !== normalized.value.courseworkItemIds.length || (items || []).some(item => !itemIsCompatibleWithBatch(item, normalized.value.batch))) return jsonNoStore({ error: 'Each item must be an active Assignment/Project compatible with the selected batch.' }, { status: 400 })
+    if ((items || []).length !== normalized.value.courseworkItemIds.length || (items || []).some(item => !itemIsCompatibleWithBatch(item, normalized.value.batch))) return jsonNoStore({ error: 'Each item must be an active Assignment/Project with a valid Python, Data Analytics, or SQL phase and compatible with the selected batch.' }, { status: 400 })
     const now = new Date().toISOString()
     const rows = normalized.value.courseworkItemIds.map(courseworkItemId => ({ batch: normalized.value.batch, coursework_item_id: courseworkItemId, activated_at: now, activated_by_role: 'teacher', activated_by_name: scope.teacherName || teacher.name, due_at: normalized.value.dueAt, active: true, updated_at: now }))
     const { data, error } = await supabase.from('batch_coursework_assignments').upsert(rows, { onConflict: 'batch,coursework_item_id' }).select('*')
@@ -68,11 +68,17 @@ export async function PATCH(request) {
     const scope = await getTeacherScope(supabase, teacher.name)
     const { data: assignment, error: lookupError } = await supabase
       .from('batch_coursework_assignments')
-      .select('id,batch')
+      .select('id,batch,coursework_item_id')
       .eq('id', id)
       .maybeSingle()
     if (lookupError) throw lookupError
     if (!assignment || !scope.batchNames.includes(assignment.batch)) return jsonNoStore({ error: 'This activation is outside your assigned batches.' }, { status: 403 })
+
+    if (body.active === true) {
+      const { data: item, error: itemError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').eq('id', assignment.coursework_item_id).maybeSingle()
+      if (itemError) throw itemError
+      if (!itemIsCompatibleWithBatch(item, assignment.batch)) return jsonNoStore({ error: 'This coursework cannot be activated without a valid Python, Data Analytics, or SQL phase.' }, { status: 400 })
+    }
 
     const { data, error } = await supabase
       .from('batch_coursework_assignments')

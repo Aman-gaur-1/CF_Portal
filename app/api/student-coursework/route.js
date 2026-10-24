@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getStudentFromRequest } from '@/lib/student-auth'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
 import { normalizeHealthCourseworkType } from '@/lib/health-card-domain'
+import { HEALTH_CARD_PHASES, isSupportedHealthCardPhase } from '@/lib/health-card-admin'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,7 +29,7 @@ export async function GET(request) {
     if (assignmentError) throw assignmentError
     const itemIds = (assignments || []).map(row => row.coursework_item_id)
     const [{ data: items, error: itemError }, { data: submissions, error: submissionError }] = await Promise.all([
-      itemIds.length ? supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').in('id', itemIds).eq('active', true) : { data: [], error: null },
+      itemIds.length ? supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').in('id', itemIds).eq('active', true).in('phase', HEALTH_CARD_PHASES) : { data: [], error: null },
       supabase.from('submissions').select('coursework_item_id,submission_type,submitted_at').eq('student_id', student.id).not('coursework_item_id', 'is', null),
     ])
     if (itemError) throw itemError
@@ -40,7 +41,7 @@ export async function GET(request) {
     }).map(row => String(row.coursework_item_id)))
     const coursework = (assignments || []).map(assignment => {
       const item = itemById.get(String(assignment.coursework_item_id))
-      if (!item) return null
+      if (!item || !isSupportedHealthCardPhase(item.phase)) return null
       return {
         ...item,
         activationId: assignment.id,
