@@ -132,8 +132,8 @@ export async function POST(request) {
       return jsonNoStore({ error: 'That coursework is not active for your batch.' }, { status: 409 })
     }
     const topic = sanitizeStudentText(item.title, 240)
-    const phase = normalizeAssignmentPhase(item.phase) || sanitizeStudentText(item.phase, 160)
-    if (!topic || !phase || !isSupportedHealthCardPhase(phase)) return jsonNoStore({ error: 'The selected coursework is missing a valid phase.' }, { status: 409 })
+    const phase = sanitizeStudentText(item.phase, 160)
+    if (!topic || !isSupportedHealthCardPhase(phase)) return jsonNoStore({ error: 'The selected coursework is missing a valid phase.' }, { status: 409 })
 
     const detected = detectAssignmentLanguage({
       text: codeText,

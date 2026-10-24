@@ -7,7 +7,7 @@ import {
   healthCardCourseworkPoints,
   normalizeHealthCourseworkType,
 } from '../lib/health-card-domain.js'
-import { HEALTH_CARD_PHASES, normalizeCourseworkPayload } from '../lib/health-card-admin.js'
+import { HEALTH_CARD_PHASES, isSupportedHealthCardPhase, normalizeCourseworkPayload } from '../lib/health-card-admin.js'
 import { classifyRosterRows, generateLoginId } from '../lib/roster-import.js'
 
 assert.deepEqual(HEALTH_CARD_POINTS, { assignment: 5, project: 10, attendance: 1 })
@@ -18,6 +18,8 @@ assert.equal(healthCardCourseworkPoints('50'), 0)
 assert.deepEqual(HEALTH_CARD_PHASES, ['Python', 'Data Analytics', 'SQL'])
 assert.equal(normalizeCourseworkPayload({ title: 'SQL task', itemType: 'assignment', phase: 'sql' }).value.phase, 'SQL')
 assert.match(normalizeCourseworkPayload({ title: 'No phase', itemType: 'assignment' }).error, /valid phase/i)
+assert.equal(isSupportedHealthCardPhase('python'), false)
+assert.equal(isSupportedHealthCardPhase('Python'), true)
 
 const attendance = attendanceDailyTotals([
   { student_id: 's1', attendance_date: '2026-10-10', status: 'pending', marked_at: '2026-10-10T09:00:00Z' },
