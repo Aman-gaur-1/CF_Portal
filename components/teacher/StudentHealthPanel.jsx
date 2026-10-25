@@ -5,6 +5,7 @@ import Tabs from "@/components/ui/Tabs"
 import AttendanceTab from "@/components/teacher/AttendanceTab"
 import StudentsTab from "@/components/teacher/StudentsTab"
 import Spinner from "@/components/ui/Spinner"
+import { courseworkIdentity } from "@/lib/coursework-identity"
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -21,6 +22,7 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
   const [selectedIds, setSelectedIds] = useState([])
   const [activationPhase, setActivationPhase] = useState("")
   const [activationType, setActivationType] = useState("")
+  const [activationSearch, setActivationSearch] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
@@ -51,7 +53,8 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
   )
   const activeIds = new Set(selectedAssignments.filter(row => row.active).map(row => String(row.coursework_item_id)))
   const itemById = new Map((data?.items || []).map(item => [String(item.id), item]))
-  const available = (data?.items || []).filter(item => item.active && ["Python", "Data Analytics", "SQL"].includes(item.phase) && (!item.batch || item.batch === selectedBatch) && (!activationPhase || item.phase === activationPhase) && (!activationType || item.item_type === activationType))
+  const activeKeys = new Set(selectedAssignments.filter(row => row.active).map(row => courseworkIdentity(row.item || itemById.get(String(row.coursework_item_id)))).filter(Boolean))
+  const available = (data?.items || []).filter(item => item.active && item.batch == null && ["Python", "Data Analytics", "SQL"].includes(item.phase) && (!activationPhase || item.phase === activationPhase) && (!activationType || item.item_type === activationType) && (!activationSearch || `${item.title} ${item.phase} ${item.item_type}`.toLowerCase().includes(activationSearch.trim().toLowerCase())))
 
   async function activate() {
     setSaving(true)
@@ -124,13 +127,14 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
 
       {tab === "coursework" && (
         <section className="card admin-panel grid gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
             <select className="select" value={selectedBatch} onChange={event => { setSelectedBatch(event.target.value); setSelectedIds([]) }} aria-label="Activation batch">
               <option value="">Select assigned batch</option>
               {(data?.batchNames || []).map(name => <option key={name} value={name}>{name}</option>)}
             </select>
             <select className="select" value={activationPhase} onChange={event => { setActivationPhase(event.target.value); setSelectedIds([]) }} aria-label="Activation phase"><option value="">All phases</option><option value="Python">Python</option><option value="Data Analytics">Data Analytics</option><option value="SQL">SQL</option></select>
             <select className="select" value={activationType} onChange={event => { setActivationType(event.target.value); setSelectedIds([]) }} aria-label="Activation type"><option value="">All types</option><option value="assignment">Assignment</option><option value="project">Project</option></select>
+            <input className="input" value={activationSearch} onChange={event => { setActivationSearch(event.target.value); setSelectedIds([]) }} placeholder="Search catalog" aria-label="Search global catalog" />
             <button type="button" className="btn btn-primary" onClick={activate} disabled={saving || !selectedIds.length}>
               {saving ? <Spinner size="sm" /> : `Activate selected (${selectedIds.length})`}
             </button>
@@ -139,15 +143,16 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
             Catalog items are not student work until they are active for the selected batch. Pausing an activation removes it from future expected work without deleting the catalog item.
           </p>
           <div className="grid gap-2">
-            {available.map(item => (
-              <label className="admin-row" key={item.id}>
+            {available.map(item => {
+              const active = activeIds.has(String(item.id)) || activeKeys.has(courseworkIdentity(item))
+              return <label className="admin-row" key={item.id}>
                 <span className="flex gap-2 items-start">
-                  <input type="checkbox" checked={selectedIds.includes(item.id)} onChange={event => setSelectedIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} disabled={activeIds.has(String(item.id))} />
-                  <span><b>{item.title}</b><small className="block" style={{ color: "var(--text-muted)" }}>{item.item_type} · {item.phase || "No phase"}</small></span>
+                  <input type="checkbox" checked={selectedIds.includes(item.id)} onChange={event => setSelectedIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} disabled={active} />
+                  <span><b>{item.title}</b><small className="block" style={{ color: "var(--text-muted)" }}>{item.item_type} · {item.phase || "No phase"}{active ? " · active for this batch" : ""}</small></span>
                 </span>
-                <span className={activeIds.has(String(item.id)) ? "badge-done" : "badge-pending"}>{activeIds.has(String(item.id)) ? "Active" : "Catalog"}</span>
+                <span className={active ? "badge-done" : "badge-pending"}>{active ? "Active" : "Available"}</span>
               </label>
-            ))}
+            })}
             {!available.length && <p className="text-sm" style={{ color: "var(--text-secondary)" }}>No compatible catalog items are available for this assigned batch.</p>}
           </div>
           {selectedAssignments.length > 0 && (

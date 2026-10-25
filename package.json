@@ -12,6 +12,7 @@
     "test:evaluator": "node scripts/evaluator-regression-tests.mjs",
     "test:health-card": "node scripts/student-health-card-tests.mjs",
     "test:health-card-refactor": "node scripts/student-health-card-refactor-tests.mjs",
+    "test:coursework-catalog": "node scripts/coursework-catalog-tests.mjs",
     "test:student-lifecycle": "node scripts/student-lifecycle-tests.mjs"
   },
   "dependencies": {
