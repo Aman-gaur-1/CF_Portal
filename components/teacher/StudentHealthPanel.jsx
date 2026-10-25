@@ -6,6 +6,7 @@ import AttendanceTab from "@/components/teacher/AttendanceTab"
 import StudentsTab from "@/components/teacher/StudentsTab"
 import Spinner from "@/components/ui/Spinner"
 import { courseworkIdentity } from "@/lib/coursework-identity"
+import BatchProgressControls from "@/components/coursework/BatchProgressControls"
 
 const HEALTH_CARD_PHASES = ["Python", "Data Analytics", "SQL"]
 
@@ -180,6 +181,7 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
           )}
         </section>
       )}
+      {tab === "coursework" && <BatchProgressControls endpoint="/api/teacher-curriculum" token={teacherToken} batch={selectedBatch} data={data} onRefresh={load} disabled={!selectedBatch || saving} />}
     </div>
   )
 }

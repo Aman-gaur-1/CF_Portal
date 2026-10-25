@@ -6,6 +6,7 @@ import { courseworkIdentity } from '@/lib/coursework-identity'
 import { findEquivalentActiveCatalogItems, isGlobalCatalogItem, itemIsCompatibleWithBatch, validateActivationPayload } from '@/lib/coursework-activation'
 import { appendActivity } from '@/lib/activity-log'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
+import { buildProgressPreview, normalizeProgressPayload, sortProgressItems } from '@/lib/coursework-progress'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,8 +15,8 @@ function jsonNoStore(body, init) {
 }
 
 async function loadCurriculum(supabase, batch = '') {
-  const itemSelect = 'id,item_type,title,phase,batch,due_at,active,created_at,updated_at'
-  const globalItemQuery = supabase.from('coursework_items').select(itemSelect).is('batch', null).order('phase').order('title').limit(1000)
+  const itemSelect = 'id,item_type,title,phase,batch,due_at,active,sort_order,created_at,updated_at'
+  const globalItemQuery = supabase.from('coursework_items').select(itemSelect).is('batch', null).order('phase').order('sort_order', { ascending: true, nullsFirst: false }).order('title').limit(1000)
   const activationQuery = (batch
     ? supabase.from('batch_coursework_assignments').select('id,batch,coursework_item_id,activated_at,activated_by_role,activated_by_name,due_at,active').eq('batch', batch)
     : supabase.from('batch_coursework_assignments').select('id,batch,coursework_item_id,activated_at,activated_by_role,activated_by_name,due_at,active'))
@@ -31,7 +32,33 @@ async function loadCurriculum(supabase, batch = '') {
   if (activationItemError) throw activationItemError
   const itemById = new Map([...(globalItems || []), ...(activationItems || [])].map(item => [item.id, item]))
   const enrichedActivations = (activations || []).map(activation => ({ ...activation, item: itemById.get(activation.coursework_item_id) || null }))
-  return { items: [...itemById.values()], activations: enrichedActivations }
+  const [{ data: progress, error: progressError }, { count: activeStudentCount, error: studentCountError }] = await Promise.all([
+    batch ? supabase.from('batch_curriculum_progress').select('*').eq('batch', batch).order('phase').order('item_type') : Promise.resolve({ data: [], error: null }),
+    batch ? supabase.from('students').select('id', { count: 'exact', head: true }).eq('batch', batch).eq('status', 'active') : Promise.resolve({ count: 0, error: null }),
+  ])
+  if (progressError) throw progressError
+  if (studentCountError) throw studentCountError
+  return { items: [...itemById.values()], activations: enrichedActivations, progress: progress || [], activeStudentCount: activeStudentCount || 0 }
+}
+
+async function loadProgressContext(supabase, payload) {
+  const [{ data: target, error: targetError }, { data: globalItems, error: globalError }, { data: activations, error: activationsError }, { data: currentProgress, error: progressError }, { count: activeStudentCount, error: studentError }] = await Promise.all([
+    supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order').eq('id', payload.coveredThroughCourseworkItemId).maybeSingle(),
+    supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order').is('batch', null).eq('phase', payload.phase).eq('item_type', payload.itemType).eq('active', true).not('sort_order', 'is', null).order('sort_order').order('title'),
+    supabase.from('batch_coursework_assignments').select('id,coursework_item_id,active').eq('batch', payload.batch),
+    supabase.from('batch_curriculum_progress').select('*').eq('batch', payload.batch).eq('phase', payload.phase).eq('item_type', payload.itemType).maybeSingle(),
+    supabase.from('students').select('id', { count: 'exact', head: true }).eq('batch', payload.batch).eq('status', 'active'),
+  ])
+  if (targetError) throw targetError
+  if (globalError) throw globalError
+  if (activationsError) throw activationsError
+  if (progressError) throw progressError
+  if (studentError) throw studentError
+  if (!target || target.batch !== null || target.active === false || target.phase !== payload.phase || target.item_type !== payload.itemType || !Number.isInteger(Number(target.sort_order))) {
+    return { error: 'Select an active global item with an explicit sort order in the selected phase and type.' }
+  }
+  const preview = buildProgressPreview({ globalItems: sortProgressItems(globalItems || []), activations: activations || [], currentProgress, phase: payload.phase, itemType: payload.itemType, targetItemId: target.id, activeStudentCount: activeStudentCount || 0 })
+  return { target, currentProgress, preview }
 }
 
 async function findActiveEquivalentItems(supabase, batch, items, excludeActivationId = '') {
@@ -70,6 +97,35 @@ export async function POST(request) {
     if (!admin) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
     const body = await request.json().catch(() => ({}))
     const supabase = getSupabaseAdmin()
+    if (body.action === 'preview-progress' || body.action === 'set-progress') {
+      const normalizedProgress = normalizeProgressPayload(body)
+      if (normalizedProgress.error) return jsonNoStore({ error: normalizedProgress.error }, { status: 400 })
+      const payload = normalizedProgress.value
+      const context = await loadProgressContext(supabase, payload)
+      if (context.error) return jsonNoStore({ error: context.error }, { status: 400 })
+      if (body.action === 'preview-progress') return jsonNoStore({ success: true, preview: context.preview })
+      if (context.preview.backward && !payload.confirmBackward) {
+        return jsonNoStore({ error: 'Backward progress requires explicit confirmation. Existing activations will be retained.', code: 'BACKWARD_PROGRESS_REQUIRES_CONFIRMATION', preview: context.preview }, { status: 409 })
+      }
+      if (context.preview.backward && payload.confirmBackward) {
+        await appendActivity({ eventType: 'health_coursework_progress_backward_reviewed', description: `reviewed backward progress request for ${payload.batch} / ${payload.phase} / ${payload.itemType}; existing activations retained`, actorName: admin.name, actorRole: 'admin', action: 'review', metadata: { batch: payload.batch, phase: payload.phase, item_type: payload.itemType, requested_item_id: payload.coveredThroughCourseworkItemId }, supabase })
+        return jsonNoStore({ success: true, backwardMovement: true, existingActivationsRetained: true, noChange: true, preview: context.preview })
+      }
+      const { data: result, error: applyError } = await supabase.rpc('cf_apply_batch_curriculum_progress', {
+        p_batch: payload.batch,
+        p_phase: payload.phase,
+        p_item_type: payload.itemType,
+        p_covered_through_coursework_item_id: payload.coveredThroughCourseworkItemId,
+        p_updated_by_role: 'admin',
+        p_updated_by_name: admin.name,
+      })
+      if (applyError) {
+        if (applyError.code === 'P0001') return jsonNoStore({ error: 'Backward progress requires explicit confirmation. Existing activations are retained.' }, { status: 409 })
+        throw applyError
+      }
+      await appendActivity({ eventType: 'health_coursework_progress_updated', description: `released cumulative coursework through ${context.target.title} for ${payload.batch}`, actorName: admin.name, actorRole: 'admin', action: 'update', metadata: { batch: payload.batch, phase: payload.phase, item_type: payload.itemType, covered_through_item_id: payload.coveredThroughCourseworkItemId }, supabase })
+      return jsonNoStore({ success: true, progress: result, preview: context.preview })
+    }
     if (body.action === 'activate') {
       const normalized = validateActivationPayload(body)
       if (normalized.error) return jsonNoStore({ error: normalized.error }, { status: 400 })
@@ -77,7 +133,7 @@ export async function POST(request) {
       const { data: batchRow, error: batchError } = await supabase.from('batches').select('name').eq('name', batch).maybeSingle()
       if (batchError) throw batchError
       if (!batchRow) return jsonNoStore({ error: 'Select a valid batch.' }, { status: 400 })
-      const { data: items, error: itemError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').in('id', courseworkItemIds)
+      const { data: items, error: itemError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order').in('id', courseworkItemIds)
       if (itemError) throw itemError
       if ((items || []).length !== courseworkItemIds.length || (items || []).some(item => !isGlobalCatalogItem(item))) return jsonNoStore({ error: 'Select active global catalog items. Activate reusable coursework separately for each batch.' }, { status: 400 })
       const duplicateItems = await findActiveEquivalentItems(supabase, batch, items || [])
@@ -94,7 +150,7 @@ export async function POST(request) {
     if (normalized.error) return jsonNoStore({ error: normalized.error }, { status: 400 })
     if (String(body.batch || '').trim()) return jsonNoStore({ error: 'Normal catalog items are global. Activate them for batches in Step 2.' }, { status: 400 })
     const payload = { ...normalized.value, batch: null }
-    const { data: existingGlobals, error: existingError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').is('batch', null).eq('phase', payload.phase).eq('item_type', payload.item_type)
+    const { data: existingGlobals, error: existingError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order').is('batch', null).eq('phase', payload.phase).eq('item_type', payload.item_type)
     if (existingError) throw existingError
     if ((existingGlobals || []).some(item => courseworkIdentity(item) === courseworkIdentity(payload))) return jsonNoStore({ error: 'Coursework already exists.' }, { status: 409 })
     const { data, error } = await supabase.from('coursework_items').insert(payload).select('*').single()
