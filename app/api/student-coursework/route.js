@@ -3,7 +3,8 @@ import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getStudentFromRequest } from '@/lib/student-auth'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
 import { normalizeHealthCourseworkType } from '@/lib/health-card-domain'
-import { HEALTH_CARD_PHASES, isSupportedHealthCardPhase } from '@/lib/health-card-admin'
+import { HEALTH_CARD_PHASES } from '@/lib/health-card-admin'
+import { selectVisibleStudentCoursework } from '@/lib/student-coursework-visibility'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,27 +48,22 @@ export async function GET(request) {
       const item = itemById.get(String(row.coursework_item_id))
       return submittedAt >= Date.parse('2026-10-01T00:00:00+05:30') && item && normalizeHealthCourseworkType(row.submission_type) === normalizeHealthCourseworkType(item.item_type)
     }).map(row => String(row.coursework_item_id)))
-    const coursework = (assignments || []).map(assignment => {
-      const item = itemById.get(String(assignment.coursework_item_id))
-      if (!item || !isSupportedHealthCardPhase(item.phase)) return null
-      const itemId = String(item.id)
-      const completed = directCompletedIds.has(itemId) || reconciledIds.has(itemId)
-      return {
-        ...item,
-        activationId: assignment.id,
-        activatedAt: assignment.activated_at,
-        dueAt: assignment.due_at || item.due_at || null,
-        completed,
-        progressCompleted: completed,
-        scoredCurrent: currentScoredIds.has(itemId),
-        progressSource: reconciledIds.has(itemId) && !directCompletedIds.has(itemId) ? 'historical_reconciliation' : directCompletedIds.has(itemId) ? 'submission' : null,
-        status: completed ? 'completed' : 'pending',
-      }
-    }).filter(Boolean).sort((left, right) => (
-      HEALTH_CARD_PHASES.indexOf(left.phase) - HEALTH_CARD_PHASES.indexOf(right.phase)
-      || (Number(left.sort_order) || Number.MAX_SAFE_INTEGER) - (Number(right.sort_order) || Number.MAX_SAFE_INTEGER)
-      || String(left.title || '').localeCompare(String(right.title || ''))
-    ))
+    const coursework = selectVisibleStudentCoursework({
+      assignments,
+      items,
+      batch: student.batch,
+      getState: item => {
+        const itemId = String(item.id)
+        const completed = directCompletedIds.has(itemId) || reconciledIds.has(itemId)
+        return {
+          completed,
+          progressCompleted: completed,
+          scoredCurrent: currentScoredIds.has(itemId),
+          progressSource: reconciledIds.has(itemId) && !directCompletedIds.has(itemId) ? 'historical_reconciliation' : directCompletedIds.has(itemId) ? 'submission' : null,
+          status: completed ? 'completed' : 'pending',
+        }
+      },
+    })
     return jsonNoStore({ success: true, coursework, phases: [...new Set(coursework.map(item => item.phase).filter(Boolean))] })
   } catch (error) {
     console.error('[student-coursework] failed', error?.message)

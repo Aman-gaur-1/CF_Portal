@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { courseworkIdentity, normalizeCatalogTitle } from '../lib/coursework-identity.js'
+import { countStudentCourseworkPhases, selectVisibleStudentCoursework } from '../lib/student-coursework-visibility.js'
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 const adminRoute = read('app/api/admin-curriculum/route.js')
@@ -41,5 +42,26 @@ assert.match(teacherPanel, /Active \{active\} · Available \{availableCount\}/)
 assert.match(teacherPanel, /HEALTH_CARD_PHASES/)
 
 assert.match(read('components/student/StudentView.jsx'), /activeMs: 15000/)
+
+const mixedBatch = 'SK | 8 APRIL | 08:00 AM'
+const mixedItems = [
+  ...Array.from({ length: 11 }, (_, index) => ({ id: `python-${index + 1}`, title: `Python ${index + 1}`, phase: 'Python', item_type: 'assignment', batch: null, active: true })),
+  ...Array.from({ length: 9 }, (_, index) => ({ id: `sql-${index + 1}`, title: `SQL ${index + 1}`, phase: 'SQL', item_type: 'assignment', batch: mixedBatch, active: true })),
+  { id: 'inactive-global', title: 'Inactive global', phase: 'Python', item_type: 'assignment', batch: null, active: false },
+  { id: 'wrong-batch', title: 'Wrong batch', phase: 'Python', item_type: 'assignment', batch: 'OTHER', active: true },
+  { id: 'unsupported-phase', title: 'Unsupported phase', phase: null, item_type: 'assignment', batch: null, active: true },
+]
+const mixedAssignments = [
+  ...mixedItems.filter(item => item.id.startsWith('python-') || item.id.startsWith('sql-')).map((item, index) => ({ id: `activation-${index}`, batch: mixedBatch, coursework_item_id: item.id, active: true })),
+  { id: 'inactive-activation', batch: mixedBatch, coursework_item_id: 'inactive-global', active: true },
+  { id: 'wrong-batch-activation', batch: mixedBatch, coursework_item_id: 'wrong-batch', active: true },
+  { id: 'unsupported-phase-activation', batch: mixedBatch, coursework_item_id: 'unsupported-phase', active: true },
+  { id: 'wrong-batch-mapping', batch: 'OTHER', coursework_item_id: 'python-1', active: true },
+]
+const mixedVisible = selectVisibleStudentCoursework({ assignments: mixedAssignments, items: mixedItems, batch: mixedBatch })
+assert.equal(mixedVisible.length, 20)
+assert.deepEqual(countStudentCourseworkPhases(mixedVisible), { Python: 11, SQL: 9 })
+assert.ok(!mixedVisible.some(item => ['inactive-global', 'wrong-batch', 'unsupported-phase'].includes(item.id)))
+assert.ok(mixedVisible.every(item => item.batch === null || item.batch === mixedBatch))
 
 console.log('Coursework catalog architecture tests passed.')
