@@ -34,10 +34,11 @@ async function loadCurrentStudent(identity) {
   if (!identity) return null
   const { data, error } = await getSupabaseAdmin()
     .from('students')
-    .select('id,name,batch')
+    .select('id,name,batch,status')
     .eq('id', identity.id)
     .eq('name', identity.name)
     .eq('batch', identity.batch)
+    .eq('status', 'active')
     .maybeSingle()
   if (error) throw new Error(error.message)
   return data || null

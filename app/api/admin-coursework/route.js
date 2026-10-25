@@ -33,7 +33,7 @@ async function validateBatch(supabase, batch) {
 }
 
 async function notifyNewCoursework({ supabase, item }) {
-  let query = supabase.from('students').select('id,name,batch')
+  let query = supabase.from('students').select('id,name,batch').eq('status', 'active')
   if (item.batch) query = query.eq('batch', item.batch)
   const { data: students, error } = await query.limit(2000)
   if (error) throw error

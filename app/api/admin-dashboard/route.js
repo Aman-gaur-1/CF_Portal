@@ -44,6 +44,19 @@ async function fetchAllRows(supabase, table, select, orderColumn) {
   return rows
 }
 
+async function fetchAllStudents(supabase, status) {
+  const rows = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabase.from('students').select('id, name, batch, login_id, status, status_changed_at, created_at').range(from, from + PAGE_SIZE - 1).order('created_at', { ascending: false })
+    if (status !== 'all') query = query.eq('status', status)
+    const { data, error } = await query
+    if (error) throw error
+    rows.push(...(data || []))
+    if (!data || data.length < PAGE_SIZE) break
+  }
+  return rows
+}
+
 function isReviewedSubmission(row) {
   return row?.feedback != null || row?.feedback_at != null
 }
@@ -143,8 +156,10 @@ export async function GET(request) {
     if (!admin) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
 
     const supabase = getSupabaseAdmin()
+    const requestedStatus = String(request.nextUrl.searchParams.get('studentStatus') || 'active').trim().toLowerCase()
+    if (!['active', 'inactive', 'all'].includes(requestedStatus)) return jsonNoStore({ error: 'Invalid student status filter.' }, { status: 400 })
     const [students, batches, trainers, submissions] = await Promise.all([
-      fetchAllRows(supabase, 'students', 'id, name, batch, login_id, created_at', 'created_at'),
+      fetchAllStudents(supabase, requestedStatus),
       fetchAllRows(supabase, 'batches', '*', 'created_at'),
       fetchAllRows(supabase, 'trainers', '*', 'created_at'),
       fetchAllRows(supabase, 'submissions', 'id,student_id,batch,topic,submitted_at,feedback,feedback_at,ai_feedback,ai_feedback_at,ai_status,phase,submission_type'),
@@ -163,6 +178,7 @@ export async function GET(request) {
       batchStats,
       studentSubmissionCounts,
       submissions,
+      studentStatus: requestedStatus,
     })
   } catch (err) {
     console.error('[admin-dashboard] failed', err?.message)

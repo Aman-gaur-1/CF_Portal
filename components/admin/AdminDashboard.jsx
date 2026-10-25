@@ -271,9 +271,13 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [deleteBatchTarget, setDeleteBatchTarget] = useState(null)
   const [studentSearch, setStudentSearch] = useState("")
   const [studentBatchFilter, setStudentBatchFilter] = useState("All Batches")
+  const [studentStatusFilter, setStudentStatusFilter] = useState("active")
   const [editingStudentId, setEditingStudentId] = useState(null)
   const [studentProfileForm, setStudentProfileForm] = useState({ name: "", batch: "", password: "" })
   const [healthStudent, setHealthStudent] = useState(null)
+  const [studentLifecycleBusyId, setStudentLifecycleBusyId] = useState(null)
+  const [deleteStudentTarget, setDeleteStudentTarget] = useState(null)
+  const [deleteStudentConfirmation, setDeleteStudentConfirmation] = useState("")
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const { toasts, success, error: showError } = useToast()
 
@@ -281,11 +285,12 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
     load()
   }, [])
 
-  async function load({ silent = false } = {}) {
+  async function load({ silent = false, status = studentStatusFilter } = {}) {
     if (!silent) setLoading(true)
 
     try {
-      const res = await fetch("/api/admin-dashboard", {
+      const query = new URLSearchParams({ studentStatus: status })
+      const res = await fetch(`/api/admin-dashboard?${query.toString()}`, {
         headers: { Authorization: `Bearer ${adminToken}` },
         cache: "no-store",
       })
@@ -650,6 +655,49 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
     }
   }
 
+  async function updateStudentLifecycle(student, action) {
+    if (!student?.id || studentLifecycleBusyId) return
+    if (action === "deactivate" && !window.confirm(`Deactivate ${student.name}? They will be unable to log in, while all historical records are preserved.`)) return
+    setStudentLifecycleBusyId(student.id)
+    try {
+      const res = await fetch("/api/admin-student-lifecycle", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ studentId: student.id, action }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `Could not ${action} student.`)
+      success(action === "deactivate" ? "Student deactivated. Historical records were preserved." : "Student reactivated.")
+      await load({ silent: true })
+    } catch (err) {
+      showError(err.message || `Could not ${action} student.`)
+    } finally {
+      setStudentLifecycleBusyId(null)
+    }
+  }
+
+  async function permanentlyDeleteStudent() {
+    if (!deleteStudentTarget || deleteStudentConfirmation !== "DELETE" || studentLifecycleBusyId) return
+    setStudentLifecycleBusyId(deleteStudentTarget.id)
+    try {
+      const res = await fetch("/api/admin-student-lifecycle", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ studentId: deleteStudentTarget.id, confirmation: deleteStudentConfirmation }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not permanently delete student.")
+      success("Zero-history student permanently deleted.")
+      setDeleteStudentTarget(null)
+      setDeleteStudentConfirmation("")
+      await load({ silent: true })
+    } catch (err) {
+      showError(err.message || "Could not permanently delete student.")
+    } finally {
+      setStudentLifecycleBusyId(null)
+    }
+  }
+
   function renderOverview() {
     return (
       <div className="grid gap-5">
@@ -748,10 +796,17 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           <SectionTitle title="Students" detail={`${filteredStudents.length} visible`} />
           <div className="grid gap-3 md:grid-cols-2 mb-4">
             <input className="input" value={studentSearch} onChange={e => setStudentSearch(e.target.value)} placeholder="Search students" />
-            <select className="select" value={studentBatchFilter} onChange={e => setStudentBatchFilter(e.target.value)}>
-              <option>All Batches</option>
-              {batches.map(batch => <option key={batch.id}>{batch.name}</option>)}
-            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <select className="select" value={studentBatchFilter} onChange={e => setStudentBatchFilter(e.target.value)} aria-label="Filter students by batch">
+                <option>All Batches</option>
+                {batches.map(batch => <option key={batch.id}>{batch.name}</option>)}
+              </select>
+              <select className="select" value={studentStatusFilter} onChange={e => { setStudentStatusFilter(e.target.value); load({ status: e.target.value }) }} aria-label="Filter students by status">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="all">All</option>
+              </select>
+            </div>
           </div>
 
           {filteredStudents.length === 0 ? <EmptyState>No students found.</EmptyState> : (
@@ -765,6 +820,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
                     <div className="min-w-0">
                       <p className="font-semibold truncate">{student.name}</p>
                       <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{student.batch || "No batch"} · {count} submissions{student.login_id ? ` · Login ID: ${student.login_id}` : ""}</p>
+                      {student.status === "inactive" && <span className="badge-failed mt-2 inline-flex">inactive</span>}
                       {count > 0 && <button type="button" className="admin-student-submissions-toggle" onClick={() => setExpandedStudentId(expanded ? null : student.id)}>{expanded ? "Hide submissions" : "View submissions"}</button>}
                       {expanded && <div className="admin-student-submissions">
                         {studentSubmissions.map(submission => <div className="admin-student-submission" key={submission.id}>
@@ -792,11 +848,15 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
                       ) : (
                         <>
                           <button className="btn btn-secondary btn-sm" type="button" onClick={() => setHealthStudent(student)}>Health Card</button>
-                          <select className="select text-sm max-w-[180px]" value={student.batch || ""} onChange={e => moveStudent(student.id, e.target.value)} disabled={saving}>
-                            <option value="">No batch</option>
-                            {batches.map(batch => <option key={batch.id} value={batch.name}>{batch.name}</option>)}
-                          </select>
+                          {student.status === "active" && <select className="select text-sm max-w-[180px]" value={student.batch || ""} onChange={e => moveStudent(student.id, e.target.value)} disabled={saving} aria-label={`Batch for ${student.name}`}>
+                              <option value="">No batch</option>
+                              {batches.map(batch => <option key={batch.id} value={batch.name}>{batch.name}</option>)}
+                            </select>}
                           <button className="btn btn-secondary btn-sm" onClick={() => openStudentProfile(student)}>Edit Profile</button>
+                          {student.status === "active"
+                            ? <button className="btn btn-danger-outline btn-sm" type="button" onClick={() => updateStudentLifecycle(student, "deactivate")} disabled={studentLifecycleBusyId === student.id}>Deactivate</button>
+                            : <button className="btn btn-primary btn-sm" type="button" onClick={() => updateStudentLifecycle(student, "reactivate")} disabled={studentLifecycleBusyId === student.id}>Reactivate</button>}
+                          {count === 0 && <details className="relative"><summary className="btn btn-secondary btn-sm list-none cursor-pointer">More</summary><div className="absolute right-0 z-10 mt-1 min-w-[190px] rounded-xl p-2 shadow-lg" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}><button className="btn btn-danger-outline btn-sm w-full" type="button" onClick={() => { setDeleteStudentTarget(student); setDeleteStudentConfirmation("") }}>Permanently Delete</button></div></details>}
                         </>
                       )}
                     </div>
@@ -816,6 +876,24 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             <div className="flex justify-end gap-2 mt-5">
               <button className="btn btn-secondary btn-sm" type="button" onClick={() => setDeleteBatchTarget(null)} disabled={saving}>Cancel</button>
               <button className="btn btn-danger-outline btn-sm" type="button" onClick={deleteBatch} disabled={saving}>{saving ? "Checking..." : "Delete batch"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteStudentTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.45)" }} role="dialog" aria-modal="true" aria-label="Permanently delete student confirmation">
+          <div className="card p-5 w-full max-w-md">
+            <p className="text-base font-semibold">Permanently delete student?</p>
+            <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>This is irreversible and is allowed only when no meaningful student history exists.</p>
+            <div className="rounded-xl p-3 mt-3 text-sm" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <div><b>Name:</b> {deleteStudentTarget.name}</div>
+              <div><b>Login ID:</b> {deleteStudentTarget.login_id || "—"}</div>
+              <div><b>Batch:</b> {deleteStudentTarget.batch || "—"}</div>
+            </div>
+            <label className="label mt-4">Type DELETE to confirm<input className="input mt-1" value={deleteStudentConfirmation} onChange={event => setDeleteStudentConfirmation(event.target.value)} autoComplete="off" /></label>
+            <div className="flex justify-end gap-2 mt-5">
+              <button className="btn btn-secondary btn-sm" type="button" onClick={() => { setDeleteStudentTarget(null); setDeleteStudentConfirmation("") }} disabled={studentLifecycleBusyId === deleteStudentTarget.id}>Cancel</button>
+              <button className="btn btn-danger-outline btn-sm" type="button" onClick={permanentlyDeleteStudent} disabled={deleteStudentConfirmation !== "DELETE" || studentLifecycleBusyId === deleteStudentTarget.id}>{studentLifecycleBusyId === deleteStudentTarget.id ? "Deleting..." : "Permanently Delete"}</button>
             </div>
           </div>
         </div>

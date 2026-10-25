@@ -32,7 +32,7 @@ export async function GET(request, { params }) {
     const scope = teacher ? await getTeacherScope(supabase, teacher.name) : null
     const studentQuery = supabase
       .from('students')
-      .select('id,name,batch,login_id')
+      .select('id,name,batch,login_id,status')
       .eq('id', studentId)
 
     if (scope) studentQuery.in('batch', scope.batchNames)

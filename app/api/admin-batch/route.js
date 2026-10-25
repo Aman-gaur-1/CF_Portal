@@ -23,7 +23,7 @@ export async function DELETE(request) {
     if (!batch) return json({ error: 'Batch not found.' }, { status: 404 })
 
     const [{ count: studentCount, error: studentError }, { count: submissionCount, error: submissionError }] = await Promise.all([
-      supabase.from('students').select('id', { count: 'exact', head: true }).eq('batch', batch.name),
+      supabase.from('students').select('id', { count: 'exact', head: true }).eq('batch', batch.name).eq('status', 'active'),
       supabase.from('submissions').select('id', { count: 'exact', head: true }).eq('batch', batch.name),
     ])
     if (studentError) throw studentError

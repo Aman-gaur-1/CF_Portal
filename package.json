@@ -11,7 +11,8 @@
     "test:attendance": "node scripts/attendance-feature-tests.mjs",
     "test:evaluator": "node scripts/evaluator-regression-tests.mjs",
     "test:health-card": "node scripts/student-health-card-tests.mjs",
-    "test:health-card-refactor": "node scripts/student-health-card-refactor-tests.mjs"
+    "test:health-card-refactor": "node scripts/student-health-card-refactor-tests.mjs",
+    "test:student-lifecycle": "node scripts/student-lifecycle-tests.mjs"
   },
   "dependencies": {
     "@huggingface/inference": "^4.13.15",

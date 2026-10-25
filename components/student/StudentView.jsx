@@ -263,6 +263,9 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
   const typedCoursework = useMemo(() => activeCoursework.filter(item => item.item_type === selectedType), [activeCoursework, selectedType])
   const activePhases = useMemo(() => [...new Set(typedCoursework.map(item => item.phase).filter(Boolean))], [typedCoursework])
   const visibleCoursework = useMemo(() => typedCoursework.filter(item => !selectedPhaseFilter || item.phase === selectedPhaseFilter), [selectedPhaseFilter, typedCoursework])
+  const emptyCourseworkMessage = selectedType === "project"
+    ? "No active projects are available for your batch yet."
+    : "No active assignments are available for your batch yet."
 
   useEffect(() => {
     setSelectedPhaseFilter(current => activePhases.includes(current) ? current : (activePhases[0] || ""))
@@ -442,12 +445,12 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
                 </label>
                 <label className="label">Coursework
                   <select className="input mt-1" value={selectedCourseworkId} onChange={event => setSelectedCourseworkId(event.target.value)} disabled={loadingCoursework || !visibleCoursework.length}>
-                    <option value="">{loadingCoursework ? "Loading active coursework…" : "Select coursework"}</option>
+                    <option value="">{loadingCoursework ? "Loading active coursework…" : visibleCoursework.length ? "Select coursework" : emptyCourseworkMessage}</option>
                     {visibleCoursework.map(item => <option key={item.id} value={item.id}>{item.title}{item.completed ? " · Completed" : ""}</option>)}
                   </select>
                 </label>
               </div>
-              {!loadingCoursework && !activeCoursework.length && <p className="text-sm" style={{ color: "var(--text-secondary)" }}>No active coursework is available for your batch yet.</p>}
+              {!loadingCoursework && !typedCoursework.length && <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{emptyCourseworkMessage}</p>}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="rounded-xl p-4" style={{ border: "1px dashed var(--border)", background: "var(--surface)" }}>

@@ -25,6 +25,7 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
   const [editingStudent, setEditingStudent] = useState(null)
   const [profileForm, setProfileForm] = useState({ name: "", password: "" })
   const [savingProfile, setSavingProfile] = useState(false)
+  const [deactivatingStudentId, setDeactivatingStudentId] = useState(null)
   const [healthStudent, setHealthStudent] = useState(null)
   const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
@@ -136,6 +137,26 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
     }
   }
 
+  async function deactivateStudent(student) {
+    if (!student?.id || !window.confirm(`Deactivate ${student.name}? Historical submissions and attendance will be preserved.`)) return
+    setDeactivatingStudentId(student.id)
+    try {
+      const res = await fetch("/api/teacher-student-lifecycle", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
+        body: JSON.stringify({ studentId: student.id, action: "deactivate" }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not deactivate student.")
+      success("Student deactivated. Historical records were preserved.")
+      await load({ silent: true })
+    } catch (err) {
+      showError(err.message || "Could not deactivate student.")
+    } finally {
+      setDeactivatingStudentId(null)
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
@@ -177,6 +198,9 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
                 </button>
                 <button className="btn btn-secondary btn-sm" onClick={() => openProfileEditor(student)}>
                   Edit Profile
+                </button>
+                <button className="btn btn-danger-outline btn-sm" type="button" onClick={() => deactivateStudent(student)} disabled={deactivatingStudentId === student.id}>
+                  {deactivatingStudentId === student.id ? "Deactivating..." : "Deactivate"}
                 </button>
               </div>
             </div>

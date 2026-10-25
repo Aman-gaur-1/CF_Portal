@@ -62,14 +62,14 @@ export async function POST(request) {
     if (loginId) {
       ({ data, error } = await supabase
         .from('students')
-        .select('id,name,batch,password_hash,login_id,must_change_password')
+        .select('id,name,batch,password_hash,login_id,must_change_password,status')
         .eq('login_id', loginId)
         .limit(1)
         .maybeSingle())
     } else {
       legacyResolution = await findLegacyStudent(
         supabase,
-        'id,name,batch,password_hash,login_id,must_change_password',
+        'id,name,batch,password_hash,login_id,must_change_password,status',
         name,
         batch
       )
@@ -96,6 +96,9 @@ export async function POST(request) {
     const passwordResult = await verifyStudentPassword(password, data?.password_hash)
     if (!data || !passwordResult.ok) {
       return jsonNoStore({ success: false, error: 'Invalid Login ID or password.' }, { status: 401 })
+    }
+    if (data.status === 'inactive') {
+      return jsonNoStore({ success: false, error: 'Your student account is inactive. Please contact your trainer or administrator.' }, { status: 403 })
     }
 
     if (passwordResult.needsUpgrade) {

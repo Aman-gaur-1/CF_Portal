@@ -19,6 +19,8 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
   const [loading, setLoading] = useState(true)
   const [selectedBatch, setSelectedBatch] = useState("")
   const [selectedIds, setSelectedIds] = useState([])
+  const [activationPhase, setActivationPhase] = useState("")
+  const [activationType, setActivationType] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
 
@@ -49,7 +51,7 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
   )
   const activeIds = new Set(selectedAssignments.filter(row => row.active).map(row => String(row.coursework_item_id)))
   const itemById = new Map((data?.items || []).map(item => [String(item.id), item]))
-  const available = (data?.items || []).filter(item => item.active && ["Python", "Data Analytics", "SQL"].includes(item.phase) && (!item.batch || item.batch === selectedBatch))
+  const available = (data?.items || []).filter(item => item.active && ["Python", "Data Analytics", "SQL"].includes(item.phase) && (!item.batch || item.batch === selectedBatch) && (!activationPhase || item.phase === activationPhase) && (!activationType || item.item_type === activationType))
 
   async function activate() {
     setSaving(true)
@@ -122,11 +124,13 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
 
       {tab === "coursework" && (
         <section className="card admin-panel grid gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <select className="select" value={selectedBatch} onChange={event => { setSelectedBatch(event.target.value); setSelectedIds([]) }}>
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+            <select className="select" value={selectedBatch} onChange={event => { setSelectedBatch(event.target.value); setSelectedIds([]) }} aria-label="Activation batch">
               <option value="">Select assigned batch</option>
               {(data?.batchNames || []).map(name => <option key={name} value={name}>{name}</option>)}
             </select>
+            <select className="select" value={activationPhase} onChange={event => { setActivationPhase(event.target.value); setSelectedIds([]) }} aria-label="Activation phase"><option value="">All phases</option><option value="Python">Python</option><option value="Data Analytics">Data Analytics</option><option value="SQL">SQL</option></select>
+            <select className="select" value={activationType} onChange={event => { setActivationType(event.target.value); setSelectedIds([]) }} aria-label="Activation type"><option value="">All types</option><option value="assignment">Assignment</option><option value="project">Project</option></select>
             <button type="button" className="btn btn-primary" onClick={activate} disabled={saving || !selectedIds.length}>
               {saving ? <Spinner size="sm" /> : `Activate selected (${selectedIds.length})`}
             </button>

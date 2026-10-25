@@ -16,7 +16,7 @@ export async function GET(request) {
     const identity = getStudentFromRequest(request)
     if (!identity) return jsonNoStore({ error: 'Student authorization required' }, { status: 401 })
     const supabase = getSupabaseAdmin()
-    const { data: student, error: studentError } = await supabase.from('students').select('id,name,batch').eq('id', identity.id).eq('batch', identity.batch).maybeSingle()
+    const { data: student, error: studentError } = await supabase.from('students').select('id,name,batch,status').eq('id', identity.id).eq('batch', identity.batch).eq('status', 'active').maybeSingle()
     if (studentError) throw studentError
     if (!student) return jsonNoStore({ error: 'Student authorization required' }, { status: 401 })
 

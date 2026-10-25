@@ -88,7 +88,7 @@ export async function GET(request) {
     const allCountRows = countRows || []
     const studentIds = [...new Set(rawRows.map(r => r.student_id).filter(Boolean))]
     const { data: students, error: studentError } = studentIds.length
-      ? await supabase.from('students').select('id,name,batch').in('id', studentIds)
+      ? await supabase.from('students').select('id,name,batch').in('id', studentIds).eq('status', 'active')
       : { data: [], error: null }
     if (studentError) throw studentError
 

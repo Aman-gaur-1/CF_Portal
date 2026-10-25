@@ -222,7 +222,7 @@ async function handleConfirm({ formData, supabase, batch, date, session, auth, r
 
   const studentIds = [...new Set(records.map(record => String(record?.studentId || '').trim()).filter(Boolean))]
   const { data: students, error: verifyError } = studentIds.length
-    ? await supabase.from('students').select('id,name,batch').in('id', studentIds).eq('batch', batch)
+    ? await supabase.from('students').select('id,name,batch').in('id', studentIds).eq('batch', batch).eq('status', 'active')
     : { data: [], error: null }
   if (verifyError) throw verifyError
 

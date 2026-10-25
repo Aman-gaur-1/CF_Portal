@@ -27,7 +27,7 @@ export async function GET(request) {
       if (!scope.batchNames.includes(batch)) return jsonNoStore({ error: 'Batch is outside this teacher scope.' }, { status: 403 })
     }
 
-    let query = supabase.from('students').select('id,name,batch').eq('batch', batch).order('name').limit(100)
+    let query = supabase.from('students').select('id,name,batch').eq('batch', batch).eq('status', 'active').order('name').limit(100)
     if (search) query = query.ilike('name', `%${search.replace(/[%_]/g, '')}%`)
     const { data, error } = await query
     if (error) throw error

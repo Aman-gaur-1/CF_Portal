@@ -50,10 +50,11 @@ async function requireStudent(request, supabase) {
 
   const { data, error } = await supabase
     .from('students')
-    .select('id,name,batch')
+    .select('id,name,batch,status')
     .eq('id', tokenStudent.id)
     .eq('name', tokenStudent.name)
     .eq('batch', tokenStudent.batch)
+    .eq('status', 'active')
     .maybeSingle()
   if (error) throw new Error(error.message)
   return data || null

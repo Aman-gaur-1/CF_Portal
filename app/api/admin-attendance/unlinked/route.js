@@ -106,7 +106,7 @@ async function handleRematch({ body, auth }) {
 
   const batches = [...new Set(unlinked.map(u => u.batch))]
   const { data: students, error: studentError } = await supabase
-    .from('students').select('id,name,batch').in('batch', batches)
+    .from('students').select('id,name,batch').in('batch', batches).eq('status', 'active')
   if (studentError) throw studentError
 
   const aliasesByBatch = new Map()
@@ -186,7 +186,7 @@ async function handleLink({ body, auth }) {
     if (!row) { skipped++; continue }
 
     const { data: student } = await supabase
-      .from('students').select('id,name,batch').eq('id', studentId).eq('batch', row.batch).single()
+      .from('students').select('id,name,batch').eq('id', studentId).eq('batch', row.batch).eq('status', 'active').single()
     if (!student) { errors.push({ id, error: 'Student not in this batch' }); continue }
     try {
       const result = await linkUnlinkedAttendance({
