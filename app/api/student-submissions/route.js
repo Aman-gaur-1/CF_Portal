@@ -123,17 +123,29 @@ export async function POST(request) {
     if (!fileName && !codeText) return jsonNoStore({ error: 'Upload a file or paste your code' }, { status: 400 })
 
     const [{ data: item, error: itemError }, { data: activation, error: activationError }] = await Promise.all([
-      supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').eq('id', courseworkItemId).maybeSingle(),
+      supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,catalog_status,canonical_coursework_item_id').eq('id', courseworkItemId).maybeSingle(),
       supabase.from('batch_coursework_assignments').select('id,coursework_item_id,batch,active').eq('coursework_item_id', courseworkItemId).eq('batch', student.batch).eq('active', true).maybeSingle(),
     ])
     if (itemError) throw itemError
     if (activationError) throw activationError
-    const itemType = normalizeHealthCourseworkType(item?.item_type)
-    if (!item || !item.active || !itemType || (item.batch && item.batch !== student.batch) || !activation) {
+    let effectiveItem = item
+    let effectiveActivation = activation
+    if (item && !effectiveActivation && item.catalog_status === 'canonical') {
+      const { data: legacyItems, error: legacyItemError } = await supabase.from('coursework_items').select('id').eq('canonical_coursework_item_id', item.id).eq('active', true)
+      if (legacyItemError) throw legacyItemError
+      const legacyIds = (legacyItems || []).map(row => row.id)
+      if (legacyIds.length) {
+        const { data: legacyActivations, error: legacyActivationError } = await supabase.from('batch_coursework_assignments').select('id,coursework_item_id,batch,active').in('coursework_item_id', legacyIds).eq('batch', student.batch).eq('active', true).limit(1)
+        if (legacyActivationError) throw legacyActivationError
+        effectiveActivation = legacyActivations?.[0] || null
+      }
+    }
+    const itemType = normalizeHealthCourseworkType(effectiveItem?.item_type)
+    if (!effectiveItem || !effectiveItem.active || effectiveItem.catalog_status !== 'canonical' || !itemType || (effectiveItem.batch && effectiveItem.batch !== student.batch) || !effectiveActivation) {
       return jsonNoStore({ error: 'That coursework is not active for your batch.' }, { status: 409 })
     }
-    const topic = sanitizeStudentText(item.title, 240)
-    const phase = sanitizeStudentText(item.phase, 160)
+    const topic = sanitizeStudentText(effectiveItem.title, 240)
+    const phase = sanitizeStudentText(effectiveItem.phase, 160)
     if (!topic || !isSupportedHealthCardPhase(phase)) return jsonNoStore({ error: 'The selected coursework is missing a valid phase.' }, { status: 409 })
 
     const detected = detectAssignmentLanguage({
@@ -158,7 +170,7 @@ export async function POST(request) {
       code_text: codeText || null,
       comment: sanitizeStudentText(body?.comment, 2000),
       submitted_at: new Date().toISOString(),
-       coursework_item_id: item.id,
+       coursework_item_id: effectiveItem.id,
        submission_type: itemType,
       phase,
       detected_assignment_language: sanitizeStudentText(body?.detected_assignment_language, 80) || detected.language,

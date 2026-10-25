@@ -57,7 +57,7 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
   const activeIds = new Set(selectedAssignments.filter(row => row.active).map(row => String(row.coursework_item_id)))
   const itemById = new Map((data?.items || []).map(item => [String(item.id), item]))
   const activeKeys = new Set(selectedAssignments.filter(row => row.active).map(row => courseworkIdentity(row.item || itemById.get(String(row.coursework_item_id)))).filter(Boolean))
-  const globalItems = useMemo(() => (data?.items || []).filter(item => item.active && item.batch == null && HEALTH_CARD_PHASES.includes(item.phase)), [data?.items])
+  const globalItems = useMemo(() => (data?.items || []).filter(item => item.active && item.batch == null && (item.catalog_status == null || item.catalog_status === 'canonical') && HEALTH_CARD_PHASES.includes(item.phase)), [data?.items])
   const phaseSummary = useMemo(() => HEALTH_CARD_PHASES.map(phase => {
     const phaseItems = globalItems.filter(item => item.phase === phase)
     const active = phaseItems.filter(item => activeIds.has(String(item.id)) || activeKeys.has(courseworkIdentity(item))).length

@@ -13,6 +13,8 @@
     "test:health-card": "node scripts/student-health-card-tests.mjs",
     "test:health-card-refactor": "node scripts/student-health-card-refactor-tests.mjs",
     "test:coursework-catalog": "node scripts/coursework-catalog-tests.mjs",
+    "test:staging-canonical": "node scripts/staging-canonical-coursework-e2e.mjs",
+    "test:staging-authoritative": "node scripts/staging-authoritative-rehearsal.mjs",
     "test:student-lifecycle": "node scripts/student-lifecycle-tests.mjs",
     "test:cumulative-progress": "node scripts/cumulative-batch-progress-tests.mjs"
   },

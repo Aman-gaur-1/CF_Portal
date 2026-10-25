@@ -17,7 +17,7 @@ export default function BatchProgressControls({ endpoint, token, batch, data, on
   const batchProgress = useMemo(() => (data?.progress || []).filter(row => row.batch === batch), [batch, data?.progress])
   const batchAssignments = useMemo(() => (data?.assignments || []).filter(row => row.batch === batch), [batch, data?.assignments])
   const activeStudentCount = Number(data?.activeStudentCounts?.[batch] ?? data?.activeStudentCount ?? 0)
-  const items = useMemo(() => (data?.items || []).filter(item => item.batch == null && item.active && CUMULATIVE_PHASES.includes(item.phase)), [data?.items])
+  const items = useMemo(() => (data?.items || []).filter(item => item.batch == null && item.active && (item.catalog_status == null || item.catalog_status === 'canonical') && CUMULATIVE_PHASES.includes(item.phase)), [data?.items])
 
   function keyFor(phase, itemType) { return `${phase}|${itemType}` }
 

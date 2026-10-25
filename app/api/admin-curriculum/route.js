@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getAdminFromRequest } from '@/lib/admin-auth'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
-import { normalizeCourseworkPayload, isUniqueViolation } from '@/lib/health-card-admin'
-import { courseworkIdentity } from '@/lib/coursework-identity'
 import { findEquivalentActiveCatalogItems, isGlobalCatalogItem, itemIsCompatibleWithBatch, validateActivationPayload } from '@/lib/coursework-activation'
 import { appendActivity } from '@/lib/activity-log'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
@@ -15,15 +13,20 @@ function jsonNoStore(body, init) {
 }
 
 async function loadCurriculum(supabase, batch = '') {
-  const itemSelect = 'id,item_type,title,phase,batch,due_at,active,sort_order,created_at,updated_at'
+  const itemSelect = 'id,item_type,title,original_title,phase,batch,due_at,active,sort_order,catalog_status,canonical_key,canonical_coursework_item_id,created_at,updated_at'
   const globalItemQuery = supabase.from('coursework_items').select(itemSelect).is('batch', null).order('phase').order('sort_order', { ascending: true, nullsFirst: false }).order('title').limit(1000)
   const activationQuery = (batch
     ? supabase.from('batch_coursework_assignments').select('id,batch,coursework_item_id,activated_at,activated_by_role,activated_by_name,due_at,active').eq('batch', batch)
     : supabase.from('batch_coursework_assignments').select('id,batch,coursework_item_id,activated_at,activated_by_role,activated_by_name,due_at,active'))
     .order('activated_at', { ascending: false }).limit(2000)
-  const [{ data: globalItems, error: itemError }, { data: activations, error: activationError }] = await Promise.all([globalItemQuery, activationQuery])
+  const [{ data: globalItems, error: itemError }, { data: activations, error: activationError }, { data: extras, error: extrasError }] = await Promise.all([
+    globalItemQuery,
+    activationQuery,
+    supabase.from('coursework_catalog_extras').select('*').order('submission_count', { ascending: false }).order('original_alias').limit(500),
+  ])
   if (itemError) throw itemError
   if (activationError) throw activationError
+  if (extrasError) throw extrasError
   const activationItemIds = [...new Set((activations || []).map(row => row.coursework_item_id).filter(Boolean))]
   const legacyItemsQuery = activationItemIds.length
     ? supabase.from('coursework_items').select(itemSelect).in('id', activationItemIds)
@@ -38,13 +41,30 @@ async function loadCurriculum(supabase, batch = '') {
   ])
   if (progressError) throw progressError
   if (studentCountError) throw studentCountError
-  return { items: [...itemById.values()], activations: enrichedActivations, progress: progress || [], activeStudentCount: activeStudentCount || 0 }
+  const canonicalItems = (globalItems || []).filter(item => item.catalog_status === 'canonical')
+  const canonicalSummary = ['Python', 'Data Analytics', 'SQL'].reduce((summary, phase) => {
+    summary[phase] = {
+      assignments: canonicalItems.filter(item => item.phase === phase && item.item_type === 'assignment').length,
+      projects: canonicalItems.filter(item => item.phase === phase && item.item_type === 'project').length,
+    }
+    return summary
+  }, {})
+  return {
+    items: [...itemById.values()],
+    canonicalItems,
+    activations: enrichedActivations,
+    assignments: enrichedActivations,
+    progress: progress || [],
+    activeStudentCount: activeStudentCount || 0,
+    extras: extras || [],
+    canonicalSummary,
+  }
 }
 
 async function loadProgressContext(supabase, payload) {
   const [{ data: target, error: targetError }, { data: globalItems, error: globalError }, { data: activations, error: activationsError }, { data: currentProgress, error: progressError }, { count: activeStudentCount, error: studentError }] = await Promise.all([
-    supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order').eq('id', payload.coveredThroughCourseworkItemId).maybeSingle(),
-    supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order').is('batch', null).eq('phase', payload.phase).eq('item_type', payload.itemType).eq('active', true).not('sort_order', 'is', null).order('sort_order').order('title'),
+    supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order,catalog_status,canonical_key').eq('id', payload.coveredThroughCourseworkItemId).maybeSingle(),
+    supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order,catalog_status,canonical_key').is('batch', null).eq('phase', payload.phase).eq('item_type', payload.itemType).eq('active', true).eq('catalog_status', 'canonical').not('sort_order', 'is', null).order('sort_order').order('title'),
     supabase.from('batch_coursework_assignments').select('id,coursework_item_id,active').eq('batch', payload.batch),
     supabase.from('batch_curriculum_progress').select('*').eq('batch', payload.batch).eq('phase', payload.phase).eq('item_type', payload.itemType).maybeSingle(),
     supabase.from('students').select('id', { count: 'exact', head: true }).eq('batch', payload.batch).eq('status', 'active'),
@@ -54,7 +74,7 @@ async function loadProgressContext(supabase, payload) {
   if (activationsError) throw activationsError
   if (progressError) throw progressError
   if (studentError) throw studentError
-  if (!target || target.batch !== null || target.active === false || target.phase !== payload.phase || target.item_type !== payload.itemType || !Number.isInteger(Number(target.sort_order))) {
+  if (!target || target.catalog_status !== 'canonical' || target.batch !== null || target.active === false || target.phase !== payload.phase || target.item_type !== payload.itemType || !Number.isInteger(Number(target.sort_order))) {
     return { error: 'Select an active global item with an explicit sort order in the selected phase and type.' }
   }
   const preview = buildProgressPreview({ globalItems: sortProgressItems(globalItems || []), activations: activations || [], currentProgress, phase: payload.phase, itemType: payload.itemType, targetItemId: target.id, activeStudentCount: activeStudentCount || 0 })
@@ -72,7 +92,7 @@ async function findActiveEquivalentItems(supabase, batch, items, excludeActivati
   if (!ids.length) return []
   const { data: activeItems, error: itemError } = await supabase
     .from('coursework_items')
-    .select('id,item_type,title,phase,batch,active')
+    .select('id,item_type,title,phase,batch,active,catalog_status,canonical_coursework_item_id')
     .in('id', ids)
   if (itemError) throw itemError
   return findEquivalentActiveCatalogItems(items, activeItems || [])
@@ -97,6 +117,25 @@ export async function POST(request) {
     if (!admin) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
     const body = await request.json().catch(() => ({}))
     const supabase = getSupabaseAdmin()
+    if (body.action === 'map-extra') {
+      const aliasId = String(body.aliasId || '').trim()
+      const canonicalCourseworkItemId = String(body.canonicalCourseworkItemId || '').trim()
+      if (!aliasId || !canonicalCourseworkItemId) return jsonNoStore({ error: 'Alias and canonical coursework are required.' }, { status: 400 })
+      const { data, error } = await supabase.rpc('cf_map_coursework_alias', {
+        p_alias_id: aliasId,
+        p_canonical_coursework_item_id: canonicalCourseworkItemId,
+        p_actor: admin.name,
+      })
+      if (error) throw error
+      return jsonNoStore({ success: true, mapping: data })
+    }
+    if (body.action === 'ignore-extra') {
+      const aliasId = String(body.aliasId || '').trim()
+      if (!aliasId) return jsonNoStore({ error: 'Alias is required.' }, { status: 400 })
+      const { error } = await supabase.from('coursework_aliases').update({ mapping_status: 'ignored', confidence: 'AMBIGUOUS', updated_at: new Date().toISOString() }).eq('id', aliasId)
+      if (error) throw error
+      return jsonNoStore({ success: true })
+    }
     if (body.action === 'preview-progress' || body.action === 'set-progress') {
       const normalizedProgress = normalizeProgressPayload(body)
       if (normalizedProgress.error) return jsonNoStore({ error: normalizedProgress.error }, { status: 400 })
@@ -133,7 +172,7 @@ export async function POST(request) {
       const { data: batchRow, error: batchError } = await supabase.from('batches').select('name').eq('name', batch).maybeSingle()
       if (batchError) throw batchError
       if (!batchRow) return jsonNoStore({ error: 'Select a valid batch.' }, { status: 400 })
-      const { data: items, error: itemError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order').in('id', courseworkItemIds)
+      const { data: items, error: itemError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order,catalog_status,canonical_key').in('id', courseworkItemIds)
       if (itemError) throw itemError
       if ((items || []).length !== courseworkItemIds.length || (items || []).some(item => !isGlobalCatalogItem(item))) return jsonNoStore({ error: 'Select active global catalog items. Activate reusable coursework separately for each batch.' }, { status: 400 })
       const duplicateItems = await findActiveEquivalentItems(supabase, batch, items || [])
@@ -146,17 +185,7 @@ export async function POST(request) {
       return jsonNoStore({ success: true, activations: activated || [] })
     }
 
-    const normalized = normalizeCourseworkPayload(body)
-    if (normalized.error) return jsonNoStore({ error: normalized.error }, { status: 400 })
-    if (String(body.batch || '').trim()) return jsonNoStore({ error: 'Normal catalog items are global. Activate them for batches in Step 2.' }, { status: 400 })
-    const payload = { ...normalized.value, batch: null }
-    const { data: existingGlobals, error: existingError } = await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order').is('batch', null).eq('phase', payload.phase).eq('item_type', payload.item_type)
-    if (existingError) throw existingError
-    if ((existingGlobals || []).some(item => courseworkIdentity(item) === courseworkIdentity(payload))) return jsonNoStore({ error: 'Coursework already exists.' }, { status: 409 })
-    const { data, error } = await supabase.from('coursework_items').insert(payload).select('*').single()
-    if (error) return jsonNoStore({ error: isUniqueViolation(error) ? 'Coursework already exists.' : 'Could not create coursework.' }, { status: isUniqueViolation(error) ? 409 : 500 })
-    await appendActivity({ eventType: 'health_coursework_created', description: `created ${data.item_type} coursework: ${data.title}`, actorName: admin.name, actorRole: 'admin', action: 'create', metadata: { coursework_item_id: data.id }, supabase })
-    return jsonNoStore({ success: true, coursework: data }, { status: 201 })
+    return jsonNoStore({ error: 'The canonical curriculum is release-managed. Use the supplied 47-item master or review Extras.' }, { status: 409 })
   } catch (error) {
     console.error('[admin-curriculum] write failed', error?.message)
     if (isMissingHealthCardSchema(error)) return jsonNoStore({ error: 'Curriculum activation is not configured yet.' }, { status: 503 })
@@ -176,10 +205,10 @@ export async function PATCH(request) {
       const { data: activation, error: activationError } = await supabase.from('batch_coursework_assignments').select('id,batch,coursework_item_id').eq('id', id).maybeSingle()
       if (activationError) throw activationError
       const { data: item, error: itemError } = activation
-        ? await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active').eq('id', activation.coursework_item_id).maybeSingle()
+        ? await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,catalog_status,canonical_coursework_item_id').eq('id', activation.coursework_item_id).maybeSingle()
         : { data: null, error: null }
       if (itemError) throw itemError
-      if (!activation || !itemIsCompatibleWithBatch(item, activation.batch)) return jsonNoStore({ error: 'This coursework cannot be activated without a valid Python, Data Analytics, or SQL phase.' }, { status: 400 })
+      if (!activation || !itemIsCompatibleWithBatch(item, activation.batch) || item.catalog_status === 'extra' || item.catalog_status === 'archived') return jsonNoStore({ error: 'This coursework cannot be activated without a canonical curriculum mapping or valid Python, Data Analytics, or SQL phase.' }, { status: 400 })
       const duplicateItems = await findActiveEquivalentItems(supabase, activation.batch, item ? [item] : [], id)
       if (duplicateItems.length) return jsonNoStore({ error: 'Already active for this batch.' }, { status: 409 })
     }
