@@ -64,9 +64,7 @@ export async function GET(request) {
         }
       },
     })
-    const response = jsonNoStore({ success: true, coursework, phases: [...new Set(coursework.map(item => item.phase).filter(Boolean))] })
-    response.headers.set('X-CF-Student-Coursework-Debug', JSON.stringify({ assignmentCount: assignments?.length || 0, itemCount: items?.length || 0, visibleCount: coursework.length }))
-    return response
+    return jsonNoStore({ success: true, coursework, phases: [...new Set(coursework.map(item => item.phase).filter(Boolean))] })
   } catch (error) {
     console.error('[student-coursework] failed', error?.message)
     if (isMissingHealthCardSchema(error)) return jsonNoStore({ error: 'Coursework activation is not configured yet.' }, { status: 503 })
