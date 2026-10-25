@@ -260,6 +260,11 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
     }
   }, [tab, loadActiveCoursework, loadSubmissions, loadQueries])
 
+  useAdaptivePolling(
+    () => loadActiveCoursework(),
+    { enabled: tab === "submit", activeMs: 15000 }
+  )
+
   const typedCoursework = useMemo(() => activeCoursework.filter(item => item.item_type === selectedType), [activeCoursework, selectedType])
   const activePhases = useMemo(() => [...new Set(typedCoursework.map(item => item.phase).filter(Boolean))], [typedCoursework])
   const visibleCoursework = useMemo(() => typedCoursework.filter(item => !selectedPhaseFilter || item.phase === selectedPhaseFilter), [selectedPhaseFilter, typedCoursework])

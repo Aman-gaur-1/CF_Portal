@@ -7,6 +7,8 @@ import StudentsTab from "@/components/teacher/StudentsTab"
 import Spinner from "@/components/ui/Spinner"
 import { courseworkIdentity } from "@/lib/coursework-identity"
 
+const HEALTH_CARD_PHASES = ["Python", "Data Analytics", "SQL"]
+
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "attendance", label: "Attendance" },
@@ -54,7 +56,13 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
   const activeIds = new Set(selectedAssignments.filter(row => row.active).map(row => String(row.coursework_item_id)))
   const itemById = new Map((data?.items || []).map(item => [String(item.id), item]))
   const activeKeys = new Set(selectedAssignments.filter(row => row.active).map(row => courseworkIdentity(row.item || itemById.get(String(row.coursework_item_id)))).filter(Boolean))
-  const available = (data?.items || []).filter(item => item.active && item.batch == null && ["Python", "Data Analytics", "SQL"].includes(item.phase) && (!activationPhase || item.phase === activationPhase) && (!activationType || item.item_type === activationType) && (!activationSearch || `${item.title} ${item.phase} ${item.item_type}`.toLowerCase().includes(activationSearch.trim().toLowerCase())))
+  const globalItems = useMemo(() => (data?.items || []).filter(item => item.active && item.batch == null && HEALTH_CARD_PHASES.includes(item.phase)), [data?.items])
+  const phaseSummary = useMemo(() => HEALTH_CARD_PHASES.map(phase => {
+    const phaseItems = globalItems.filter(item => item.phase === phase)
+    const active = phaseItems.filter(item => activeIds.has(String(item.id)) || activeKeys.has(courseworkIdentity(item))).length
+    return { phase, active, available: Math.max(phaseItems.length - active, 0) }
+  }), [activeIds, activeKeys, globalItems])
+  const available = globalItems.filter(item => (!activationPhase || item.phase === activationPhase) && (!activationType || item.item_type === activationType) && (!activationSearch || `${item.title} ${item.phase} ${item.item_type}`.toLowerCase().includes(activationSearch.trim().toLowerCase())))
 
   async function activate() {
     setSaving(true)
@@ -127,6 +135,7 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
 
       {tab === "coursework" && (
         <section className="card admin-panel grid gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2" aria-label="Assigned batch phase summary">{phaseSummary.map(({ phase, active, available: availableCount }) => <button key={phase} type="button" className="stat-card text-left" onClick={() => { setActivationPhase(current => current === phase ? "" : phase); setSelectedIds([]) }}><div className="stat-label">{phase}</div><div className="text-sm mt-1">Active {active} · Available {availableCount}</div></button>)}</div>
           <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
             <select className="select" value={selectedBatch} onChange={event => { setSelectedBatch(event.target.value); setSelectedIds([]) }} aria-label="Activation batch">
               <option value="">Select assigned batch</option>
