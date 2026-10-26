@@ -16,7 +16,8 @@
     "test:staging-canonical": "node scripts/staging-canonical-coursework-e2e.mjs",
     "test:staging-authoritative": "node scripts/staging-authoritative-rehearsal.mjs",
     "test:student-lifecycle": "node scripts/student-lifecycle-tests.mjs",
-    "test:cumulative-progress": "node scripts/cumulative-batch-progress-tests.mjs"
+    "test:cumulative-progress": "node scripts/cumulative-batch-progress-tests.mjs",
+    "test:admin-curriculum-bulk": "node scripts/admin-curriculum-bulk-tests.mjs"
   },
   "dependencies": {
     "@huggingface/inference": "^4.13.15",

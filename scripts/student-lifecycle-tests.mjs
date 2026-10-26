@@ -15,7 +15,7 @@ const migration = read('supabase/migrations/20261025120000_student_lifecycle_man
 
 assert(studentView.includes('selectedType') && studentView.includes('selectedPhaseFilter') && studentView.includes('visibleCoursework'), 'student type → phase → coursework filtering is missing')
 assert(studentView.includes('No active assignments are available for your batch yet.') && studentView.includes('No active projects are available for your batch yet.'), 'type-specific student empty states are missing')
-assert(adminCurriculum.includes('activationPhase') && adminCurriculum.includes('activationType') && adminCurriculum.includes('Activate selected'), 'admin batch/phase/type activation UX is missing')
+assert(adminCurriculum.includes('releasePhase') && adminCurriculum.includes('releaseType') && adminCurriculum.includes('Bulk Release Coursework') && adminCurriculum.includes('Preview Release'), 'admin bulk batch/phase/type activation UX is missing')
 assert(teacherCurriculum.includes('activationPhase') && teacherCurriculum.includes('activationType') && teacherCurriculum.includes('Activate selected'), 'teacher batch/phase/type activation UX is missing')
 assert(loginRoute.includes("status === 'inactive'") && loginRoute.includes('Your student account is inactive. Please contact your trainer or administrator.'), 'inactive login guard is missing')
 assert(adminLifecycle.includes("action === 'reactivate'") && adminLifecycle.includes("confirmation || '') !== 'DELETE'") || adminLifecycle.includes('Type DELETE to permanently remove this student.'), 'admin lifecycle controls are incomplete')
