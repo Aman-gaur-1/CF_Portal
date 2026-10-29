@@ -11,7 +11,9 @@ import {
   recoverStructuredOutput,
 } from '../lib/ai/structured-output.mjs'
 
-const { classifyProviderFailure, isFailoverEligibleError } = loadProviderManager()
+const { applyGenerationMode, classifyProviderFailure, isFailoverEligibleError } = loadProviderManager()
+const providerSettings = loadProviderSettings()
+const providerManagerCooling = new Map()
 const { sanitizeParserDiagnosticsForLog } = loadParserLogSanitizer()
 const validJson = '{"score":8,"trainer_feedback":"Synthetic feedback."}'
 
@@ -191,6 +193,50 @@ const cases = [
     assert.equal(classifyProviderFailure({ status: 503 }), 'service_unavailable')
     assert.equal(classifyProviderFailure({ status: 504 }), 'timeout')
   }],
+  ['provider-specific configuration failures are failover eligible and classified', () => {
+    for (const status of [401, 403]) {
+      assert.equal(isFailoverEligibleError({ status }), true)
+      assert.equal(classifyProviderFailure({ status }), 'auth_failure')
+    }
+    for (const status of [404, 410]) {
+      assert.equal(isFailoverEligibleError({ status }), true)
+      assert.equal(classifyProviderFailure({ status }), 'model_unavailable')
+    }
+    assert.equal(classifyProviderFailure(new Error("Function 'model' not found")), 'model_unavailable')
+    assert.equal(classifyProviderFailure({ code: 'AI_STRUCTURED_OUTPUT_INVALID', message: 'invalid structure' }), 'parse_failure')
+  }],
+  ['backup mode falls back to a valid primary candidate', () => {
+    const primary = { slot: 'primary', provider: 'nemotron', id: 'primary' }
+    const result = applyGenerationMode([primary], 'backup')
+    assert.equal(result.length, 1)
+    assert.equal(result[0].id, 'primary')
+  }],
+  ['primary mode falls back to a valid backup candidate', () => {
+    const backup = { slot: 'backup', provider: 'nemotron', id: 'backup' }
+    const result = applyGenerationMode([backup], 'primary')
+    assert.equal(result.length, 1)
+    assert.equal(result[0].id, 'backup')
+  }],
+  ['auto mode keeps healthy providers first and cooling providers last', () => {
+    const healthy = { slot: 'primary', provider: 'nemotron', id: 'healthy' }
+    const cooling = { slot: 'backup', provider: 'openrouter', id: 'cooling' }
+    const original = providerManagerCooling
+    providerManagerCooling.set('openrouter', true)
+    const result = applyGenerationMode([cooling, healthy], 'auto')
+    assert.equal(result.length, 2)
+    assert.equal(result[0].id, 'healthy')
+    assert.equal(result[1].id, 'cooling')
+    providerManagerCooling.clear()
+    assert.equal(original, providerManagerCooling)
+  }],
+  ['NVIDIA defaults resolve to the Nemotron identity and compatible key namespace', () => {
+    const config = providerSettings.envProviderConfig()
+    assert.equal(config.provider, 'nemotron')
+    assert.equal(config.base_url, 'https://integrate.api.nvidia.com/v1')
+    assert.equal(config.model, 'nvidia/llama-3.1-nemotron-nano-8b-v1')
+    assert.equal(providerSettings.providerKeyEnvName('nemotron'), 'NEMOTRON_API_KEY')
+    assert.equal(providerSettings.providerKeyEnvNames('nemotron').join(','), 'NEMOTRON_API_KEY,QWEN_API_KEY')
+  }],
   ['reasoning metadata does not replace valid content', () => {
     const data = fakeData(validJson, { reasoning_content: '{"different":true}' })
     const diagnostics = buildAssistantResponseDiagnostics(data, data.choices[0].message.content)
@@ -264,11 +310,34 @@ function loadProviderManager() {
     module: { exports: {} },
     getAiGenerationMode: async () => 'auto',
     getAiProviderCandidates: async () => [],
-    isProviderCooling: () => false,
+    isProviderCooling: provider => providerManagerCooling.get(provider) === true,
     providerHealthSummary: () => ({}),
   }
-  vm.runInNewContext(`${source}\nmodule.exports = { classifyProviderFailure, isFailoverEligibleError };`, sandbox)
+  vm.runInNewContext(`${source}\nmodule.exports = { applyGenerationMode, classifyProviderFailure, isFailoverEligibleError };`, sandbox)
   return sandbox.module.exports
+}
+
+function loadProviderSettings() {
+  const file = path.join(process.cwd(), 'lib', 'ai', 'provider-settings.js')
+  const source = fs.readFileSync(file, 'utf8')
+    .replace(/^import .*$/gm, '')
+    .replace(/export const /g, 'const ')
+    .replace(/export async function /g, 'async function ')
+    .replace(/export function /g, 'function ')
+  const sandbox = {
+    console,
+    process: { env: { ...process.env } },
+    module: { exports: {} },
+    debugLog: () => {},
+    getSupabaseAdmin: () => { throw new Error('not used in provider settings contract tests') },
+    DEFAULT_AI_BASE_URL: 'https://integrate.api.nvidia.com/v1',
+    DEFAULT_AI_MODEL: 'nvidia/llama-3.1-nemotron-nano-8b-v1',
+    decryptSecret: value => value,
+    encryptSecret: value => value,
+    maskSecret: () => '[redacted]',
+  }
+  vm.runInNewContext(`${source}\nmodule.exports = { envProviderConfig, getEnvProviderApiKey, providerKeyEnvName, providerKeyEnvNames };`, sandbox)
+  return { ...sandbox.module.exports, setEnv: (key, value) => { sandbox.process.env[key] = value } }
 }
 
 function loadParserLogSanitizer() {
