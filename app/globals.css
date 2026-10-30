@@ -871,6 +871,11 @@ button.metric-card:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rg
 .health-card-hero .portal-page-title { font-size: clamp(1.55rem, 2.3vw, 2rem); }
 .health-card-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .health-card-points { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.health-card-formula { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.health-card-formula-card { display: grid; gap: 3px; padding: 12px 14px; border: 1px solid var(--portal-border); border-radius: var(--portal-radius-md); background: var(--portal-surface-muted); }
+.health-card-formula-title { color: var(--portal-text-muted); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; }
+.health-card-formula-card strong { color: var(--portal-text); font-size: 0.9rem; }
+.health-card-formula-note { color: var(--portal-primary-strong); font-size: 0.76rem; font-weight: 650; }
 .health-card-progress-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .health-card-attendance-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .health-card-attendance-cta { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--portal-border); }
@@ -936,7 +941,7 @@ button.metric-card:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rg
   .portal-page-header { flex-direction: column; gap: 16px; margin-bottom: 22px; }
   .portal-page-actions { width: 100%; }
   .portal-page-actions > * { flex: 1 1 auto; }
-  .health-card-kpis, .health-card-points, .health-card-progress-grid, .health-card-lower-grid, .status-summary, .attendance-filter-grid, .attendance-upload-fields { grid-template-columns: minmax(0, 1fr); }
+  .health-card-kpis, .health-card-points, .health-card-formula, .health-card-progress-grid, .health-card-lower-grid, .status-summary, .attendance-filter-grid, .attendance-upload-fields { grid-template-columns: minmax(0, 1fr); }
   .health-card-query-fields { grid-template-columns: minmax(0, 1fr); }
   .health-card-panel, .admin-panel { padding: 16px; }
   .health-card-attendance-cta { align-items: stretch; flex-direction: column; }

@@ -40,6 +40,13 @@ assert.deepEqual(deterministicCourseworkLeaderboard([
   { studentId: 'assignment', courseworkPoints: 5 },
   { studentId: 'project', courseworkPoints: 10 },
 ]).map(row => [row.studentId, row.rank]), [['project', 1], ['assignment', 2]], 'positive assignment/project points determine rank')
+const formula = { assignmentPoints: 5, projectPoints: 10, attendancePoints: 2, lifetimePoints: 999 }
+assert.equal(formula.assignmentPoints + formula.projectPoints, 15, 'coursework points are assignment plus project points')
+assert.equal(formula.assignmentPoints + formula.projectPoints + formula.attendancePoints, 17, 'Health Card total adds attendance points to coursework points')
+assert.deepEqual(deterministicCourseworkLeaderboard([
+  { studentId: 'attendance-low', courseworkPoints: 10, attendancePoints: 0, lifetimePoints: 0 },
+  { studentId: 'attendance-high', courseworkPoints: 10, attendancePoints: 99, lifetimePoints: 999 },
+]).map(row => row.studentId), ['attendance-high', 'attendance-low'], 'attendance and lifetime do not alter coursework rank ordering')
 
 const roster = classifyRosterRows([
   { rowNumber: 2, name: 'New Student', email: '', phone: '', externalStudentId: '' },
@@ -71,17 +78,29 @@ assert.match(submissionRoute, /batch_coursework_assignments/)
 assert.match(rosterRoute, /hashStudentPasswordSecure/)
 assert.doesNotMatch(rosterRoute, /password:.*insert/)
 assert.match(healthCardUi, /Health Card scoring started 1 Oct 2026/)
-assert.match(healthCardUi, /Earlier coursework remains available under My Submissions/)
+assert.match(healthCardUi, /Your batch rank is based only on current coursework points from Assignments and Projects/)
+assert.match(healthCardUi, /Older coursework remains in My Submissions/)
 assert.match(healthCardUi, /Current coursework points/)
 assert.match(healthCardUi, /Assignments released for your batch/)
 assert.match(healthCardUi, /Projects released for your batch/)
+assert.match(healthCardUi, /Scored for current rank/)
+assert.match(healthCardUi, /coursework pts/)
+assert.match(healthCardUi, /earlier completion/)
 assert.match(healthCardUi, /No attendance sessions have been tracked yet/)
-assert.match(healthCardUi, /Your current batch rank/)
-assert.match(healthCardUi, /Lifetime Coursework do not affect rank/)
+assert.match(healthCardUi, /Batch Coursework Leaderboard/)
+assert.match(healthCardUi, /Attendance and older coursework do not affect rank/)
 assert.match(healthCardUi, /No scored Health Card activity yet/)
 assert.match(healthCardUi, /Not ranked yet/)
-assert.doesNotMatch(healthCardUi, /Current activated assignments/)
-assert.doesNotMatch(healthCardUi, /Current activated projects/)
+assert.match(healthCardUi, /Leaderboard starts after current coursework points are earned/)
+assert.match(healthCardUi, /Complete a current Assignment or Project to earn coursework points and enter the batch ranking/)
+assert.match(healthCardUi, /Coursework Point/)
+assert.match(healthCardUi, /Attendance Point/)
+assert.match(healthCardUi, /health-card-formula/)
+assert.doesNotMatch(healthCardUi, /Current Health Card/)
+assert.doesNotMatch(healthCardUi, /activated coursework tracked/)
+const stylesheet = fs.readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8')
+assert.match(stylesheet, /health-card-formula/)
+assert.match(stylesheet, /max-width: 720px/)
 assert.match(leaderboardMigration, /dense_rank/)
 assert.match(leaderboardMigration, /total_points > 0/)
 assert.match(leaderboardMigration, /rankedStudentCount/)

@@ -51,6 +51,27 @@ function sessionWindow(session) {
   return `${session.title || "Attendance session"} · ${start}${end}`
 }
 
+function earlierCompletionMessage(completed, scoredPoints, pointsPerItem) {
+  const earlierCount = Math.max(0, Math.round(Number(completed) || 0) - Math.round((Number(scoredPoints) || 0) / pointsPerItem))
+  if (!earlierCount) return null
+  return `${earlierCount} earlier completion${earlierCount === 1 ? " is" : "s are"} recognized, but ${earlierCount === 1 ? "it does" : "they do"} not add current coursework points.`
+}
+
+function activityPointsLabel(item) {
+  const attendance = item?.type === "attendance"
+  const fallback = attendance ? 1 : 0
+  const points = numeric(item?.points ?? item?.attendancePoints ?? item?.courseworkPoints, fallback)
+  const label = attendance ? "Attendance Point" : "Coursework Point"
+  return `+${points} ${label}${points === 1 ? "" : "s"}`
+}
+
+function activityDescription(item) {
+  if (item?.type === "attendance") return `Attendance · ${item.title || item.attendanceDate || "Approved attendance"}`
+  const itemType = item?.itemType || item?.courseworkType || item?.type
+  const typeLabel = itemType === "project" ? "Project" : "Assignment"
+  return `${typeLabel} · ${item.title || "Coursework"}`
+}
+
 function MetricProgress({ label, completed, expected, pending, percentage, emptyMessage }) {
   if (!(Number(expected) > 0)) {
     return (
@@ -189,10 +210,18 @@ export default function StudentHealthCard({ student, lifetimeCoursework, success
   const attendanceHistory = Array.isArray(healthCard.attendanceHistory) ? healthCard.attendanceHistory : []
   const currentRank = metrics.rank === null || metrics.rank === undefined ? null : numeric(metrics.rank, 0)
   const isRanked = metrics.isRanked ?? (currentRank !== null && currentRank > 0)
-  const courseworkPoints = numeric(metrics.courseworkPoints, numeric(metrics.assignmentPoints) + numeric(metrics.projectPoints))
+  const assignmentPoints = numeric(metrics.assignmentPoints)
+  const projectPoints = numeric(metrics.projectPoints)
+  const attendancePoints = numeric(metrics.attendancePoints)
+  const courseworkPoints = assignmentPoints + projectPoints
+  const healthCardTotal = courseworkPoints + attendancePoints
   const lifetimePoints = numeric(lifetimeCoursework?.points)
   const assignmentExpected = numeric(metrics.assignmentExpected)
   const projectExpected = numeric(metrics.projectExpected)
+  const assignmentCompleted = numeric(metrics.assignmentCompleted)
+  const projectCompleted = numeric(metrics.projectCompleted)
+  const assignmentHistoryMessage = earlierCompletionMessage(assignmentCompleted, assignmentPoints, 5)
+  const projectHistoryMessage = earlierCompletionMessage(projectCompleted, projectPoints, 10)
   const eligibleWorkingDays = numeric(metrics.eligibleWorkingDays)
   const selectedSession = todaySessions.find(session => String(session.id) === String(selectedSessionId)) || null
   const canMarkSelectedSession = Boolean(selectedSession && !selectedSession.alreadyMarked)
@@ -203,56 +232,67 @@ export default function StudentHealthCard({ student, lifetimeCoursework, success
         <PageHeader
           eyebrow="Student Health Card"
           title={healthCard.student?.name || student.name}
-          subtitle="Current coursework points determine your batch rank. Attendance is added separately to your Health Card total."
-          meta={<><span className="portal-chip">{healthCard.student?.batch || student.batch}</span><span className="portal-chip">Health Card scoring started 1 Oct 2026</span></>}
+          subtitle="Your batch rank is based only on current coursework points from Assignments and Projects. Attendance adds to your Health Card total but does not affect rank."
+          meta={<><span className="portal-chip">{healthCard.student?.batch || student.batch}</span><span className="portal-chip">Health Card scoring started 1 Oct 2026.</span></>}
           actions={<RefreshButton onClick={load} disabled={loading} />}
         />
-        <p className="text-sm mt-4" style={{ color: "var(--portal-text-secondary)" }}>Earlier coursework remains available under My Submissions. Health Card points and batch rank use activated coursework tracked from 1 Oct 2026 onward.</p>
+        <p className="text-sm mt-4" style={{ color: "var(--portal-text-secondary)" }}>Older coursework remains in My Submissions. Current coursework released for your batch determines your batch rank.</p>
         <div className="health-card-kpis">
-          <MetricCard label="Health Card total" value={numeric(metrics.totalPoints)} hint="Coursework + attendance" tone="success" />
-          <MetricCard label="Current coursework points" value={courseworkPoints} hint="Assignment + project points" tone="primary" />
-          <MetricCard label="Attendance points" value={numeric(metrics.attendancePoints)} hint="Approved attendance" />
-          <MetricCard label="Batch rank" value={isRanked ? `#${currentRank}` : "Not ranked yet"} hint="Current coursework only" />
+          <MetricCard label="Health Card total" value={healthCardTotal} hint="Coursework + attendance" tone="success" />
+          <MetricCard label="Current coursework points" value={courseworkPoints} hint="Used for your batch rank" tone="primary" />
+          <MetricCard label="Attendance points" value={attendancePoints} hint="Added to Health Card only" />
+          <MetricCard label="Batch rank" value={isRanked ? `#${currentRank}` : "Not ranked yet"} hint="Based on coursework points only" />
+        </div>
+        <div className="health-card-formula" aria-label="Health Card scoring formula">
+          <div className="health-card-formula-card">
+            <span className="health-card-formula-title">Coursework points</span>
+            <strong>Assignments + Projects</strong>
+            <span className="health-card-formula-note">determines Batch Rank</span>
+          </div>
+          <div className="health-card-formula-card">
+            <span className="health-card-formula-title">Health Card total</span>
+            <strong>Coursework Points + Attendance Points</strong>
+          </div>
         </div>
       </section>
 
       <section className="card health-card-panel">
-        <SectionHeading title="Lifetime vs current" detail="These totals serve different purposes." />
+        <SectionHeading title="Previous coursework vs current scoring" detail="History and current rank use different point totals." />
         <div className="health-card-points">
-          <MetricCard label="Lifetime coursework" value={`${lifetimePoints} pts`} hint="Older coursework history" />
-          <MetricCard label="Current Health Card" value={`${courseworkPoints} pts`} hint="Activated coursework from 1 Oct 2026" tone="primary" />
+          <MetricCard label="Previous / Lifetime coursework" value={`${lifetimePoints} pts`} hint="Older coursework history" />
+          <MetricCard label="Current coursework points" value={`${courseworkPoints} pts`} hint="Assignment + Project points used for batch rank" tone="primary" />
         </div>
-        <p className="text-sm mt-4" style={{ color: "var(--portal-text-secondary)" }}>Lifetime points include older coursework. Health Card scoring uses current activated coursework from 1 Oct 2026 onward.</p>
+        <p className="text-sm mt-4" style={{ color: "var(--portal-text-secondary)" }}>Older coursework remains in your history, but only current coursework released for your batch contributes to your current rank.</p>
       </section>
 
       <div className="health-card-progress-grid">
         <section className="card health-card-panel">
           <SectionHeading title="Assignments" detail="Assignments released for your batch." />
           <div className="grid gap-2 text-sm">
-            <div className="flex items-center justify-between gap-3"><span>Completed</span><b>{numeric(metrics.assignmentCompleted)} / {assignmentExpected}</b></div>
-            <div className="flex items-center justify-between gap-3"><span>Scored for Health Card</span><b>{numeric(metrics.assignmentPoints)}</b></div>
+            <div className="flex items-center justify-between gap-3"><span>Completed</span><b>{assignmentCompleted} / {assignmentExpected}</b></div>
+            <div className="flex items-center justify-between gap-3"><span>Scored for current rank</span><b>{assignmentPoints}</b></div>
             <div className="flex items-center justify-between gap-3"><span>Pending</span><b>{numeric(metrics.assignmentPending)}</b></div>
-            <div className="flex items-center justify-between gap-3"><span>Points earned</span><b>{numeric(metrics.assignmentPoints)} pts</b></div>
+            <div className="flex items-center justify-between gap-3"><span>Points earned</span><b>{assignmentPoints} coursework pts</b></div>
           </div>
-          <MetricProgress label="Progress" completed={numeric(metrics.assignmentCompleted)} expected={assignmentExpected} pending={numeric(metrics.assignmentPending)} percentage={metrics.assignmentCompletionPercentage} emptyMessage="No assignments released yet" />
-          {numeric(metrics.assignmentCompleted) > numeric(metrics.assignmentPoints) / 5 && <p className="text-xs mt-4" style={{ color: "var(--portal-text-secondary)" }}>Some completions were recognized from earlier coursework; they do not add current Health Card points.</p>}
+          <MetricProgress label="Progress" completed={assignmentCompleted} expected={assignmentExpected} pending={numeric(metrics.assignmentPending)} percentage={metrics.assignmentCompletionPercentage} emptyMessage="No assignments released yet" />
+          {assignmentHistoryMessage && <p className="text-xs mt-4" style={{ color: "var(--portal-text-secondary)" }}>{assignmentHistoryMessage}</p>}
         </section>
         <section className="card health-card-panel">
           <SectionHeading title="Projects" detail="Projects released for your batch." />
           <div className="grid gap-2 text-sm">
-            <div className="flex items-center justify-between gap-3"><span>Completed</span><b>{numeric(metrics.projectCompleted)} / {projectExpected}</b></div>
-            <div className="flex items-center justify-between gap-3"><span>Scored for Health Card</span><b>{numeric(metrics.projectPoints)}</b></div>
+            <div className="flex items-center justify-between gap-3"><span>Completed</span><b>{projectCompleted} / {projectExpected}</b></div>
+            <div className="flex items-center justify-between gap-3"><span>Scored for current rank</span><b>{projectPoints}</b></div>
             <div className="flex items-center justify-between gap-3"><span>Pending</span><b>{numeric(metrics.projectPending)}</b></div>
-            <div className="flex items-center justify-between gap-3"><span>Points earned</span><b>{numeric(metrics.projectPoints)} pts</b></div>
+            <div className="flex items-center justify-between gap-3"><span>Points earned</span><b>{projectPoints} coursework pts</b></div>
           </div>
-          <MetricProgress label="Progress" completed={numeric(metrics.projectCompleted)} expected={projectExpected} pending={numeric(metrics.projectPending)} percentage={metrics.projectCompletionPercentage} emptyMessage="No projects released yet" />
-          {numeric(metrics.projectCompleted) > numeric(metrics.projectPoints) / 10 && <p className="text-xs mt-4" style={{ color: "var(--portal-text-secondary)" }}>Some completions were recognized from earlier coursework; they do not add current Health Card points.</p>}
+          <MetricProgress label="Progress" completed={projectCompleted} expected={projectExpected} pending={numeric(metrics.projectPending)} percentage={metrics.projectCompletionPercentage} emptyMessage="No projects released yet" />
+          {projectHistoryMessage && <p className="text-xs mt-4" style={{ color: "var(--portal-text-secondary)" }}>{projectHistoryMessage}</p>}
         </section>
       </div>
 
       <section className="card health-card-panel">
         <div className="health-card-attendance-head">
-          <SectionHeading title="Attendance" detail="Attendance contributes to your Health Card total, not your leaderboard rank." />
+          <SectionHeading title="Attendance" detail="Attendance adds to your Health Card total. It does not affect your batch rank." />
           <span className="portal-chip">Asia/Kolkata</span>
         </div>
         {eligibleWorkingDays > 0 ? <>
@@ -313,15 +353,16 @@ export default function StudentHealthCard({ student, lifetimeCoursework, success
 
       <div className="health-card-lower-grid">
         <section className="card health-card-panel">
-           <SectionHeading title="Your current batch rank" detail="Assignment + project points only. Attendance and Lifetime Coursework do not affect rank." />
-           {top10.length === 0 ? <EmptyState icon="★" title="Leaderboard starts when students earn current coursework points." message={isRanked ? "No ranked students are available yet." : "Your rank will appear after you earn current coursework points."} /> : (
+           <SectionHeading title="Batch Coursework Leaderboard" detail="Ranked by current Assignment + Project points only. Attendance and older coursework do not affect rank." />
+           {top10.length === 0 ? <EmptyState icon="★" title="Leaderboard starts after current coursework points are earned" message={isRanked ? "No ranked students are available yet." : "Complete a current Assignment or Project to earn coursework points and enter the batch ranking."} /> : (
             <div className="health-card-list">
               {top10.map(row => {
                 const current = String(row.studentId) === String(student.id)
                 const displayName = row.name || row.studentName || row.student_name || (current ? "You" : "Student")
-                return <div key={row.studentId} className={`health-card-list-row${current ? " is-current" : ""}`}><span className="text-sm"><b>#{row.rank}</b> {displayName}</span><span className="text-sm font-semibold">{row.totalPoints} pts</span></div>
+                const rowCourseworkPoints = numeric(row.courseworkPoints, numeric(row.totalPoints))
+                return <div key={row.studentId} className={`health-card-list-row${current ? " is-current" : ""}`}><span className="text-sm"><b>#{row.rank}</b> {displayName}</span><span className="text-sm font-semibold">{rowCourseworkPoints} coursework pts</span></div>
               })}
-              {leaderboard.current && isRanked && currentRank > 10 && <div className="text-sm mt-3" style={{ color: "var(--portal-text-secondary)" }}>Your position: #{currentRank} · {leaderboard.current.totalPoints} pts</div>}
+              {leaderboard.current && isRanked && currentRank > 10 && <div className="text-sm mt-3" style={{ color: "var(--portal-text-secondary)" }}>Your position: #{currentRank} · {numeric(leaderboard.current.courseworkPoints, numeric(leaderboard.current.totalPoints))} coursework pts</div>}
               {!isRanked && <div className="text-sm mt-3" style={{ color: "var(--portal-text-secondary)" }}>Your rank will appear after you earn current coursework points.</div>}
             </div>
           )}
@@ -330,7 +371,7 @@ export default function StudentHealthCard({ student, lifetimeCoursework, success
           <SectionHeading title="Recent activity" detail="Your latest Health Card events." />
           {recentActivity.length === 0 ? <EmptyState icon="◷" title="No scored Health Card activity yet." message="Current coursework and approved attendance will appear here." /> : (
             <div>
-              {recentActivity.map((item, index) => <div key={`${item.type}-${item.occurredAt}-${index}`} className="health-card-activity-row text-sm"><span>{item.type === "attendance" ? "Attendance" : "Coursework"} · {item.title}{item.status ? ` · ${item.status}` : ""}</span><span className="text-xs" style={{ color: "var(--portal-text-muted)" }}>{item.attendanceDate || (item.occurredAt ? String(item.occurredAt).slice(0, 10) : "—")}</span></div>)}
+              {recentActivity.map((item, index) => <div key={`${item.type}-${item.occurredAt}-${index}`} className="health-card-activity-row text-sm"><div><p className="font-semibold">{activityPointsLabel(item)}</p><p className="text-xs mt-1" style={{ color: "var(--portal-text-secondary)" }}>{activityDescription(item)}{item.status ? ` · ${item.status}` : ""}</p></div><span className="text-xs" style={{ color: "var(--portal-text-muted)" }}>{item.attendanceDate || (item.occurredAt ? String(item.occurredAt).slice(0, 10) : "—")}</span></div>)}
             </div>
           )}
         </section>
