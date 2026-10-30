@@ -255,6 +255,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
       loadSubmissions()
       loadQueries().catch(() => {})
     }
+    if (tab === "health") loadSubmissions({ silent: true })
     return () => {
       if (loadAbortRef.current) loadAbortRef.current.abort()
     }
@@ -424,7 +425,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
 
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
-        {tab === "health" && <StudentHealthCard student={student} success={success} showError={showError} />}
+        {tab === "health" && <StudentHealthCard student={student} lifetimeCoursework={lifetimeCoursework} success={success} showError={showError} />}
 
         {/* Submit Tab */}
         {tab === "submit" && (

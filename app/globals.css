@@ -869,8 +869,8 @@ button.metric-card:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rg
 .health-card-panel { padding: 22px; }
 .health-card-hero { background: var(--portal-surface); }
 .health-card-hero .portal-page-title { font-size: clamp(1.55rem, 2.3vw, 2rem); }
-.health-card-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
-.health-card-points { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.health-card-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.health-card-points { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .health-card-progress-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .health-card-attendance-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .health-card-attendance-cta { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--portal-border); }

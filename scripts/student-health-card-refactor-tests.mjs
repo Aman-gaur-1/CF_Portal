@@ -32,8 +32,14 @@ assert.equal(attendance.points, 2)
 const ranked = deterministicCourseworkLeaderboard([
   { studentId: 'b', courseworkPoints: 5, attendancePoints: 20 },
   { studentId: 'a', courseworkPoints: 5, attendancePoints: 0 },
+  { studentId: 'zero', courseworkPoints: 0, completedCount: 99 },
 ])
-assert.deepEqual(ranked.map(row => row.studentId), ['a', 'b'], 'leaderboard ties are deterministic and ignore attendance points')
+assert.deepEqual(ranked.map(row => [row.studentId, row.rank]), [['a', 1], ['b', 1]], 'equal coursework points use dense ties and ignore attendance points')
+assert.equal(deterministicCourseworkLeaderboard([{ studentId: 'zero', courseworkPoints: 0 }]).length, 0, 'zero-point students are not ranked')
+assert.deepEqual(deterministicCourseworkLeaderboard([
+  { studentId: 'assignment', courseworkPoints: 5 },
+  { studentId: 'project', courseworkPoints: 10 },
+]).map(row => [row.studentId, row.rank]), [['project', 1], ['assignment', 2]], 'positive assignment/project points determine rank')
 
 const roster = classifyRosterRows([
   { rowNumber: 2, name: 'New Student', email: '', phone: '', externalStudentId: '' },
@@ -49,6 +55,7 @@ const used = new Set()
 assert.notEqual(generateLoginId('New Student', used), generateLoginId('New Student', used))
 
 const migration = fs.readFileSync(new URL('../supabase/migrations/20261018230000_student_health_card_product_model.sql', import.meta.url), 'utf8')
+const leaderboardMigration = fs.readFileSync(new URL('../supabase/migrations/20261030120000_student_health_card_leaderboard_semantics.sql', import.meta.url), 'utf8')
 const submissionRoute = fs.readFileSync(new URL('../app/api/student-submissions/route.js', import.meta.url), 'utf8')
 const rosterRoute = fs.readFileSync(new URL('../app/api/admin-roster/route.js', import.meta.url), 'utf8')
 const healthCardUi = fs.readFileSync(new URL('../components/student/StudentHealthCard.jsx', import.meta.url), 'utf8')
@@ -65,12 +72,19 @@ assert.match(rosterRoute, /hashStudentPasswordSecure/)
 assert.doesNotMatch(rosterRoute, /password:.*insert/)
 assert.match(healthCardUi, /Health Card scoring started 1 Oct 2026/)
 assert.match(healthCardUi, /Earlier coursework remains available under My Submissions/)
-assert.match(healthCardUi, /Activated coursework since 1 Oct 2026/)
-assert.match(healthCardUi, /Current activated assignments/)
-assert.match(healthCardUi, /Current activated projects/)
-assert.match(healthCardUi, /No attendance sessions tracked yet/)
-assert.match(healthCardUi, /Current Health Card Leaderboard/)
-assert.match(healthCardUi, /Lifetime Coursework points do not affect rank/)
+assert.match(healthCardUi, /Current coursework points/)
+assert.match(healthCardUi, /Assignments released for your batch/)
+assert.match(healthCardUi, /Projects released for your batch/)
+assert.match(healthCardUi, /No attendance sessions have been tracked yet/)
+assert.match(healthCardUi, /Your current batch rank/)
+assert.match(healthCardUi, /Lifetime Coursework do not affect rank/)
+assert.match(healthCardUi, /No scored Health Card activity yet/)
+assert.match(healthCardUi, /Not ranked yet/)
+assert.doesNotMatch(healthCardUi, /Current activated assignments/)
+assert.doesNotMatch(healthCardUi, /Current activated projects/)
+assert.match(leaderboardMigration, /dense_rank/)
+assert.match(leaderboardMigration, /total_points > 0/)
+assert.match(leaderboardMigration, /rankedStudentCount/)
 assert.match(studentCourseworkRoute, /HEALTH_CARD_PHASES/)
 assert.match(studentCourseworkRoute, /selectVisibleStudentCoursework/)
 assert.match(adminCourseworkRoute, /cannot be activated without a valid/)
