@@ -905,10 +905,17 @@ button.metric-card:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rg
 .attendance-list { display: grid; gap: 8px; }
 .attendance-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px; border: 1px solid var(--portal-border); border-radius: var(--portal-radius-md); background: var(--portal-surface-muted); }
 .attendance-row:hover { border-color: var(--portal-border-strong); }
+.attendance-workflow-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; color: var(--portal-text-secondary); font-size: 0.8rem; }
+.attendance-workflow-summary span:nth-child(odd) { color: var(--portal-text); font-weight: 700; }
 
 /* Attendance upload */
 .attendance-upload-form { display: grid; gap: 14px; margin-top: 18px; }
 .attendance-upload-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.attendance-field-label { display: grid; gap: 6px; color: var(--portal-text); font-size: 0.78rem; font-weight: 700; }
+.attendance-details-toggle { justify-self: start; border: 0; padding: 0; background: transparent; color: var(--portal-primary); font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+.attendance-details-toggle:hover { text-decoration: underline; }
+.attendance-session-details { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--portal-border); border-radius: var(--portal-radius-md); background: var(--portal-surface-muted); }
+.attendance-file-help { margin: 0; color: var(--portal-text-muted); font-size: 0.75rem; }
 .upload-error { margin-top: 12px; padding: 10px 14px; border-radius: var(--portal-radius-md); background: var(--portal-danger-soft); color: var(--danger); font-size: 0.85rem; }
 .attendance-upload-result { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; margin-top: 14px; }
 .upload-stat { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px; border-radius: var(--portal-radius-md); background: var(--portal-surface-muted); }

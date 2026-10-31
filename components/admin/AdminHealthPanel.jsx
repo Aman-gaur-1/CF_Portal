@@ -41,8 +41,8 @@ export default function AdminHealthPanel({ adminToken, showError, success, batch
     <div className="grid gap-5">
       <div className="card admin-panel">
         <SectionHeading
-          title={hideNavigation ? "Attendance review" : "Student Health"}
-          detail={hideNavigation ? "Upload attendance, resolve matches, and review attendance requests." : "Health Card catalog, calendar, scoring, and attendance operations."}
+          title={hideNavigation ? "Attendance" : "Student Health"}
+          detail={hideNavigation ? "Upload class attendance, review student requests, and resolve unmatched names." : "Health Card catalog, calendar, scoring, and attendance operations."}
           action={<RefreshButton onClick={load} disabled={loading} />}
         />
         {!hideNavigation && <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Student Health sections">{TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab-item ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}</div>}

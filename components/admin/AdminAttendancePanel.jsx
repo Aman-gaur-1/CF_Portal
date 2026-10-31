@@ -18,8 +18,8 @@ function statusClass(status) {
 }
 
 export default function AdminAttendancePanel({ adminToken, batches = [], success, showError, focusMode = "" }) {
-  const [mode, setMode] = useState("review")
-  const [status, setStatus] = useState("all")
+  const [mode, setMode] = useState("upload")
+  const [status, setStatus] = useState("pending")
   const [batch, setBatch] = useState("")
   const [date, setDate] = useState("")
   const [search, setSearch] = useState("")
@@ -200,19 +200,22 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
     <div className="grid gap-4">
       <div className="card admin-panel">
         <SectionHeading
-          title="Attendance management"
-          detail="Review, upload, and manage attendance across all batches."
+          title="Attendance workflow"
+          detail="Upload a report, review matches, and confirm attendance safely."
           action={<RefreshButton onClick={mode === "needs" ? loadUnlinked : load} disabled={loading || unlinkedLoading} />}
         />
+        <div className="attendance-workflow-summary" aria-label="Attendance workflow steps">
+          <span>Upload report</span><span aria-hidden="true">→</span><span>Review matches</span><span aria-hidden="true">→</span><span>Confirm attendance</span>
+        </div>
         <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Attendance sections">
-          <button type="button" role="tab" aria-selected={mode === "review"} className={`tab-item ${mode === "review" ? "active" : ""}`} onClick={() => setMode("review")}>Review</button>
-          <button type="button" role="tab" aria-selected={mode === "upload"} className={`tab-item ${mode === "upload" ? "active" : ""}`} onClick={() => setMode("upload")}>Upload report</button>
-          <button type="button" role="tab" aria-selected={mode === "needs"} className={`tab-item ${mode === "needs" ? "active" : ""}`} onClick={() => setMode("needs")}>Needs Matching</button>
-          <button type="button" role="tab" aria-selected={mode === "history"} className={`tab-item ${mode === "history" ? "active" : ""}`} onClick={() => setMode("history")}>Import History</button>
+          <button type="button" role="tab" aria-selected={mode === "upload"} className={`tab-item ${mode === "upload" ? "active" : ""}`} onClick={() => setMode("upload")}>Upload Attendance</button>
+          <button type="button" role="tab" aria-selected={mode === "review"} className={`tab-item ${mode === "review" ? "active" : ""}`} onClick={() => setMode("review")}>Pending Approvals</button>
+          <button type="button" role="tab" aria-selected={mode === "needs"} className={`tab-item ${mode === "needs" ? "active" : ""}`} onClick={() => setMode("needs")}>Needs Attention</button>
+          <button type="button" role="tab" aria-selected={mode === "history"} className={`tab-item ${mode === "history" ? "active" : ""}`} onClick={() => setMode("history")}>History</button>
         </div>
       </div>
 
-      {mode === "upload" && <AttendanceUpload token={adminToken} batches={batches.map(b => b.name || b)} role="admin" onUploaded={() => { setStatus("all"); load() }} />}
+      {mode === "upload" && <AttendanceUpload token={adminToken} batches={batches.map(b => b.name || b)} role="admin" onUploaded={() => { setStatus("pending"); load() }} onNeedsAttention={() => setMode("needs")} />}
       {mode === "history" && <AttendanceImportHistory token={adminToken} batches={batches.map(b => b.name || b)} />}
 
       {mode === "needs" && (
@@ -224,13 +227,14 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
                 {batches.map(b => { const name = b.name || b; return <option key={name} value={name}>{name}</option> })}
               </select>
               <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} aria-label="Date filter" />
-              <button type="button" className="btn btn-primary btn-sm" onClick={rematchAll} disabled={Boolean(actioningId) || !unlinked.length}>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={rematchAll} disabled={Boolean(actioningId) || !unlinked.length}>
                 {actioningId === "rematch-all" ? <Spinner size="sm" /> : "Re-match all"}
               </button>
             </div>
           </div>
 
           <div className="card admin-panel">
+            <SectionHeading title="Needs Attention" detail="Uploaded participant names that could not be safely matched yet." />
             {unlinkedLoading ? <div className="flex justify-center py-8"><Spinner size="lg" /></div> : unlinked.length === 0 ? (
               <EmptyState icon="✓" title="No participants need matching" message="All uploaded attendance has been matched or resolved." />
             ) : (
@@ -244,7 +248,7 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
                         <p className="font-semibold">{row.original_participant_name || row.participant_name}</p>
                         <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{row.batch} · {row.attendance_date} · uploaded {String(row.created_at || "").slice(0, 16).replace("T", " ")}</p>
                         {match && match.studentId && (
-                          <p className="text-xs mt-2" style={{ color: "var(--success)" }}>Suggested: <b>{match.studentName}</b> ({Math.round(match.similarity * 100)}% {match.matchType || match.confidence})</p>
+                          <p className="text-xs mt-2" style={{ color: "var(--success)" }}>Suggested student: <b>{match.studentName}</b> · {Math.round(match.similarity * 100)}% match</p>
                         )}
                         {match && !match.studentId && (
                           <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>Still no match — student may not have registered yet</p>
@@ -252,10 +256,10 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
                       </div>
                       <div className="flex items-center gap-2 flex-wrap justify-end">
                         <span className="badge-pending">Needs matching</span>
-                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setResolvingRow(row)} disabled={Boolean(actioningId)}>Resolve</button>
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setResolvingRow(row)} disabled={Boolean(actioningId)}>Match Student</button>
                         {match && match.studentId && row.session_id && (
                           <button type="button" className="btn btn-primary btn-sm" onClick={() => linkOne({ id: row.id, studentId: match.studentId })} disabled={Boolean(actioningId)}>
-                            {actioningId === row.id ? <Spinner size="sm" /> : "Link & approve"}
+                            {actioningId === row.id ? <Spinner size="sm" /> : "Accept Suggested Match"}
                           </button>
                         )}
                         {!row.session_id && <span className="badge-pending">Session required</span>}
@@ -272,6 +276,7 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
 
       {mode === "review" && <>
         <div className="card admin-panel">
+          <SectionHeading title="Pending Approvals" detail="Students who marked attendance or reported a missing attendance record appear here." />
           <div className="status-summary">
             <MetricCard label="Pending" value={counts.pending || 0} tone="warning" onClick={() => setStatus("pending")} style={{ cursor: "pointer", outline: status === "pending" ? "2px solid var(--warning)" : "none" }} />
             <MetricCard label="Approved" value={counts.approved || 0} tone="success" onClick={() => setStatus("approved")} style={{ cursor: "pointer", outline: status === "approved" ? "2px solid var(--success)" : "none" }} />
