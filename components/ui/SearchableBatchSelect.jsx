@@ -1,7 +1,9 @@
 "use client"
 
+import { createPortal } from "react-dom"
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { filterBatchOptions, sortBatchOptions } from "@/lib/batch-picker"
+import { calculateBatchPickerPosition } from "@/lib/batch-picker-position"
 
 function useBatchPickerPosition(triggerRef, open) {
   const [panelPosition, setPanelPosition] = useState(null)
@@ -10,24 +12,17 @@ function useBatchPickerPosition(triggerRef, open) {
     const rect = triggerRef.current?.getBoundingClientRect()
     if (!rect) return
 
-    const gap = 8
-    const viewportPadding = 16
-    const maxHeight = Math.min(450, window.innerHeight - viewportPadding * 2)
-    const openBelow = window.innerHeight - rect.bottom >= Math.min(maxHeight, rect.top)
-    const availableHeight = openBelow
-      ? window.innerHeight - rect.bottom - gap - viewportPadding
-      : rect.top - gap - viewportPadding
-
-    setPanelPosition({
-      top: openBelow ? `calc(100% + ${gap}px)` : "auto",
-      bottom: openBelow ? "auto" : `calc(100% + ${gap}px)`,
-      maxHeight: Math.max(220, Math.min(maxHeight, availableHeight)),
-      placement: openBelow ? "below" : "above",
-    })
+    setPanelPosition(calculateBatchPickerPosition(rect, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }))
   }, [triggerRef])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      setPanelPosition(null)
+      return
+    }
     positionPanel()
     window.addEventListener("resize", positionPanel)
     window.addEventListener("scroll", positionPanel, true)
@@ -40,15 +35,15 @@ function useBatchPickerPosition(triggerRef, open) {
   return panelPosition
 }
 
-function useOutsideClose(pickerRef, setOpen) {
+function useOutsideClose(pickerRef, panelRef, setOpen) {
   useEffect(() => {
     function handleOutsideClick(event) {
-      if (!pickerRef.current?.contains(event.target)) setOpen(false)
+      if (!pickerRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) setOpen(false)
     }
 
     document.addEventListener("mousedown", handleOutsideClick)
     return () => document.removeEventListener("mousedown", handleOutsideClick)
-  }, [pickerRef, setOpen])
+  }, [panelRef, pickerRef, setOpen])
 }
 
 function PickerOption({ option, index, activeIndex, selected, onMouseEnter, onClick, multi = false }) {
@@ -85,6 +80,7 @@ export default function SearchableBatchSelect({
 }) {
   const pickerRef = useRef(null)
   const triggerRef = useRef(null)
+  const panelRef = useRef(null)
   const searchRef = useRef(null)
   const listRef = useRef(null)
   const listboxId = useId()
@@ -93,7 +89,7 @@ export default function SearchableBatchSelect({
   const [activeIndex, setActiveIndex] = useState(0)
   const panelPosition = useBatchPickerPosition(triggerRef, open)
 
-  useOutsideClose(pickerRef, setOpen)
+  useOutsideClose(pickerRef, panelRef, setOpen)
 
   const options = useMemo(() => sortBatchOptions(batches), [batches])
   const specialOptions = useMemo(() => {
@@ -115,8 +111,11 @@ export default function SearchableBatchSelect({
     setQuery("")
     const selectedIndex = allOptions.findIndex(option => option.value === value && !option.special)
     setActiveIndex(Math.max(0, selectedIndex))
-    requestAnimationFrame(() => searchRef.current?.focus())
   }, [open])
+
+  useEffect(() => {
+    if (open && panelPosition) requestAnimationFrame(() => searchRef.current?.focus())
+  }, [open, panelPosition])
 
   useEffect(() => {
     setActiveIndex(0)
@@ -179,6 +178,48 @@ export default function SearchableBatchSelect({
     }
   }
 
+  const panel = open && panelPosition ? (
+    <div
+      ref={panelRef}
+      className={`batch-picker-panel is-${panelPosition.placement}`}
+      style={{
+        left: panelPosition.left,
+        top: panelPosition.top,
+        width: panelPosition.width,
+        minWidth: panelPosition.minWidth,
+        maxWidth: panelPosition.maxWidth,
+        maxHeight: panelPosition.maxHeight,
+      }}
+    >
+      <div className="batch-picker-search-wrap">
+        <input
+          ref={searchRef}
+          type="search"
+          className="batch-picker-search"
+          placeholder="Search batches..."
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          onKeyDown={handleSearchKeyDown}
+          aria-label={`Search ${label.toLowerCase()}`}
+          aria-controls={listboxId}
+        />
+      </div>
+      <div id={listboxId} ref={listRef} className="batch-picker-options" role="listbox" aria-label={`${label} options`}>
+        {filteredOptions.length ? filteredOptions.map((option, index) => (
+          <PickerOption
+            key={`${option.special ? "special" : "batch"}-${option.value}-${option.label}`}
+            option={option}
+            index={index}
+            activeIndex={activeIndex}
+            selected={option.special ? allOption && option.value === value : option.value === value}
+            onMouseEnter={() => setActiveIndex(index)}
+            onClick={() => selectOption(option)}
+          />
+        )) : <div className="batch-picker-empty">No batches found</div>}
+      </div>
+    </div>
+  ) : null
+
   return (
     <div className={`batch-picker ${className}`.trim()} ref={pickerRef}>
       <button
@@ -199,39 +240,7 @@ export default function SearchableBatchSelect({
         <span className="batch-picker-chevron" aria-hidden="true">⌄</span>
       </button>
 
-      {open && panelPosition && (
-        <div
-          className={`batch-picker-panel is-${panelPosition.placement}`}
-          style={{ top: panelPosition.top, right: 0, bottom: panelPosition.bottom, maxHeight: panelPosition.maxHeight }}
-        >
-          <div className="batch-picker-search-wrap">
-            <input
-              ref={searchRef}
-              type="search"
-              className="batch-picker-search"
-              placeholder="Search batches..."
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              onKeyDown={handleSearchKeyDown}
-              aria-label={`Search ${label.toLowerCase()}`}
-              aria-controls={listboxId}
-            />
-          </div>
-          <div id={listboxId} ref={listRef} className="batch-picker-options" role="listbox" aria-label={`${label} options`}>
-            {filteredOptions.length ? filteredOptions.map((option, index) => (
-              <PickerOption
-                key={`${option.special ? "special" : "batch"}-${option.value}-${option.label}`}
-                option={option}
-                index={index}
-                activeIndex={activeIndex}
-                selected={option.special ? allOption && option.value === value : option.value === value}
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => selectOption(option)}
-              />
-            )) : <div className="batch-picker-empty">No batches found</div>}
-          </div>
-        </div>
-      )}
+      {typeof document !== "undefined" && panel ? createPortal(panel, document.body) : null}
     </div>
   )
 }
@@ -249,6 +258,7 @@ export function SearchableBatchMultiSelect({
 }) {
   const pickerRef = useRef(null)
   const triggerRef = useRef(null)
+  const panelRef = useRef(null)
   const searchRef = useRef(null)
   const listRef = useRef(null)
   const listboxId = useId()
@@ -257,7 +267,7 @@ export function SearchableBatchMultiSelect({
   const [activeIndex, setActiveIndex] = useState(0)
   const panelPosition = useBatchPickerPosition(triggerRef, open)
 
-  useOutsideClose(pickerRef, setOpen)
+  useOutsideClose(pickerRef, panelRef, setOpen)
 
   const options = useMemo(() => sortBatchOptions(batches), [batches])
   const filteredOptions = useMemo(() => filterBatchOptions(options, query), [options, query])
@@ -267,8 +277,11 @@ export function SearchableBatchMultiSelect({
     if (!open) return
     setQuery("")
     setActiveIndex(0)
-    requestAnimationFrame(() => searchRef.current?.focus())
   }, [open])
+
+  useEffect(() => {
+    if (open && panelPosition) requestAnimationFrame(() => searchRef.current?.focus())
+  }, [open, panelPosition])
 
   useEffect(() => {
     setActiveIndex(0)
@@ -333,6 +346,50 @@ export function SearchableBatchMultiSelect({
     }
   }
 
+  const panel = open && panelPosition ? (
+    <div
+      ref={panelRef}
+      className={`batch-picker-panel is-${panelPosition.placement}`}
+      style={{
+        left: panelPosition.left,
+        top: panelPosition.top,
+        width: panelPosition.width,
+        minWidth: panelPosition.minWidth,
+        maxWidth: panelPosition.maxWidth,
+        maxHeight: panelPosition.maxHeight,
+      }}
+    >
+      <div className="batch-picker-search-wrap">
+        <input
+          ref={searchRef}
+          type="search"
+          className="batch-picker-search"
+          placeholder="Search batches..."
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          onKeyDown={handleSearchKeyDown}
+          aria-label={`Search ${label.toLowerCase()}`}
+          aria-controls={listboxId}
+        />
+        {allowClear && values.length > 0 && <button type="button" className="batch-picker-clear" onClick={() => onChange?.([])}>Clear selection</button>}
+      </div>
+      <div id={listboxId} ref={listRef} className="batch-picker-options" role="listbox" aria-label={`${label} options`} aria-multiselectable="true">
+        {filteredOptions.length ? filteredOptions.map((option, index) => (
+          <PickerOption
+            key={`batch-${option.value}-${option.label}`}
+            option={option}
+            index={index}
+            activeIndex={activeIndex}
+            selected={selectedSet.has(option.value)}
+            multi
+            onMouseEnter={() => setActiveIndex(index)}
+            onClick={() => toggleOption(option)}
+          />
+        )) : <div className="batch-picker-empty">No batches found</div>}
+      </div>
+    </div>
+  ) : null
+
   return (
     <div className={`batch-picker ${className}`.trim()} ref={pickerRef}>
       <button
@@ -353,41 +410,7 @@ export function SearchableBatchMultiSelect({
         <span className="batch-picker-chevron" aria-hidden="true">⌄</span>
       </button>
 
-      {open && panelPosition && (
-        <div
-          className={`batch-picker-panel is-${panelPosition.placement}`}
-          style={{ top: panelPosition.top, right: 0, bottom: panelPosition.bottom, maxHeight: panelPosition.maxHeight }}
-        >
-          <div className="batch-picker-search-wrap">
-            <input
-              ref={searchRef}
-              type="search"
-              className="batch-picker-search"
-              placeholder="Search batches..."
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              onKeyDown={handleSearchKeyDown}
-              aria-label={`Search ${label.toLowerCase()}`}
-              aria-controls={listboxId}
-            />
-            {allowClear && values.length > 0 && <button type="button" className="batch-picker-clear" onClick={() => onChange?.([])}>Clear selection</button>}
-          </div>
-          <div id={listboxId} ref={listRef} className="batch-picker-options" role="listbox" aria-label={`${label} options`} aria-multiselectable="true">
-            {filteredOptions.length ? filteredOptions.map((option, index) => (
-              <PickerOption
-                key={`batch-${option.value}-${option.label}`}
-                option={option}
-                index={index}
-                activeIndex={activeIndex}
-                selected={selectedSet.has(option.value)}
-                multi
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => toggleOption(option)}
-              />
-            )) : <div className="batch-picker-empty">No batches found</div>}
-          </div>
-        </div>
-      )}
+      {typeof document !== "undefined" && panel ? createPortal(panel, document.body) : null}
     </div>
   )
 }

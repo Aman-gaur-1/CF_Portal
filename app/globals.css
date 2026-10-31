@@ -313,13 +313,13 @@ textarea.input { resize: vertical; min-height: 100px; }
 .batch-picker-placeholder, .batch-picker-chevron { color: var(--text-muted); }
 .batch-picker-chevron { flex: 0 0 auto; font-size: 13px; transition: transform 0.18s ease; }
 .batch-picker-trigger.is-open .batch-picker-chevron { transform: rotate(180deg); }
-.batch-picker-panel { position: absolute; left: 0; z-index: 999; display: flex; width: 100%; max-width: calc(100vw - 32px); max-height: 450px; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); box-shadow: var(--shadow); backdrop-filter: blur(18px); animation: batch-picker-in 170ms ease; }
+.batch-picker-panel { position: fixed; z-index: 65; display: flex; max-height: 450px; min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); box-shadow: var(--shadow); backdrop-filter: blur(18px); animation: batch-picker-in 170ms ease; }
 .batch-picker-search-wrap { padding: 9px; border-bottom: 1px solid var(--border); }
 .batch-picker-search { width: 100%; border: 1px solid var(--input-border); border-radius: 8px; background: var(--input-bg); padding: 8px 10px; color: var(--text-primary); font-size: 0.82rem; outline: none; }
 .batch-picker-search:focus { border-color: var(--primary); box-shadow: 0 0 0 4px var(--focus-ring); }
 .batch-picker-clear { margin-top: 7px; border: none; background: transparent; color: var(--primary); font-size: 0.74rem; font-weight: 700; text-align: left; cursor: pointer; }
 .batch-picker-clear:hover { text-decoration: underline; }
-.batch-picker-options { min-height: 0; max-height: 392px; flex: 1; overflow-y: scroll; padding: 3px 8px; scrollbar-gutter: stable; }
+.batch-picker-options { min-height: 0; flex: 1; overflow-y: auto; padding: 3px 8px; scrollbar-gutter: stable; }
 .batch-picker-option { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; border: none; border-bottom: 1px solid var(--border); padding: 12px 8px; background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
 .batch-picker-option:last-child { border-bottom: none; }
 .batch-picker-option:hover, .batch-picker-option.is-active { background: var(--expander-hover); }

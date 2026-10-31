@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { filterBatchOptions, sortBatchNames, sortBatchOptions } from '../lib/batch-picker.js'
+import { calculateBatchPickerPosition } from '../lib/batch-picker-position.js'
 
 const batches = [
   'SQL | 12 Jun | 07:00 PM',
@@ -39,6 +40,38 @@ const searchableNames = sortBatchOptions(batches)
 assert.equal(filterBatchOptions(searchableNames, 'SQL').length, 2, 'search supports prefix and middle text')
 assert.equal(filterBatchOptions(searchableNames, '08 Jun').length, 2, 'search supports date fragments')
 
+const belowPosition = calculateBatchPickerPosition(
+  { left: 100, top: 100, bottom: 150, width: 280 },
+  { width: 900, height: 800 },
+)
+assert.equal(belowPosition.placement, 'below', 'picker opens below when there is useful space below')
+assert.equal(belowPosition.top, 158, 'below placement uses trigger bottom plus the configured gap')
+assert.equal(belowPosition.maxHeight, 450, 'below placement uses the capped available height')
+
+const abovePosition = calculateBatchPickerPosition(
+  { left: 700, top: 680, bottom: 730, width: 280 },
+  { width: 900, height: 800 },
+)
+assert.equal(abovePosition.placement, 'above', 'picker opens above when the lower viewport is constrained')
+assert.equal(abovePosition.top, 222, 'above placement is anchored to the trigger and calculated panel height')
+
+const constrainedPosition = calculateBatchPickerPosition(
+  { left: 0, top: 140, bottom: 190, width: 300 },
+  { width: 360, height: 240 },
+)
+assert.equal(constrainedPosition.placement, 'above', 'constrained mobile viewport chooses the roomier side')
+assert.equal(constrainedPosition.maxHeight, 120, 'mobile max-height uses the actual available viewport space')
+assert.equal(constrainedPosition.left, 12, 'mobile panel is clamped to the viewport padding')
+assert.equal(constrainedPosition.width, 300, 'mobile panel keeps trigger width when it fits the safe viewport')
+assert.ok(constrainedPosition.left + constrainedPosition.width <= 348, 'mobile panel stays inside the viewport')
+
+const narrowPosition = calculateBatchPickerPosition(
+  { left: 0, top: 80, bottom: 120, width: 300 },
+  { width: 200, height: 600 },
+)
+assert.equal(narrowPosition.width, 176, 'very narrow viewports still clamp panel width')
+assert.equal(narrowPosition.left, 12, 'very narrow viewports clamp panel left edge')
+
 const searchableBatchSelect = fs.readFileSync(new URL('../components/ui/SearchableBatchSelect.jsx', import.meta.url), 'utf8')
 const curriculumPanel = fs.readFileSync(new URL('../components/admin/CurriculumPanel.jsx', import.meta.url), 'utf8')
 assert.match(searchableBatchSelect, /Search batches\.\.\./, 'shared search placeholder is present')
@@ -49,6 +82,16 @@ assert.match(searchableBatchSelect, /onChange\?\.\(option\.value\)/, 'single sel
 assert.match(searchableBatchSelect, /aria-multiselectable="true"/, 'multi-select exposes its selected state')
 assert.match(searchableBatchSelect, /\[\.\.\.specialOptions, \.\.\.options\]/, 'special options are pinned before sorted batches')
 assert.match(searchableBatchSelect, /values\.length \? `Selected: \$\{values\.length\}`/, 'multi-select keeps selected count visible')
+assert.match(searchableBatchSelect, /createPortal\(panel, document\.body\)/, 'picker panels render in document.body')
+assert.match(searchableBatchSelect, /const panelRef = useRef\(null\)/g, 'single and multi pickers keep portal panel refs')
+assert.match(searchableBatchSelect, /panelRef\.current\?\.contains\(event\.target\)/, 'outside-click handling includes the portaled panel')
+assert.match(searchableBatchSelect, /window\.addEventListener\("scroll", positionPanel, true\)/, 'nested scroll repositions the panel')
+assert.match(searchableBatchSelect, /scrollIntoView\(\{ block: "nearest" \}\)/, 'keyboard navigation keeps the active option visible')
+assert.doesNotMatch(searchableBatchSelect, /top: `calc|bottom: `calc/, 'panel positioning does not depend on parent-relative offsets')
+const globalCss = fs.readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8')
+assert.match(globalCss, /\.batch-picker-panel \{ position: fixed;/, 'portal panel uses fixed viewport positioning')
+assert.match(globalCss, /\.batch-picker-panel \{[^}]*z-index: 65;/s, 'panel layer stays above normal content and below critical modals')
+assert.match(globalCss, /\.batch-picker-options \{[^}]*overflow-y: auto;/s, 'options area owns internal scrolling')
 assert.match(curriculumPanel, /SearchableBatchMultiSelect/, 'curriculum uses the shared multi-select')
 assert.doesNotMatch(curriculumPanel, /batchSearch|visibleBatches|toggleBatch/, 'curriculum does not duplicate batch search logic')
 
