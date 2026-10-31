@@ -1,8 +1,7 @@
 "use client"
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { supabase } from "@/lib/supabase"
-import { BROWSER_RENDERABLE, formatDate, getTypeLabel, getTypeEmoji, getFileValidationError, isFileAllowed } from "@/lib/utils"
-import { getCourseworkPoints } from "@/lib/coursework-scoring"
+import { BROWSER_RENDERABLE, formatDate, getFileValidationError, isFileAllowed } from "@/lib/utils"
 import { triggerAiEvaluation } from "@/lib/ai/trigger-evaluation"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
 import Tabs from "@/components/ui/Tabs"
@@ -113,7 +112,7 @@ async function readFileForDetection(file) {
 export default function StudentView({ student, onLogout, onSessionRefresh }) {
     const [tab, setTab] = useState("submit")
   const [submissions, setSubmissions] = useState([])
-  const [lifetimeCoursework, setLifetimeCoursework] = useState(null)
+  const [courseworkSummary, setCourseworkSummary] = useState(null)
   const [activeCoursework, setActiveCoursework] = useState([])
   const [loadingCoursework, setLoadingCoursework] = useState(false)
   const [selectedType, setSelectedType] = useState("assignment")
@@ -237,7 +236,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
 
       if (!controller.signal.aborted) {
         setSubmissions(data.submissions || [])
-        setLifetimeCoursework(data.lifetimeCoursework || null)
+        setCourseworkSummary(data.courseworkSummary || data.lifetimeCoursework || null)
       }
     } catch (err) {
       if (err.name !== "AbortError") showErrorRef.current(err.message || "Could not load submissions.")
@@ -425,7 +424,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
 
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
 
-        {tab === "health" && <StudentHealthCard student={student} lifetimeCoursework={lifetimeCoursework} success={success} showError={showError} />}
+        {tab === "health" && <StudentHealthCard student={student} courseworkSummary={courseworkSummary} success={success} showError={showError} />}
 
         {/* Submit Tab */}
         {tab === "submit" && (
@@ -500,7 +499,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
               </div>
             ) : (
               <>
-                <ScoreSection submissions={submissions} lifetimeCoursework={lifetimeCoursework} />
+                <ScoreSection submissions={submissions} courseworkSummary={courseworkSummary} />
 
                 <div className="grid grid-cols-3 gap-3 mb-6">
                   {[[submissions.length, "Total Submitted"], [pending, "Pending Feedback"], [submissions.length - pending, "Feedback Done"]].map(([n, l]) => (
@@ -510,11 +509,11 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
 
                 {submissions.map(r => {
                   const hasFb = isReviewedSubmission(r)
-                  const pts = Number.isFinite(Number(r.coursework_points)) ? Number(r.coursework_points) : getCourseworkPoints(r.submission_type)
+                  const pts = Number.isFinite(Number(r.coursework_points)) ? Number(r.coursework_points) : 0
                   const pointLabel = pts ? ` • +${pts} pts` : ""
-                  const rawType = r.submission_type || "assignment"
-                  const typeLabel = getTypeLabel(rawType)
-                  const typeEmoji = getTypeEmoji(rawType)
+                  const canonicalType = r.canonical_coursework_type
+                  const typeLabel = canonicalType === "project" ? "Project" : canonicalType === "assignment" ? "Assignment" : "Legacy coursework"
+                  const typeEmoji = canonicalType === "project" ? "🚀" : canonicalType === "assignment" ? "📝" : "📘"
                   const shownFileName = displayFileName(r)
                   const queryBadge = queryBadgeForSubmission(r.id)
                   return (

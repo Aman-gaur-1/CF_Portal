@@ -61,7 +61,7 @@ export default function AdminHealthPanel({ adminToken, showError, success, batch
         </div>
         <div className="card admin-panel">
           <SectionHeading title="Health Card overview" detail="Configuration currently used by scoring and attendance." />
-           <div className="grid gap-2"><div className="admin-summary-row"><span>Epoch start</span><b>{data.epochStart}</b></div><div className="admin-summary-row"><span>Tracked attendance dates</span><b>{data.counts?.trackedAttendanceDates || 0}</b></div><div className="admin-summary-row"><span>Active point rules</span><b>{data.counts?.activePointRules || 0}</b></div><div className="admin-summary-row"><span>Timezone</span><b>{data.timezone}</b></div></div>
+           <div className="grid gap-2"><div className="admin-summary-row"><span>Tracked attendance dates</span><b>{data.counts?.trackedAttendanceDates || 0}</b></div><div className="admin-summary-row"><span>Active point rules</span><b>{data.counts?.activePointRules || 0}</b></div><div className="admin-summary-row"><span>Timezone</span><b>{data.timezone}</b></div></div>
           <p className="text-xs mt-4" style={{ color: "var(--portal-text-muted)" }}>AI evaluation scores remain separate from Health Card points.</p>
         </div>
       </>)}

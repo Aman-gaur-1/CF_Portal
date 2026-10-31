@@ -6,6 +6,7 @@ import {
   normalizeHealthActivityType,
 } from '../lib/student-health-card.js'
 import {
+  calculateCourseworkSummary,
   calculateLifetimeCoursework,
   getBadge,
   getNextMilestone,
@@ -31,28 +32,62 @@ assert.equal(normalizeHealthActivityType('50'), '')
 assert.equal(isUniqueViolation({ code: '23505' }), true)
 assert.equal(isUniqueViolation({ message: 'duplicate key value violates unique constraint' }), true)
 
-const representativeAssignments = Array.from({ length: 16 }, (_, index) => ({
+const canonicalAssignments = Array.from({ length: 16 }, (_, index) => ({
   id: `assignment-${index}`,
-  student_id: 'student-1',
-  batch: 'Batch A',
-  topic: `Assignment ${index}`,
-  submission_type: 'assignment',
-  submitted_at: `2026-09-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
+  item_type: 'assignment',
+  title: `Assignment ${index}`,
+  phase: 'Python',
+  batch: null,
+  active: true,
+  catalog_status: 'canonical',
 }))
-representativeAssignments.push({
-  id: 'assignment-resubmission',
-  student_id: 'student-1',
-  batch: 'Batch A',
-  topic: 'Assignment 0',
-  submission_type: 'assignment',
-  submitted_at: '2026-09-30T10:00:00.000Z',
-})
-const representativeScore = calculateLifetimeCoursework(representativeAssignments)
-assert.equal(representativeScore.assignmentCount, 16, 'resubmissions must not farm lifetime points')
+const representativeAssignments = canonicalAssignments.flatMap((item, index) => [
+  {
+    id: `submission-${index}`,
+    student_id: 'student-1',
+    batch: 'Batch A',
+    topic: item.title,
+    submission_type: index % 2 ? '100' : 'assignment',
+    coursework_item_id: item.id,
+    submitted_at: `2026-09-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
+  },
+  ...(index === 0 ? [{
+    id: 'assignment-resubmission',
+    student_id: 'student-1',
+    batch: 'Batch A',
+    topic: item.title,
+    submission_type: '50',
+    coursework_item_id: item.id,
+    submitted_at: '2026-10-02T10:00:00.000Z',
+  }] : []),
+])
+const representativeScore = calculateCourseworkSummary(representativeAssignments, canonicalAssignments)
+assert.equal(representativeScore.assignmentCount, 16, 'resubmissions must not farm Coursework Points')
 assert.equal(representativeScore.projectCount, 0)
-assert.equal(representativeScore.points, 80, '16 assignments must normalize to 80 points')
-assert.equal(getBadge(80).name, 'Dedicated', 'normalized badge should preserve the old 1600-point status')
-assert.equal(getNextMilestone(80), 100, '80 points should be 80 / 100 to the next badge')
+assert.equal(representativeScore.points, 80, '16 canonical assignments must earn 80 points')
+assert.equal(getBadge(80).name, 'Dedicated')
+assert.equal(getNextMilestone(80), 100)
+
+const legacy100 = calculateCourseworkSummary([
+  { id: 'legacy-100', student_id: 'student-1', batch: 'Batch A', submission_type: '100', coursework_item_id: 'assignment-0', submitted_at: '2026-09-01T10:00:00Z' },
+], canonicalAssignments)
+assert.equal(legacy100.points, 5, 'legacy 100 maps to one canonical assignment award')
+
+const legacy200 = calculateCourseworkSummary([
+  { id: 'legacy-200', student_id: 'student-1', batch: 'Batch A', submission_type: '200', coursework_item_id: 'project-1', submitted_at: '2026-09-01T10:00:00Z' },
+], [...canonicalAssignments, { id: 'project-1', item_type: 'project', title: 'Project 1', phase: 'Python', batch: null, active: true, catalog_status: 'canonical' }])
+assert.equal(legacy200.points, 10, 'legacy 200 maps to one canonical project award')
+
+assert.equal(calculateCourseworkSummary([
+  { id: 'unresolved-50', student_id: 'student-1', batch: 'Batch A', topic: 'Unmapped Extra', submission_type: '50', submitted_at: '2026-09-01T10:00:00Z' },
+]).points, 0, 'raw 50 without canonical evidence must earn zero')
+
+const reconciled50 = calculateCourseworkSummary([
+  { id: 'unresolved-50', student_id: 'student-1', batch: 'Batch A', topic: 'Mapped Assignment', submission_type: '50', submitted_at: '2026-09-01T10:00:00Z' },
+], [{ id: 'mapped-assignment', item_type: 'assignment', title: 'Mapped Assignment', phase: 'Python', batch: null, active: true, catalog_status: 'canonical' }], [{
+  student_id: 'student-1', batch: 'Batch A', coursework_item_id: 'mapped-assignment', source_submission_id: 'unresolved-50', source_topic: 'Mapped Assignment', item_type: 'assignment', status: 'confirmed', confidence: 'confirmed', counts_for_progress: true,
+}])
+assert.equal(reconciled50.points, 5, 'canonical reconciliation overrides raw 50')
 
 assert.equal(normalizeCatalogTitle('  SQL   Basics  '), 'sql basics')
 assert.equal(normalizeProjectDetectionTitle('Python_Projects'), 'python projects')
@@ -106,13 +141,14 @@ const catalogPreview = buildCourseworkCatalogPreview({
   courseworkItems: [],
   asOfDate: '2026-10-16',
 })
-assert.equal(catalogPreview.totals.totalSubmissionsExamined, 4, 'pre-epoch rows must be excluded from setup')
+assert.equal(catalogPreview.totals.totalSubmissionsExamined, 5, 'historical submissions remain eligible for canonical mapping review')
 assert.equal(catalogPreview.totals.linkedSubmissions, 1, 'existing links are counted but never re-linked')
-assert.equal(catalogPreview.totals.unlinkedSubmissions, 3)
+assert.equal(catalogPreview.totals.unlinkedSubmissions, 4)
 assert.equal(catalogPreview.totals.ambiguousMatches, 3, 'mixed assignment/project title must remain ambiguous')
-assert.equal(catalogPreview.candidates.length, 1)
-assert.equal(catalogPreview.candidates[0].confidence, 'ambiguous')
-assert.equal(catalogPreview.candidates[0].canLink, false)
+assert.equal(catalogPreview.candidates.length, 2)
+assert.equal(catalogPreview.candidates.find(candidate => candidate.normalizedTitle === 'sql basics').confidence, 'ambiguous')
+assert.equal(catalogPreview.candidates.find(candidate => candidate.normalizedTitle === 'sql basics').canLink, false)
+assert.equal(catalogPreview.candidates.find(candidate => candidate.normalizedTitle === 'old work').confidence, 'exact')
 
 const safeCatalogPreview = buildCourseworkCatalogPreview({
   students: [{ id: 'student-1', batch: 'Batch B' }],

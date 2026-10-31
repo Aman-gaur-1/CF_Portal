@@ -46,14 +46,14 @@ export async function GET(request) {
     const itemById = new Map(items.map(item => [String(item.id), item]))
     const directCompletedIds = new Set((submissions || []).filter(row => {
       const item = itemById.get(String(row.coursework_item_id))
-      return item && normalizeHealthCourseworkType(row.submission_type) === normalizeHealthCourseworkType(item.item_type)
+      const canonicalItem = item?.canonical_coursework_item_id
+        ? itemById.get(String(item.canonical_coursework_item_id))
+        : item
+      return canonicalItem
+        && (item.catalog_status === 'canonical' || item.canonical_coursework_item_id || canonicalItem.catalog_status === 'canonical')
+        && ['assignment', 'project'].includes(normalizeHealthCourseworkType(canonicalItem.item_type))
     }).map(row => String(row.coursework_item_id)))
     const reconciledIds = new Set((reconciliations || []).map(row => String(row.coursework_item_id)))
-    const currentScoredIds = new Set((submissions || []).filter(row => {
-      const submittedAt = row.submitted_at ? new Date(row.submitted_at).getTime() : 0
-      const item = itemById.get(String(row.coursework_item_id))
-      return submittedAt >= Date.parse('2026-10-01T00:00:00+05:30') && item && normalizeHealthCourseworkType(row.submission_type) === normalizeHealthCourseworkType(item.item_type)
-    }).map(row => String(row.coursework_item_id)))
     const coursework = selectVisibleStudentCoursework({
       assignments,
       items,
@@ -65,7 +65,7 @@ export async function GET(request) {
         return {
           completed,
           progressCompleted: completed,
-          scoredCurrent: currentScoredIds.has(sourceItemId) || currentScoredIds.has(displayItemId),
+          scored: completed,
           progressSource: (reconciledIds.has(sourceItemId) || reconciledIds.has(displayItemId)) && !(directCompletedIds.has(sourceItemId) || directCompletedIds.has(displayItemId)) ? 'historical_reconciliation' : (directCompletedIds.has(sourceItemId) || directCompletedIds.has(displayItemId)) ? 'submission' : null,
           status: completed ? 'completed' : 'pending',
         }

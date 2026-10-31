@@ -24,6 +24,7 @@ const REVIEW_LIST_SELECT = [
   'topic',
   'submitted_at',
   'submission_type',
+  'coursework_item_id',
   'phase',
   'detected_assignment_language',
   'detected_assignment_phase',
@@ -55,6 +56,7 @@ const REVIEW_DETAIL_SELECT = [
   'topic',
   'submitted_at',
   'submission_type',
+  'coursework_item_id',
   'phase',
   'detected_assignment_language',
   'detected_assignment_phase',
@@ -157,8 +159,9 @@ async function loadSubmissionDetail(request, teacherName) {
     throw notFound
   }
 
+  const canonicalTypes = await loadCanonicalSubmissionTypes(supabase, [row])
   return {
-    submission: toDetailSubmission(await withSignedAssignmentUrl(row, { supabase })),
+    submission: toDetailSubmission(await withSignedAssignmentUrl(row, { supabase }), canonicalTypes.get(String(row.id))),
   }
 }
 
@@ -199,7 +202,8 @@ async function loadReviewPage(request, teacherName) {
     .in('batch', scope.batchNames)
   if (summaryError) throw new Error(summaryError.message)
 
-  const decoratedRows = (rows || []).map(row => toListSubmission(row, confirmedIds))
+  const canonicalTypes = await loadCanonicalSubmissionTypes(supabase, rows || [])
+  const decoratedRows = (rows || []).map(row => toListSubmission(row, confirmedIds, canonicalTypes.get(String(row.id))))
   const filtered = filterReviewRows(decoratedRows, request.nextUrl.searchParams, scope.teacherName, confirmedIds)
   const decoratedSummaryRows = (summaryRows || []).map(row => decorateSubmissionReviewState(row, confirmedIds))
   const staleConfirmed = decoratedRows.filter(row => confirmedIds.has(String(row.id)) && !isReviewedSubmission(row))
@@ -291,14 +295,58 @@ function applyReviewStatusSearchToQuery(search) {
   return next.trim()
 }
 
-function toListSubmission(row, confirmedIds) {
-  return trimSubmissionForList(decorateSubmissionReviewState(row, confirmedIds))
+async function loadCanonicalSubmissionTypes(supabase, rows) {
+  const itemIds = [...new Set((rows || []).map(row => row.coursework_item_id).filter(Boolean).map(String))]
+  const submissionIds = (rows || []).map(row => String(row.id)).filter(Boolean)
+  const [itemsResult, reconciliationsResult] = await Promise.all([
+    itemIds.length
+      ? supabase.from('coursework_items').select('id,item_type,catalog_status,canonical_coursework_item_id').in('id', itemIds)
+      : Promise.resolve({ data: [], error: null }),
+    submissionIds.length
+      ? supabase.from('student_coursework_reconciliations').select('source_submission_id,coursework_item_id,status,confidence,item_type').in('source_submission_id', submissionIds).eq('status', 'confirmed')
+      : Promise.resolve({ data: [], error: null }),
+  ])
+  if (itemsResult.error && !/coursework_item/i.test(itemsResult.error.message || '')) throw new Error(itemsResult.error.message)
+  if (reconciliationsResult.error && !/reconciliation/i.test(reconciliationsResult.error.message || '')) throw new Error(reconciliationsResult.error.message)
+
+  const sourceItems = itemsResult.data || []
+  const canonicalIds = [...new Set(sourceItems.map(item => item.canonical_coursework_item_id || (item.catalog_status === 'canonical' ? item.id : null)).filter(Boolean).map(String))]
+  const { data: canonicalItems, error: canonicalError } = canonicalIds.length
+    ? await supabase.from('coursework_items').select('id,item_type,catalog_status').in('id', canonicalIds)
+    : { data: [], error: null }
+  if (canonicalError) throw new Error(canonicalError.message)
+
+  const itemTypeById = new Map()
+  for (const item of [...sourceItems, ...(canonicalItems || [])]) {
+    const canonicalId = item.canonical_coursework_item_id || (item.catalog_status === 'canonical' ? item.id : null)
+    if (canonicalId && ['assignment', 'project'].includes(String(item.item_type || '').toLowerCase())) {
+      const canonicalType = String(item.item_type).toLowerCase()
+      itemTypeById.set(String(item.id), canonicalType)
+      itemTypeById.set(String(canonicalId), canonicalType)
+    }
+  }
+
+  const result = new Map()
+  for (const row of rows || []) {
+    const directType = itemTypeById.get(String(row.coursework_item_id || ''))
+    if (directType) result.set(String(row.id), directType)
+  }
+  for (const row of reconciliationsResult.data || []) {
+    const type = itemTypeById.get(String(row.coursework_item_id || '')) || String(row.item_type || '').toLowerCase()
+    if (type && ['assignment', 'project'].includes(type)) result.set(String(row.source_submission_id), type)
+  }
+  return result
 }
 
-function toDetailSubmission(row) {
+function toListSubmission(row, confirmedIds, canonicalType = null) {
+  return trimSubmissionForList({ ...decorateSubmissionReviewState(row, confirmedIds), canonical_coursework_type: canonicalType })
+}
+
+function toDetailSubmission(row, canonicalType = null) {
   const decorated = decorateSubmissionReviewState(row)
   return {
     ...decorated,
+    canonical_coursework_type: canonicalType,
     detailsLoaded: true,
     ai_score: normalizeAiScore(row.ai_evaluation?.score),
     ai_provider_diagnostics: row.ai_evaluation?.diagnostics?.ai_provider || null,
@@ -328,6 +376,8 @@ function trimSubmissionForList(row) {
     topic: row.topic,
     submitted_at: row.submitted_at,
     submission_type: row.submission_type,
+    coursework_item_id: row.coursework_item_id,
+    canonical_coursework_type: row.canonical_coursework_type || null,
     phase: row.phase,
     detected_assignment_language: row.detected_assignment_language,
     detected_assignment_phase: row.detected_assignment_phase,

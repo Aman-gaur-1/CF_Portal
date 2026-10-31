@@ -74,9 +74,9 @@ export default function StaffStudentHealthCard({ studentId, token, onClose }) {
         {loading ? <div className="flex justify-center py-12"><Spinner size="lg" /></div> : error ? <EmptyState title="Health Card unavailable" message={error} action={<button className="btn btn-secondary btn-sm" type="button" onClick={load}>Retry</button>} /> : (
           <div className="grid gap-5">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-              <MetricCard label="Coursework points" value={numeric(metrics.courseworkPoints, numeric(metrics.assignmentPoints) + numeric(metrics.projectPoints))} hint="Assignment + project" tone="primary" />
-              <MetricCard label="Health Card total" value={numeric(metrics.totalPoints)} hint="Coursework + attendance" tone="success" />
-              <MetricCard label="Rank" value={metrics.rank ? `#${metrics.rank}` : "—"} hint="Batch rank" />
+              <MetricCard label="Coursework Points" value={numeric(metrics.courseworkPoints, numeric(metrics.assignmentPoints) + numeric(metrics.projectPoints))} hint="Assignments + Projects" tone="primary" />
+              <MetricCard label="Health Card Total" value={numeric(metrics.totalPoints)} hint="Coursework + attendance" tone="success" />
+              <MetricCard label="Batch Rank" value={metrics.rank ? `#${metrics.rank}` : "Not ranked yet"} hint="Coursework Points only" />
               <MetricCard label="Assignments" value={`${numeric(metrics.assignmentCompleted)} / ${numeric(metrics.assignmentExpected)}`} hint={`${numeric(metrics.assignmentPending)} pending`} />
               <MetricCard label="Projects" value={`${numeric(metrics.projectCompleted)} / ${numeric(metrics.projectExpected)}`} hint={`${numeric(metrics.projectPending)} pending`} />
               <MetricCard label="Attendance" value={percentage(metrics.attendancePercentage)} hint={`${numeric(metrics.approvedAttendanceDays)} present`} />

@@ -5,7 +5,7 @@ import { getStudentFromRequest } from '@/lib/student-auth'
 import { sanitizeStudentText } from '@/lib/ai/sanitize'
 import { withSignedAssignmentUrls } from '@/lib/assignment-file-access'
 import { detectAssignmentLanguage, detectAssignmentType, normalizeAssignmentPhase, phaseMatchesDetectedLanguage } from '@/lib/assignment-analysis'
-import { calculateLifetimeCoursework, getCourseworkPoints } from '@/lib/coursework-scoring'
+import { calculateCourseworkSummary } from '@/lib/coursework-scoring'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
 import { normalizeHealthCourseworkType } from '@/lib/health-card-domain'
 import { isSupportedHealthCardPhase } from '@/lib/health-card-admin'
@@ -86,20 +86,36 @@ export async function GET(request) {
     let courseworkItems = []
     const { data: catalog, error: catalogError } = await supabase
       .from('coursework_items')
-      .select('id,item_type,title,batch,active')
+      .select('id,item_type,title,batch,active,catalog_status,canonical_coursework_item_id')
     if (!catalogError) courseworkItems = catalog || []
     else if (!isMissingHealthCardSchema(catalogError)) throw new Error(catalogError.message)
 
-    const { canonicalSubmissionIds, ...lifetimeCoursework } = calculateLifetimeCoursework(submissions, courseworkItems)
-    const canonicalIds = new Set(canonicalSubmissionIds.map(id => String(id)))
+    const { data: reconciliations, error: reconciliationError } = await supabase
+      .from('student_coursework_reconciliations')
+      .select('student_id,batch,coursework_item_id,source_submission_id,source_topic,item_type,confidence,status,counts_for_progress,confirmed_at,updated_at,created_at')
+      .eq('student_id', student.id)
+      .eq('batch', student.batch)
+      .eq('status', 'confirmed')
+    if (reconciliationError && !isMissingHealthCardSchema(reconciliationError)) throw new Error(reconciliationError.message)
+
+    const courseworkSummary = calculateCourseworkSummary(
+      submissions,
+      courseworkItems,
+      reconciliationError ? [] : (reconciliations || []),
+    )
     const decoratedSubmissions = submissions.map(row => ({
       ...row,
-      coursework_points: canonicalIds.has(String(row.id)) ? getCourseworkPoints(row.submission_type) : 0,
+      coursework_points: courseworkSummary.awardBySubmissionId.get(String(row.id)) || 0,
+      canonical_coursework_type: courseworkSummary.awards.find(award => String(award.id) === String(row.id))?.canonical_type || null,
     }))
+    const serializableSummary = { ...courseworkSummary, awardBySubmissionId: undefined }
     return jsonNoStore({
       success: true,
       submissions: await withSignedAssignmentUrls(decoratedSubmissions, { supabase }),
-      lifetimeCoursework,
+      courseworkSummary: serializableSummary,
+      // Compatibility alias for older clients; the product presents one
+      // unified Coursework Points total.
+      lifetimeCoursework: serializableSummary,
     })
   } catch (err) {
     console.error('[student-submissions] load failed', err?.message)

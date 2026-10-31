@@ -1,7 +1,7 @@
 "use client"
 import dynamic from "next/dynamic"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { getPoints, BROWSER_RENDERABLE, formatDate } from "@/lib/utils"
+import { BROWSER_RENDERABLE, formatDate } from "@/lib/utils"
 import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
 import { REVIEW_ACTIVITY_TTL_MS, serializeReviewActivity } from "@/lib/review-activity"
 import { decorateSubmissionReviewState, deriveReviewStatus, describeConfirmedIds, isReviewedSubmission, REVIEW_STATUS } from "@/lib/review-state"
@@ -15,13 +15,6 @@ import { ToastContainer, useToast } from "@/components/ui/Toast"
 import TeacherQueryPanel from "@/components/teacher/TeacherQueryPanel"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
-const POINT_OPTIONS = [
-  { value: "100", label: "Assignment (+100 pts)" },
-  { value: "200", label: "Project (+200 pts)" },
-  { value: "50", label: "Small Task (+50 pts)" },
-  { value: "20", label: "Micro Task (+20 pts)" },
-  { value: "custom", label: "Manual points" },
-]
 const DEFAULT_PHASE_OPTIONS = []
 const REVIEW_REFRESH_MS = 15000
 const SEARCH_DEBOUNCE_MS = 250
@@ -449,9 +442,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
   useEffect(() => setSearchInput(globalSearch), [globalSearch])
-  const [submissionTypes, setSubmissionTypes] = useState({})
   const [submissionPhases, setSubmissionPhases] = useState({})
-  const [submissionCustomPoints, setSubmissionCustomPoints] = useState({})
   const [phaseOptions, setPhaseOptions] = useState(DEFAULT_PHASE_OPTIONS)
   const [aiGeneratingIds, setAiGeneratingIds] = useState([])
   const [editingDraftId, setEditingDraftId] = useState(null)
@@ -568,21 +559,12 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
       const nextPagination = scoped.pagination || { page: 1, pageSize: 50, total: rows.length, totalPages: 1 }
       setPagination(nextPagination)
 
-      const types = {}, phases = {}, customPoints = {}
+      const phases = {}
       const allPhases = new Set([...DEFAULT_PHASE_OPTIONS, ...activePhaseNames])
       for (const r of rows) {
-        const rawType = r.submission_type || "assignment"
-        if (rawType === "assignment") types[r.id] = "100"
-        else if (rawType === "project") types[r.id] = "200"
-        else if (/^[0-9]+$/.test(rawType) && !["100", "200", "50", "20"].includes(rawType)) {
-          types[r.id] = "custom"
-          customPoints[r.id] = rawType
-        } else types[r.id] = rawType
         phases[r.id] = r.phase || defaultPhaseName
         if (r.phase) allPhases.add(r.phase)
       }
-      setSubmissionTypes(types)
-      setSubmissionCustomPoints(customPoints)
       setSubmissionPhases(phases)
       setPhaseOptions(Array.from(allPhases))
     } catch (err) {
@@ -904,8 +886,6 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
 
   async function saveFeedback(r, textOverride) {
     const wasReviewed = isReviewedSubmission(r)
-    const rawType = submissionTypes[r.id] || r.submission_type || "assignment"
-    const finalType = rawType === "custom" ? submissionCustomPoints[r.id] : rawType
     const phase = submissionPhases[r.id] || r.phase || phaseOptions[0] || ""
     const feedback = (textOverride ?? feedbackEdits[r.id] ?? r.feedback ?? r.ai_feedback ?? "").trim()
     if (!feedback) { showError("Feedback cannot be empty."); return }
@@ -915,7 +895,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
       const res = await fetch("/api/teacher-feedback", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders(teacherToken) },
-        body: JSON.stringify({ submissionId: r.id, feedback, submission_type: finalType, phase }),
+        body: JSON.stringify({ submissionId: r.id, feedback, phase }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not save feedback.")
@@ -965,7 +945,6 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
           action: "force_approve",
           submissionId: r.id,
           feedback,
-          submission_type: submissionTypes[r.id] || r.submission_type,
           phase: submissionPhases[r.id] || r.phase,
         }),
       })
@@ -1477,11 +1456,13 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
       ) : (
         filtered.map(r => {
           const hasFb = isReviewedSubmission(r)
-          const rawType = submissionTypes[r.id] || r.submission_type || "assignment"
-          const normalizedRawType = rawType === "assignment" ? "100" : rawType === "project" ? "200" : rawType
-          const newType = /^[0-9]+$/.test(normalizedRawType) && !["100", "200", "50", "20"].includes(normalizedRawType) ? "custom" : normalizedRawType
-          const customValue = submissionCustomPoints[r.id] || ""
           const newPhase = submissionPhases[r.id] || r.phase || phaseOptions[0] || ""
+          const canonicalType = r.canonical_coursework_type
+          const canonicalLabel = canonicalType === "project"
+            ? "Project · 10 pts"
+            : canonicalType === "assignment"
+              ? "Assignment · 5 pts"
+              : "Legacy coursework · 0 canonical pts"
           const reviewState = resolveSubmissionReviewState(r)
           const openQueryCount = openQueryCountForSubmission(r.id)
 
@@ -1628,17 +1609,9 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
 
               <div className="grid grid-cols-2 gap-3 mb-4 p-3 rounded-xl" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                 <div>
-                  <label className="label text-xs">Points</label>
-                  <select className="select text-xs" value={newType} onChange={e => {
-                    const selected = e.target.value
-                    setSubmissionTypes(prev => ({ ...prev, [r.id]: selected }))
-                    if (selected !== "custom") setSubmissionCustomPoints(prev => ({ ...prev, [r.id]: "" }))
-                  }}>
-                    {POINT_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                  {newType === "custom" && (
-                    <input type="number" min="1" className="input text-xs mt-2" placeholder="Enter custom points" value={customValue} onChange={e => setSubmissionCustomPoints(prev => ({ ...prev, [r.id]: e.target.value }))} />
-                  )}
+                  <label className="label text-xs">Coursework value</label>
+                  <p className="text-sm font-semibold mt-2" aria-label="Read-only coursework points">{canonicalLabel}</p>
+                  <p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>Derived from canonical coursework; teachers cannot edit points.</p>
                 </div>
                 <div>
                   <label className="label text-xs">Phase</label>

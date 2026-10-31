@@ -2,10 +2,10 @@
 
 import { calculateLifetimeCoursework, formatCourseworkPoints, getBadge, getNextMilestone } from "@/lib/coursework-scoring"
 
-export default function ScoreSection({ submissions, lifetimeCoursework }) {
+export default function ScoreSection({ submissions, courseworkSummary }) {
   if (!submissions.length) return null
 
-  const summary = lifetimeCoursework || calculateLifetimeCoursework(submissions)
+  const summary = courseworkSummary || calculateLifetimeCoursework(submissions)
   const score = Number(summary.points) || 0
   const badge = getBadge(score)
   const next = getNextMilestone(score)
@@ -22,7 +22,7 @@ export default function ScoreSection({ submissions, lifetimeCoursework }) {
       </div>
 
       <div className="score-card">
-        <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Lifetime coursework points</p>
+        <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Coursework Points</p>
         <p className="text-5xl font-black gradient-text mb-2">{formatCourseworkPoints(score)} pts</p>
         <p className="text-xs mb-3" style={{ color: "var(--text-secondary)" }}>
           {assignmentCount} assignments · {projectCount} projects

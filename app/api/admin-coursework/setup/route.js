@@ -5,9 +5,7 @@ import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getIndiaDateString, isMissingHealthCardSchema } from '@/lib/student-health-card'
 import { isUniqueViolation, normalizeCourseworkPayload } from '@/lib/health-card-admin'
 import {
-  COURSEWORK_CATALOG_EPOCH,
   buildCourseworkCatalogPreview,
-  isCatalogEpochEligible,
   normalizeCatalogTitle,
   normalizeCatalogType,
   parseCourseworkCandidateKey,
@@ -83,7 +81,6 @@ function exactSubmissionRows({ submissions, students, candidate }) {
   return (submissions || []).filter(row => (
     String(row.batch) === String(candidate.batch) &&
     studentBatches.get(String(row.student_id)) === String(candidate.batch) &&
-    isCatalogEpochEligible(row.submitted_at, { epoch: COURSEWORK_CATALOG_EPOCH, asOfDate: getIndiaDateString() }) &&
     normalizeCatalogType(row.submission_type) === candidate.type &&
     normalizeCatalogTitle(row.topic) === candidate.normalizedTitle
   ))
@@ -115,7 +112,6 @@ async function linkCandidate({ supabase, candidate, item, students }) {
   const eligibleIds = (rows || [])
     .filter(row => (
       !row.coursework_item_id &&
-      isCatalogEpochEligible(row.submitted_at, { epoch: COURSEWORK_CATALOG_EPOCH, asOfDate: getIndiaDateString() }) &&
       String(row.batch) === String(candidate.batch) &&
       studentBatches.get(String(row.student_id)) === String(candidate.batch) &&
       normalizeCatalogType(row.submission_type) === candidate.type &&
@@ -145,7 +141,6 @@ export async function GET(request) {
       students,
       submissions,
       courseworkItems,
-      epoch: COURSEWORK_CATALOG_EPOCH,
       asOfDate: getIndiaDateString(),
     })
     return jsonNoStore(previewResponse(preview))
@@ -168,7 +163,6 @@ export async function POST(request) {
       students,
       submissions,
       courseworkItems,
-      epoch: COURSEWORK_CATALOG_EPOCH,
       asOfDate: getIndiaDateString(),
     })
 
