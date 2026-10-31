@@ -62,6 +62,7 @@ const convertedLocations = [
   'components/admin/AdminQueriesPanel.jsx',
   'components/admin/BatchSetupPanel.jsx',
   'components/admin/CurriculumPanel.jsx',
+  'components/admin/AdminCourseworkSetupPanel.jsx',
   'components/teacher/AttendanceTab.jsx',
   'components/teacher/StudentsTab.jsx',
   'components/teacher/StudentHealthPanel.jsx',
