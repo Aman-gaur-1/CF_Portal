@@ -78,6 +78,7 @@ assert.match(unifiedMigration, /student_coursework_reconciliation_no_points_chec
 assert.match(unifiedMigration, /cf_enforce_canonical_submission_type/)
 assert.match(unifiedMigration, /DENSE_RANK\(\)/)
 assert.match(unifiedMigration, /CASE rc\.item_type WHEN 'assignment' THEN 5 WHEN 'project' THEN 10/)
+assert.match(unifiedMigration, /reconciled_completion_candidates[\s\S]*?bs\.batch,/)
 assert.doesNotMatch(unifiedMigration, /DATE '2026-10-01'/)
 assert.match(submissionRoute, /coursework_item_id/)
 assert.match(submissionRoute, /batch_coursework_assignments/)

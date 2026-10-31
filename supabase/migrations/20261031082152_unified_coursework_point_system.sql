@@ -28,8 +28,7 @@ WHERE r.student_id = s.id
   AND r.confidence IN ('confirmed', 'high_confidence')
   AND c.catalog_status = 'canonical'
   AND lower(btrim(c.item_type)) = lower(btrim(r.item_type))
-  AND (c.batch IS NULL OR c.batch = r.batch)
-  AND s.batch = r.batch;
+  AND (c.batch IS NULL OR c.batch = s.batch OR c.batch = r.batch);
 
 CREATE OR REPLACE FUNCTION public.cf_enforce_canonical_submission_type()
 RETURNS trigger
@@ -221,14 +220,13 @@ AS $$
   reconciled_completion_candidates AS (
     SELECT
       r.student_id,
-      r.batch,
+      bs.batch,
       cc.item_id,
       cc.item_type,
       COALESCE(r.confirmed_at, r.updated_at, r.created_at) AS completed_at
     FROM public.student_coursework_reconciliations r
     JOIN active_students bs
       ON bs.id = r.student_id
-     AND bs.batch = r.batch
     JOIN canonical_catalog cc ON cc.item_id = r.coursework_item_id
     WHERE r.status = 'confirmed'
       AND r.counts_for_progress
