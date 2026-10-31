@@ -162,7 +162,7 @@ export async function GET(request) {
       fetchAllStudents(supabase, requestedStatus),
       fetchAllRows(supabase, 'batches', '*', 'created_at'),
       fetchAllRows(supabase, 'trainers', '*', 'created_at'),
-      fetchAllRows(supabase, 'submissions', 'id,student_id,batch,topic,submitted_at,feedback,feedback_at,ai_feedback,ai_feedback_at,ai_status,phase,submission_type'),
+      fetchAllRows(supabase, 'submissions', 'id,student_id,batch,topic,submitted_at,feedback,feedback_at,ai_feedback,ai_feedback_at,ai_status,phase,submission_type,coursework_item_id'),
     ])
 
     const metrics = loadMetricsFromSubmissionRows(submissions)

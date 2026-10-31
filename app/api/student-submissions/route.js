@@ -97,15 +97,27 @@ export async function GET(request) {
       .eq('status', 'confirmed')
     if (reconciliationError && !isMissingHealthCardSchema(reconciliationError)) throw new Error(reconciliationError.message)
 
+    const { data: corrections, error: correctionError } = await supabase
+      .from('coursework_mapping_corrections')
+      .select('id,submission_id,student_id,batch,new_canonical_coursework_item_id,new_canonical_title,new_canonical_phase,new_item_type,admin_name,reason,corrected_at')
+      .eq('student_id', student.id)
+      .order('corrected_at', { ascending: false })
+      .order('id', { ascending: false })
+    if (correctionError && !isMissingHealthCardSchema(correctionError)) throw new Error(correctionError.message)
+
     const courseworkSummary = calculateCourseworkSummary(
       submissions,
       courseworkItems,
       reconciliationError ? [] : (reconciliations || []),
+      correctionError ? [] : (corrections || []),
     )
     const decoratedSubmissions = submissions.map(row => ({
       ...row,
       coursework_points: courseworkSummary.awardBySubmissionId.get(String(row.id)) || 0,
       canonical_coursework_type: courseworkSummary.awards.find(award => String(award.id) === String(row.id))?.canonical_type || null,
+      canonical_coursework_title: courseworkSummary.awards.find(award => String(award.id) === String(row.id))?.canonical_title || null,
+      canonical_coursework_phase: courseworkSummary.awards.find(award => String(award.id) === String(row.id))?.canonical_phase || null,
+      coursework_mapping_source: courseworkSummary.awards.find(award => String(award.id) === String(row.id))?.source || null,
     }))
     const serializableSummary = { ...courseworkSummary, awardBySubmissionId: undefined }
     return jsonNoStore({

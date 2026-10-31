@@ -18,6 +18,7 @@ import AdminHealthPanel from "@/components/admin/AdminHealthPanel"
 import BatchSetupPanel from "@/components/admin/BatchSetupPanel"
 import CurriculumPanel from "@/components/admin/CurriculumPanel"
 import StaffStudentHealthCard from "@/components/ui/StaffStudentHealthCard"
+import CorrectCourseworkMappingModal from "@/components/admin/CorrectCourseworkMappingModal"
 import PageHeader from "@/components/ui/PageHeader"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
@@ -275,6 +276,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [editingStudentId, setEditingStudentId] = useState(null)
   const [studentProfileForm, setStudentProfileForm] = useState({ name: "", batch: "", password: "" })
   const [healthStudent, setHealthStudent] = useState(null)
+  const [mappingSubmission, setMappingSubmission] = useState(null)
   const [studentLifecycleBusyId, setStudentLifecycleBusyId] = useState(null)
   const [deleteStudentTarget, setDeleteStudentTarget] = useState(null)
   const [deleteStudentConfirmation, setDeleteStudentConfirmation] = useState("")
@@ -824,8 +826,11 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
                       {count > 0 && <button type="button" className="admin-student-submissions-toggle" onClick={() => setExpandedStudentId(expanded ? null : student.id)}>{expanded ? "Hide submissions" : "View submissions"}</button>}
                       {expanded && <div className="admin-student-submissions">
                         {studentSubmissions.map(submission => <div className="admin-student-submission" key={submission.id}>
-                          <div><b>{submission.topic || "Untitled assignment"}</b><span>{submission.phase || submission.submission_type || "Assignment"}</span></div>
-                          <span className={submission.feedback || submission.feedback_at ? "badge-done" : submission.ai_status === "failed" ? "badge-failed" : "badge-pending"}>{submission.feedback || submission.feedback_at ? "Reviewed" : submission.ai_status === "failed" ? "AI Failed" : "Pending"}</span>
+                          <div><b>{submission.topic || "Untitled assignment"}</b><span>{submission.phase || submission.submission_type || "Assignment"} · {submission.submission_type === "project" || submission.submission_type === "200" ? "Project · 10 pts" : "Assignment · 5 pts"}</span></div>
+                          <div className="flex gap-2 items-center flex-wrap justify-end">
+                            <span className={submission.feedback || submission.feedback_at ? "badge-done" : submission.ai_status === "failed" ? "badge-failed" : "badge-pending"}>{submission.feedback || submission.feedback_at ? "Reviewed" : submission.ai_status === "failed" ? "AI Failed" : "Pending"}</span>
+                            <button className="btn btn-secondary btn-sm" type="button" onClick={() => setMappingSubmission(submission)}>Correct Mapping</button>
+                          </div>
                         </div>)}
                       </div>}
                       {editingStudentId === student.id && (
@@ -899,6 +904,14 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
         </div>
       )}
       {healthStudent && <StaffStudentHealthCard studentId={healthStudent.id} token={adminToken} onClose={() => setHealthStudent(null)} />}
+      {mappingSubmission && <CorrectCourseworkMappingModal
+        submission={mappingSubmission}
+        token={adminToken}
+        showError={showError}
+        success={success}
+        onClose={() => setMappingSubmission(null)}
+        onSaved={() => load({ silent: true })}
+      />}
       </div>
     )
   }

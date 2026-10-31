@@ -529,9 +529,10 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
                     >
                       <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm mb-3">
                         <span><b>Topic:</b> {r.topic}</span>
+                        {r.canonical_coursework_title && <span><b>Mapped coursework:</b> {r.canonical_coursework_title}</span>}
                         <span><b>Date:</b> {formatDate(r.submitted_at)}</span>
                         <span><b>Type:</b> {typeEmoji} {typeLabel} {pts > 0 && <span className="text-xs" style={{ color: "var(--primary)" }}>+{pts} pts</span>}</span>
-                        <span><b>Phase:</b> {r.phase || "Unassigned"}</span>
+                        <span><b>Phase:</b> {r.canonical_coursework_phase || r.phase || "Unassigned"}</span>
                       </div>
                       {r.comment && <p className="text-sm mb-3 px-3 py-2 rounded-lg" style={{ background: "var(--surface)", color: "var(--text-secondary)" }}>💬 {r.comment}</p>}
                       {r.file_url && r.file_name && (

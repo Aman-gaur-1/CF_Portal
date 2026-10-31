@@ -17,7 +17,8 @@
     "test:staging-authoritative": "node scripts/staging-authoritative-rehearsal.mjs",
     "test:student-lifecycle": "node scripts/student-lifecycle-tests.mjs",
     "test:cumulative-progress": "node scripts/cumulative-batch-progress-tests.mjs",
-    "test:admin-curriculum-bulk": "node scripts/admin-curriculum-bulk-tests.mjs"
+    "test:admin-curriculum-bulk": "node scripts/admin-curriculum-bulk-tests.mjs",
+    "test:admin-coursework-mapping": "node scripts/admin-coursework-mapping-tests.mjs"
   },
   "dependencies": {
     "@huggingface/inference": "^4.13.15",
