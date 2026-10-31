@@ -2,336 +2,367 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Spinner from "@/components/ui/Spinner"
-import RefreshButton from "@/components/ui/RefreshButton"
-import ConfirmDialog from "@/components/ui/ConfirmDialog"
 import EmptyState from "@/components/ui/EmptyState"
 import MetricCard from "@/components/ui/MetricCard"
-import SectionHeading from "@/components/ui/SectionHeading"
 import AttendanceUpload from "@/components/ui/AttendanceUpload"
 import AttendanceResolveDialog from "@/components/ui/AttendanceResolveDialog"
 import AttendanceImportHistory from "@/components/ui/AttendanceImportHistory"
+import AttendanceDetailDrawer from "@/components/ui/AttendanceDetailDrawer"
 import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 
+const SOURCE_LABELS = {
+  teams_report: "Teams Upload",
+  student_attendance_query: "Student Request",
+  student_self_mark: "Student Request",
+  manual_resolution: "Admin",
+  admin: "Admin",
+  teacher: "Teacher",
+  legacy: "Historical record",
+}
+
+function todayValue() {
+  const now = new Date()
+  const offset = now.getTimezoneOffset() * 60_000
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10)
+}
+
+function formatTime(value) {
+  return value ? String(value).slice(11, 16) : ""
+}
+
+function sourceLabel(source) {
+  return SOURCE_LABELS[source] || "Attendance record"
+}
+
+function statusLabel(status) {
+  if (status === "present") return "Present"
+  if (status === "pending") return "Pending"
+  if (status === "rejected") return "Rejected"
+  return "Not recorded"
+}
+
 function statusClass(status) {
-  if (status === "approved") return "badge-done"
+  if (status === "present") return "badge-done"
   if (status === "rejected") return "badge-failed"
   return "badge-pending"
 }
 
+function sessionLabel(session) {
+  if (!session) return "Choose a class session"
+  const time = formatTime(session.starts_at)
+  return `${session.title || "Class session"}${time ? ` · ${time}` : ""}`
+}
+
 export default function AdminAttendancePanel({ adminToken, batches = [], success, showError, focusMode = "" }) {
-  const [mode, setMode] = useState("upload")
-  const [status, setStatus] = useState("pending")
   const [batch, setBatch] = useState("")
-  const [date, setDate] = useState("")
+  const [date, setDate] = useState(todayValue)
+  const [sessionId, setSessionId] = useState("")
   const [search, setSearch] = useState("")
-  const [attendance, setAttendance] = useState([])
-  const [counts, setCounts] = useState({ pending: 0, approved: 0, rejected: 0 })
-  const [loading, setLoading] = useState(true)
-  const [reviewingId, setReviewingId] = useState("")
-  const [selectedIds, setSelectedIds] = useState([])
-  const [sessionSelections, setSessionSelections] = useState({})
-  const [confirmReject, setConfirmReject] = useState(false)
-  const [unlinked, setUnlinked] = useState([])
-  const [unlinkedLoading, setUnlinkedLoading] = useState(false)
-  const [rematchResults, setRematchResults] = useState({})
-  const [actioningId, setActioningId] = useState("")
+  const [rosterFilter, setRosterFilter] = useState("all")
+  const [overview, setOverview] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [detailRow, setDetailRow] = useState(null)
   const [resolvingRow, setResolvingRow] = useState(null)
+  const [sessionSelections, setSessionSelections] = useState({})
+  const [busyKey, setBusyKey] = useState("")
+  const [rematchResults, setRematchResults] = useState({})
+  const actionRequiredRef = useRef(null)
   const showErrorRef = useRef(showError)
   const successRef = useRef(success)
 
   useEffect(() => { showErrorRef.current = showError }, [showError])
   useEffect(() => { successRef.current = success }, [success])
 
-  const load = useCallback(async () => {
+  const batchNames = useMemo(() => batches.map(item => item?.name || item).filter(Boolean), [batches])
+  const sessions = overview?.sessions || []
+  const selectedSession = overview?.selectedSession || sessions.find(item => String(item.id) === String(sessionId))
+
+  const loadOverview = useCallback(async () => {
+    if (!batch || !date) {
+      setOverview(null)
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
-      const params = new URLSearchParams({ status })
-      if (batch) params.set("batch", batch)
-      if (date) params.set("date", date)
-      if (search.trim()) params.set("search", search.trim())
+      const params = new URLSearchParams({ overview: "1", batch, date })
+      if (sessionId) params.set("session", sessionId)
       const res = await fetch(`/api/admin-attendance?${params.toString()}`, { cache: "no-store", headers: { Authorization: `Bearer ${adminToken}` } })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Could not load attendance.")
-      setAttendance(data.attendance || [])
-      setCounts(data.counts || { pending: 0, approved: 0, rejected: 0 })
-      setSelectedIds([])
-      setSessionSelections({})
+      if (!res.ok) throw new Error(data.error || "We couldn't load this class attendance.")
+      setOverview(data)
+      if (data.selectedSessionId && data.selectedSessionId !== sessionId) setSessionId(data.selectedSessionId)
+      if (!data.selectedSessionId && sessionId && !(data.sessions || []).some(item => String(item.id) === String(sessionId))) setSessionId("")
+      setRematchResults({})
     } catch (error) {
-      showErrorRef.current(error.message || "Could not load attendance.")
+      setOverview(null)
+      showErrorRef.current(error.message || "We couldn't load this class attendance.")
     } finally {
       setLoading(false)
     }
-  }, [adminToken, batch, date, search, status])
+  }, [adminToken, batch, date, sessionId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { loadOverview() }, [loadOverview])
 
-  const loadUnlinked = useCallback(async () => {
-    setUnlinkedLoading(true)
-    try {
-      const params = new URLSearchParams()
-      if (batch) params.set("batch", batch)
-      if (date) params.set("date", date)
-      const res = await fetch(`/api/admin-attendance/unlinked?${params.toString()}`, { cache: "no-store", headers: { Authorization: `Bearer ${adminToken}` } })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Could not load unlinked records.")
-      setUnlinked(data.unlinked || [])
-      setRematchResults({})
-    } catch (error) {
-      showErrorRef.current(error.message || "Could not load unlinked records.")
-    } finally {
-      setUnlinkedLoading(false)
+  useEffect(() => {
+    if (focusMode !== "needs") return
+    setRosterFilter("needs")
+    requestAnimationFrame(() => actionRequiredRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }))
+  }, [focusMode])
+
+  const filteredRoster = useMemo(() => {
+    const rows = overview?.roster || []
+    const query = search.trim().toLowerCase()
+    return rows.filter(row => {
+      const matchesFilter = rosterFilter === "all"
+        || (rosterFilter === "not_recorded" && row.status === "not_recorded")
+        || row.status === rosterFilter
+      const matchesSearch = !query || String(row.student?.name || "").toLowerCase().includes(query)
+      return matchesFilter && matchesSearch
+    })
+  }, [overview, rosterFilter, search])
+
+  function selectBatch(value) {
+    setBatch(value)
+    setSessionId("")
+    setOverview(null)
+    setRosterFilter("all")
+  }
+
+  function selectDate(event) {
+    setDate(event.target.value)
+    setSessionId("")
+    setOverview(null)
+    setRosterFilter("all")
+  }
+
+  async function reviewAttendance(row, action, explicitSessionId = "") {
+    const attendance = row.attendance || row
+    const id = attendance.id || row.id
+    const session = explicitSessionId || sessionSelections[id] || attendance.session_id || sessionId
+    if (action === "approve" && !session) {
+      showErrorRef.current("Choose the class session before approving this request.")
+      return
     }
-  }, [adminToken, batch, date])
-
-  useEffect(() => { if (mode === "needs") loadUnlinked() }, [mode, loadUnlinked])
-  useEffect(() => { if (focusMode === "needs") setMode("needs") }, [focusMode])
-
-  const pendingVisibleIds = useMemo(() => attendance.filter(row => row.status === "pending").map(row => row.id), [attendance])
-  const allVisibleSelected = pendingVisibleIds.length > 0 && pendingVisibleIds.every(id => selectedIds.includes(id))
-  const selectedSessionless = attendance.some(row => selectedIds.includes(row.id) && row.status === "pending" && !row.session_id)
-
-  function toggleSelected(id) {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id])
-  }
-
-  function toggleAll() {
-    setSelectedIds(allVisibleSelected ? [] : pendingVisibleIds)
-  }
-
-  async function review(ids, action, reviewNote = null, { sessionId = "" } = {}) {
-    setReviewingId(ids.join(","))
+    let reviewNote = null
+    if (action === "reject") {
+      reviewNote = window.prompt("Optional reason for rejecting this request")
+      if (reviewNote === null) return
+      reviewNote = reviewNote.trim() || null
+    }
+    setBusyKey(`${action}:${id}`)
     try {
-      const body = { action, reviewNote }
-      if (sessionId) body.sessionId = sessionId
-      if (ids.length === 1) body.attendanceId = ids[0]
-      else body.attendanceIds = ids
+      const body = { action, attendanceId: id, reviewNote }
+      if (session) body.sessionId = session
       const res = await fetch("/api/admin-attendance", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
         body: JSON.stringify(body),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Could not review attendance.")
-      const result = action === "approve" ? "approved" : action === "reject" ? "rejected" : "linked to the authoritative session"
-      successRef.current(`${data.updated?.length || 1} attendance record${(data.updated?.length || 1) === 1 ? "" : "s"} ${result}.`)
-      await load()
+      if (!res.ok) throw new Error(data.error || "We couldn't update this attendance request.")
+      successRef.current(action === "approve" ? "Attendance marked Present." : action === "reject" ? "Attendance request rejected." : "Class session resolved.")
+      setDetailRow(null)
+      await loadOverview()
     } catch (error) {
-      showErrorRef.current(error.message || "Could not review attendance.")
+      showErrorRef.current(error.message || "We couldn't update this attendance request.")
     } finally {
-      setReviewingId("")
+      setBusyKey("")
     }
   }
 
-  function resolveSession(row) {
-    const sessionId = sessionSelections[row.id]
-    if (sessionId) review([row.id], "resolve_session", null, { sessionId })
-  }
-
-  function rejectIds(ids) {
-    const note = window.prompt("Optional rejection note")
-    if (note === null) return
-    review(ids, "reject", note.trim() || null)
+  async function markPresent(row) {
+    const student = row.student
+    if (!student?.id || !sessionId) {
+      showErrorRef.current("Choose a class session before marking attendance.")
+      return
+    }
+    setBusyKey(`mark:${student.id}`)
+    try {
+      const res = await fetch("/api/admin-attendance", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ action: "mark_present", studentId: student.id, batch, date, sessionId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "We couldn't mark this student present.")
+      successRef.current(`${student.name} marked Present.`)
+      setDetailRow(null)
+      await loadOverview()
+    } catch (error) {
+      showErrorRef.current(error.message || "We couldn't mark this student present.")
+    } finally {
+      setBusyKey("")
+    }
   }
 
   async function rematchAll() {
-    if (!unlinked.length) return
-    setActioningId("rematch-all")
+    const rows = overview?.unlinked || []
+    if (!rows.length) return
+    setBusyKey("rematch-all")
     try {
       const res = await fetch("/api/admin-attendance/unlinked", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-        body: JSON.stringify({ action: "rematch", ids: unlinked.map(u => u.id) }),
+        body: JSON.stringify({ action: "rematch", ids: rows.map(row => row.id) }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Re-match failed.")
-      const map = {}
-      for (const r of (data.results || [])) map[r.unlinkedId] = r
-      setRematchResults(map)
-      const matched = (data.results || []).filter(r => r.studentId)
-      if (matched.length) successRef.current(`${matched.length} name${matched.length === 1 ? "" : "s"} matched to registered students.`)
-      else successRef.current("No new matches found. Students may not have registered yet.")
+      if (!res.ok) throw new Error(data.error || "We couldn't check these names again.")
+      const next = {}
+      for (const result of data.results || []) next[result.unlinkedId] = result
+      setRematchResults(next)
+      const matched = (data.results || []).filter(result => result.studentId).length
+      successRef.current(matched ? `${matched} name${matched === 1 ? "" : "s"} now have a suggested student.` : "No safe new matches were found.")
     } catch (error) {
-      showErrorRef.current(error.message || "Re-match failed.")
+      showErrorRef.current(error.message || "We couldn't check these names again.")
     } finally {
-      setActioningId("")
+      setBusyKey("")
     }
   }
 
-  async function linkOne({ id: unlinkedId, studentId, correctedDisplayName, rememberAlias }) {
-    setActioningId(unlinkedId)
+  async function linkOne({ id, studentId, correctedDisplayName, rememberAlias }) {
+    setBusyKey(`link:${id}`)
     try {
       const res = await fetch("/api/admin-attendance/unlinked", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-        body: JSON.stringify({ action: "link", id: unlinkedId, studentId, correctedDisplayName, rememberAlias }),
+        body: JSON.stringify({ action: "link", id, studentId, correctedDisplayName, rememberAlias }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Link failed.")
-      successRef.current(`Attendance linked and approved.`)
+      if (!res.ok) throw new Error(data.error || "We couldn't save this match.")
+      successRef.current("Attendance linked and marked Present.")
       setResolvingRow(null)
-      await loadUnlinked()
-      await load()
+      await loadOverview()
     } catch (error) {
-      showErrorRef.current(error.message || "Link failed.")
+      showErrorRef.current(error.message || "We couldn't save this match.")
     } finally {
-      setActioningId("")
+      setBusyKey("")
     }
   }
 
-  async function dismissIds(ids) {
-    setActioningId(ids.join(","))
+  async function dismissOne(id) {
+    setBusyKey(`dismiss:${id}`)
     try {
       const res = await fetch("/api/admin-attendance/unlinked", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-        body: JSON.stringify({ action: "dismiss", ids }),
+        body: JSON.stringify({ action: "dismiss", ids: [id] }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Dismiss failed.")
-      successRef.current(`${data.dismissed || ids.length} record${(data.dismissed || ids.length) === 1 ? "" : "s"} dismissed.`)
-      await loadUnlinked()
+      if (!res.ok) throw new Error(data.error || "We couldn't dismiss this name.")
+      successRef.current("Name left out of the class attendance.")
+      setResolvingRow(null)
+      await loadOverview()
     } catch (error) {
-      showErrorRef.current(error.message || "Dismiss failed.")
+      showErrorRef.current(error.message || "We couldn't dismiss this name.")
     } finally {
-      setActioningId("")
+      setBusyKey("")
     }
   }
+
+  function handleUploadDone(result) {
+    setUploadOpen(false)
+    if (result?.batch) setBatch(result.batch)
+    if (result?.date) setDate(result.date)
+    if (result?.sessionId) setSessionId(result.sessionId)
+    successRef.current("Attendance uploaded. The class overview is refreshed.")
+  }
+
+  const counts = overview?.counts || { present: 0, pendingRequests: 0, needsAttention: 0, notRecorded: 0, registered: 0, recorded: 0 }
+  const requests = overview?.requests || []
+  const needsAttention = overview?.unlinked || []
+  const hasIssues = requests.length > 0 || needsAttention.length > 0
+  const hasClass = Boolean(batch && date)
+  const hasSelectedSession = Boolean(overview?.selectedSessionId)
 
   return (
-    <div className="grid gap-4">
-      <div className="card admin-panel">
-        <SectionHeading
-          title="Attendance workflow"
-          detail="Upload a report, review matches, and confirm attendance safely."
-          action={<RefreshButton onClick={mode === "needs" ? loadUnlinked : load} disabled={loading || unlinkedLoading} />}
-        />
-        <div className="attendance-workflow-summary" aria-label="Attendance workflow steps">
-          <span>Upload report</span><span aria-hidden="true">→</span><span>Review matches</span><span aria-hidden="true">→</span><span>Confirm attendance</span>
+    <div className="attendance-workspace">
+      <header className="portal-page-header attendance-page-header">
+        <div className="portal-page-header-copy">
+          <p className="portal-eyebrow">Daily class view</p>
+          <h1 className="portal-page-title">Attendance</h1>
+          <p className="portal-page-subtitle">View class attendance, upload Teams reports, and resolve attendance issues.</p>
         </div>
-        <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Attendance sections">
-          <button type="button" role="tab" aria-selected={mode === "upload"} className={`tab-item ${mode === "upload" ? "active" : ""}`} onClick={() => setMode("upload")}>Upload Attendance</button>
-          <button type="button" role="tab" aria-selected={mode === "review"} className={`tab-item ${mode === "review" ? "active" : ""}`} onClick={() => setMode("review")}>Pending Approvals</button>
-          <button type="button" role="tab" aria-selected={mode === "needs"} className={`tab-item ${mode === "needs" ? "active" : ""}`} onClick={() => setMode("needs")}>Needs Attention</button>
-          <button type="button" role="tab" aria-selected={mode === "history"} className={`tab-item ${mode === "history" ? "active" : ""}`} onClick={() => setMode("history")}>History</button>
+        <div className="portal-page-actions">
+          <button type="button" className="btn btn-primary" onClick={() => setUploadOpen(true)}>Upload Attendance</button>
+          <button type="button" className="btn btn-secondary" onClick={() => setHistoryOpen(true)}>History</button>
         </div>
-      </div>
+      </header>
 
-      {mode === "upload" && <AttendanceUpload token={adminToken} batches={batches.map(b => b.name || b)} role="admin" onUploaded={() => { setStatus("pending"); load() }} onNeedsAttention={() => setMode("needs")} />}
-      {mode === "history" && <AttendanceImportHistory token={adminToken} batches={batches.map(b => b.name || b)} />}
+      <section className="card admin-panel attendance-filter-bar" aria-label="Attendance filters">
+        <div className="attendance-filter-heading">
+          <div><h2 className="section-heading-title">Choose a class</h2><p className="section-heading-detail">Select the batch and date you want to check.</p></div>
+          {hasSelectedSession && <span className="portal-chip">{sessionLabel(selectedSession)}</span>}
+        </div>
+        <div className="attendance-filter-grid attendance-filter-grid-primary">
+          <label className="attendance-field-label">Batch *<SearchableBatchSelect batches={batchNames} value={batch} onChange={selectBatch} placeholder="Select batch" label="Batch" required /></label>
+          <label className="attendance-field-label">Date *<input className="input" type="date" value={date} onChange={selectDate} aria-label="Attendance date" required /></label>
+          {sessions.length > 1 && <label className="attendance-field-label">Session<select className="select" value={sessionId} onChange={event => { setSessionId(event.target.value); setRosterFilter("all") }} aria-label="Attendance session"><option value="">Choose a class session</option>{sessions.map(session => <option key={session.id} value={session.id}>{sessionLabel(session)}</option>)}</select></label>}
+        </div>
+      </section>
 
-      {mode === "needs" && (
-        <div className="grid gap-4">
-          <div className="card admin-panel">
-            <div className="attendance-filter-grid">
-              <SearchableBatchSelect batches={batches} value={batch} onChange={setBatch} allOption allLabel="All batches" label="Batch filter" />
-              <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} aria-label="Date filter" />
-              <button type="button" className="btn btn-secondary btn-sm" onClick={rematchAll} disabled={Boolean(actioningId) || !unlinked.length}>
-                {actioningId === "rematch-all" ? <Spinner size="sm" /> : "Re-match all"}
-              </button>
+      {!hasClass ? (
+        <div className="card admin-panel"><EmptyState icon="◷" title="Select a batch and date to view attendance." message="Your class overview will appear here." /></div>
+      ) : loading && !overview ? (
+        <div className="card admin-panel flex justify-center"><Spinner size="lg" /></div>
+      ) : overview && !hasSelectedSession && sessions.length > 1 ? (
+        <div className="card admin-panel"><EmptyState icon="◷" title="Choose a class session." message="This batch has more than one class on this date." /></div>
+      ) : overview && !hasSelectedSession && sessions.length === 0 ? (
+        <div className="card admin-panel"><EmptyState icon="◷" title="No class session found for this date." message="Upload a Teams report to create the class session and start the attendance record." action={<button type="button" className="btn btn-primary" onClick={() => setUploadOpen(true)}>Upload Attendance</button>} /></div>
+      ) : overview ? (
+        <>
+          <section className="attendance-summary-grid" aria-label="Attendance summary">
+            <MetricCard label="Present" value={counts.present} hint={`${counts.recorded} of ${counts.registered} recorded`} tone="success" onClick={() => setRosterFilter("present")} />
+            <MetricCard label="Pending Requests" value={counts.pendingRequests} hint="Student requests to review" tone="warning" onClick={() => setRosterFilter("pending")} />
+            <MetricCard label="Needs Attention" value={counts.needsAttention} hint="Names or requests to resolve" tone="warning" onClick={() => { setRosterFilter("needs"); requestAnimationFrame(() => actionRequiredRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })) }} />
+            <MetricCard label="Not Recorded" value={counts.notRecorded} hint={`${counts.recorded} of ${counts.registered} recorded`} onClick={() => setRosterFilter("not_recorded")} />
+          </section>
+
+          <section className="card admin-panel" aria-labelledby="attendance-roster-heading">
+            <div className="section-heading">
+              <div className="section-heading-copy"><h2 id="attendance-roster-heading" className="section-heading-title">Class attendance</h2><p className="section-heading-detail">{counts.recorded} of {counts.registered} registered students recorded for {sessionLabel(selectedSession)}.</p></div>
+              <div className="attendance-roster-tools"><input className="input" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search student..." aria-label="Search student" /><button type="button" className="btn btn-secondary btn-sm" onClick={loadOverview} disabled={loading}>{loading ? <Spinner size="sm" /> : "Refresh"}</button></div>
             </div>
-          </div>
-
-          <div className="card admin-panel">
-            <SectionHeading title="Needs Attention" detail="Uploaded participant names that could not be safely matched yet." />
-            {unlinkedLoading ? <div className="flex justify-center py-8"><Spinner size="lg" /></div> : unlinked.length === 0 ? (
-              <EmptyState icon="✓" title="No participants need matching" message="All uploaded attendance has been matched or resolved." />
-            ) : (
-              <div className="attendance-list">
-                <p className="text-sm mb-3" style={{ color: "var(--text-secondary)" }}>{unlinked.length} participant{unlinked.length === 1 ? "" : "s"} need matching</p>
-                {unlinked.map(row => {
-                  const match = rematchResults[row.id]
+            {filteredRoster.length === 0 ? <EmptyState icon="✓" title={rosterFilter === "all" ? "No attendance has been recorded for this class yet." : "No students match this view."} message={rosterFilter === "all" ? "Upload a Teams report or mark a student Present." : "Try another summary card or search."} /> : (
+              <div className="attendance-roster" role="list" aria-label="Student attendance roster">
+                {filteredRoster.map(row => {
+                  const attendance = row.attendance || {}
+                  const busy = busyKey === `mark:${row.student?.id}` || busyKey === `approve:${attendance.id}` || busyKey === `reject:${attendance.id}`
                   return (
-                    <div key={row.id} className="attendance-row">
-                      <div className="min-w-0">
-                        <p className="font-semibold">{row.original_participant_name || row.participant_name}</p>
-                        <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{row.batch} · {row.attendance_date} · uploaded {String(row.created_at || "").slice(0, 16).replace("T", " ")}</p>
-                        {match && match.studentId && (
-                          <p className="text-xs mt-2" style={{ color: "var(--success)" }}>Suggested student: <b>{match.studentName}</b> · {Math.round(match.similarity * 100)}% match</p>
-                        )}
-                        {match && !match.studentId && (
-                          <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>Still no match — student may not have registered yet</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap justify-end">
-                        <span className="badge-pending">Needs matching</span>
-                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setResolvingRow(row)} disabled={Boolean(actioningId)}>Match Student</button>
-                        {match && match.studentId && row.session_id && (
-                          <button type="button" className="btn btn-primary btn-sm" onClick={() => linkOne({ id: row.id, studentId: match.studentId })} disabled={Boolean(actioningId)}>
-                            {actioningId === row.id ? <Spinner size="sm" /> : "Accept Suggested Match"}
-                          </button>
-                        )}
-                        {!row.session_id && <span className="badge-pending">Session required</span>}
-                        <button type="button" className="btn btn-danger-outline btn-sm" onClick={() => dismissIds([row.id])} disabled={Boolean(actioningId)}>Dismiss</button>
+                    <div className="attendance-roster-row" key={row.student.id} role="listitem">
+                      <button type="button" className="attendance-roster-main" onClick={() => setDetailRow(row)} aria-label={`View attendance details for ${row.student?.name || "student"}`}>
+                        <span className="attendance-student-name">{row.student?.name || "Inactive student"}</span>
+                        <span className={`${statusClass(row.status)} attendance-status`}>{statusLabel(row.status)}</span>
+                        <span className="attendance-source">{attendance.source ? sourceLabel(attendance.source) : "—"}</span>
+                      </button>
+                      <div className="attendance-roster-actions">
+                        {row.status === "pending" && <><button type="button" className="btn btn-primary btn-xs" onClick={() => reviewAttendance(row, "approve")} disabled={busy || !attendance.session_id} title={!attendance.session_id ? "Resolve the class session first" : undefined}>Approve</button><button type="button" className="btn btn-danger-outline btn-xs" onClick={() => reviewAttendance(row, "reject")} disabled={busy}>Reject</button></>}
+                        {row.status === "not_recorded" && <button type="button" className="btn btn-primary btn-xs" onClick={() => markPresent(row)} disabled={busy || !sessionId}>Mark Present</button>}
+                        {row.status !== "pending" && row.status !== "not_recorded" && <button type="button" className="btn btn-secondary btn-xs" onClick={() => setDetailRow(row)}>View</button>}
                       </div>
                     </div>
                   )
                 })}
               </div>
             )}
-          </div>
-        </div>
-      )}
+          </section>
 
-      {mode === "review" && <>
-        <div className="card admin-panel">
-          <SectionHeading title="Pending Approvals" detail="Students who marked attendance or reported a missing attendance record appear here." />
-          <div className="status-summary">
-            <MetricCard label="Pending" value={counts.pending || 0} tone="warning" onClick={() => setStatus("pending")} style={{ cursor: "pointer", outline: status === "pending" ? "2px solid var(--warning)" : "none" }} />
-            <MetricCard label="Approved" value={counts.approved || 0} tone="success" onClick={() => setStatus("approved")} style={{ cursor: "pointer", outline: status === "approved" ? "2px solid var(--success)" : "none" }} />
-            <MetricCard label="Rejected" value={counts.rejected || 0} onClick={() => setStatus("rejected")} style={{ cursor: "pointer", outline: status === "rejected" ? "2px solid var(--danger)" : "none" }} />
-          </div>
-          <div className="attendance-filter-grid">
-            <SearchableBatchSelect batches={batches} value={batch} onChange={setBatch} allOption allLabel="All batches" label="Attendance batch filter" />
-            <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} aria-label="Attendance date filter" />
-            <input className="input" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search student" aria-label="Search student" />
-            <select className="select" value={status} onChange={e => setStatus(e.target.value)} aria-label="Attendance status filter">
-              {["pending", "approved", "rejected", "all"].map(v => <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>)}
-            </select>
-          </div>
-        </div>
+          <section className="card admin-panel attendance-action-required" ref={actionRequiredRef} aria-labelledby="attendance-action-heading">
+            <div className="section-heading"><div className="section-heading-copy"><h2 id="attendance-action-heading" className="section-heading-title">Action Required</h2><p className="section-heading-detail">Only attendance that needs a decision appears here.</p></div>{hasIssues && <button type="button" className="btn btn-secondary btn-sm" onClick={rematchAll} disabled={busyKey === "rematch-all" || !needsAttention.length}>{busyKey === "rematch-all" ? <Spinner size="sm" /> : "Check names again"}</button>}</div>
+            {!hasIssues ? <EmptyState icon="✓" title="No attendance issues require attention." message="Everything is matched and up to date." /> : <div className="attendance-action-groups">
+              {requests.length > 0 && <div className="attendance-action-group"><h3>Student Requests <span className="portal-chip">{requests.length}</span></h3>{requests.map(row => <div className="attendance-action-row" key={row.id}><div className="min-w-0"><p className="font-semibold">{row.student?.name || "Student"}</p><p className="text-xs mt-1" style={{ color: "var(--portal-text-muted)" }}>{row.attendance_date} · {row.session_id ? sessionLabel(sessions.find(item => String(item.id) === String(row.session_id))) : "Session required"}</p><p className="text-sm mt-2" style={{ color: "var(--portal-text-secondary)" }}>{row.review_note || "Student requested attendance review."}</p></div><div className="flex items-center gap-2 flex-wrap justify-end"><button type="button" className="btn btn-secondary btn-xs" onClick={() => setDetailRow({ ...row, status: "pending", student: row.student })}>View</button>{!row.session_id && <select className="select attendance-action-session" value={sessionSelections[row.id] || ""} onChange={event => setSessionSelections(previous => ({ ...previous, [row.id]: event.target.value }))} aria-label={`Choose session for ${row.student?.name || "student"}`}><option value="">Resolve Session</option>{(row.available_sessions || sessions).map(item => <option key={item.id} value={item.id}>{sessionLabel(item)}</option>)}</select>}<button type="button" className="btn btn-primary btn-xs" onClick={() => reviewAttendance(row, "approve")} disabled={Boolean(busyKey) || (!row.session_id && !sessionSelections[row.id])}>Approve</button><button type="button" className="btn btn-danger-outline btn-xs" onClick={() => reviewAttendance(row, "reject")} disabled={Boolean(busyKey)}>Reject</button></div></div>)}</div>}
+              {needsAttention.length > 0 && <div className="attendance-action-group"><h3>Unmatched Participants <span className="portal-chip">{needsAttention.length}</span></h3>{needsAttention.map(row => { const suggestion = rematchResults[row.id]; return <div className="attendance-action-row" key={row.id}><div className="min-w-0"><p className="font-semibold">{row.original_participant_name || row.participant_name}</p><p className="text-xs mt-1" style={{ color: "var(--portal-text-muted)" }}>{row.batch} · {row.attendance_date}</p><p className="text-sm mt-2" style={{ color: suggestion?.studentId ? "var(--portal-success)" : "var(--portal-text-secondary)" }}>{suggestion?.studentId ? `Suggested student: ${suggestion.studentName}` : "This participant could not be safely matched to a registered student."}</p></div><div className="flex items-center gap-2 flex-wrap justify-end">{suggestion?.studentId && <button type="button" className="btn btn-primary btn-xs" onClick={() => linkOne({ id: row.id, studentId: suggestion.studentId })} disabled={Boolean(busyKey) || !row.session_id}>Accept Match</button>}<button type="button" className="btn btn-secondary btn-xs" onClick={() => setResolvingRow({ ...row, suggestion })} disabled={Boolean(busyKey)}>Choose Student</button><button type="button" className="btn btn-secondary btn-xs" onClick={() => dismissOne(row.id)} disabled={Boolean(busyKey)}>Dismiss</button>{!row.session_id && <span className="badge-pending">Session required</span>}</div></div> })}</div>}
+            </div>}
+          </section>
+        </>
+      ) : null}
 
-        <div className="card admin-panel">
-          {status === "pending" && selectedIds.length > 0 && (
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-4 p-3 rounded-lg" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-              <span className="text-sm">{selectedIds.length} pending selected</span>
-              <div className="flex gap-2">
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => review(selectedIds, "approve")} disabled={Boolean(reviewingId) || selectedSessionless} title={selectedSessionless ? "Remove sessionless rows before approving." : undefined}>Approve selected</button>
-                <button type="button" className="btn btn-danger-outline btn-sm" onClick={() => { if (selectedIds.length) setConfirmReject(true) }} disabled={Boolean(reviewingId)}>Reject selected</button>
-              </div>
-            </div>
-          )}
-          {loading ? <div className="flex justify-center py-8"><Spinner size="lg" /></div> : attendance.length === 0 ? (
-            <EmptyState icon="✓" title="No attendance records" message="Try a different status, batch, date, or student search." />
-          ) : (
-            <div className="attendance-list">
-              {status === "pending" && pendingVisibleIds.length > 0 && <label className="flex items-center gap-2 text-sm" style={{ color: "var(--text-secondary)" }}><input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} /> Select all visible pending</label>}
-              {attendance.map(row => (
-                <div key={row.id} className="attendance-row">
-                  <div className="flex items-start gap-3 min-w-0">
-                    {row.status === "pending" && <input type="checkbox" checked={selectedIds.includes(row.id)} onChange={() => toggleSelected(row.id)} aria-label={`Select ${row.student?.name || "attendance"}`} />}
-                    <div className="min-w-0">
-                      <p className="font-semibold">{row.student?.name || "Inactive student"}</p>
-                      <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{row.batch} · {row.attendance_date} · marked {String(row.marked_at || "").slice(0, 16).replace("T", " ")}</p>
-                      {row.review_note && <p className="text-xs mt-2" style={{ color: "var(--text-secondary)" }}>{row.review_note}</p>}
-                      {row.status === "pending" && !row.session_id && <div className="flex flex-wrap items-center gap-2 mt-2"><span className="badge-pending">Legacy attendance request</span><span className="badge-pending">Session required</span><select className="select" value={sessionSelections[row.id] || ""} onChange={event => setSessionSelections(prev => ({ ...prev, [row.id]: event.target.value }))} aria-label={`Authoritative session for ${row.student?.name || "attendance"}`}><option value="">{row.available_sessions?.length ? "Choose authoritative session" : "No authoritative session available"}</option>{(row.available_sessions || []).map(session => <option key={session.id} value={session.id}>{session.title}{session.starts_at ? ` · ${String(session.starts_at).slice(11, 16)}` : ""}</option>)}</select><button type="button" className="btn btn-secondary btn-sm" onClick={() => resolveSession(row)} disabled={Boolean(reviewingId) || !sessionSelections[row.id]}>{reviewingId === row.id ? <Spinner size="sm" /> : "Resolve session"}</button></div>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap justify-end">
-                    <span className={statusClass(row.status)}>{row.status}</span>
-                    {row.status === "pending" && <>
-                      {row.session_id && <button type="button" className="btn btn-primary btn-sm" onClick={() => review([row.id], "approve")} disabled={Boolean(reviewingId)}>{reviewingId === row.id ? <Spinner size="sm" /> : "Approve"}</button>}
-                      <button type="button" className="btn btn-danger-outline btn-sm" onClick={() => rejectIds([row.id])} disabled={Boolean(reviewingId)}>Reject</button>
-                    </>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </>}
-
-      {confirmReject && <ConfirmDialog message={`Reject ${selectedIds.length} selected attendance record${selectedIds.length === 1 ? "" : "s"}?`} confirmLabel="Reject selected" onCancel={() => setConfirmReject(false)} onConfirm={() => { setConfirmReject(false); rejectIds(selectedIds) }} />}
-      {resolvingRow && <AttendanceResolveDialog token={adminToken} row={resolvingRow} suggestion={rematchResults[resolvingRow.id]} onClose={() => setResolvingRow(null)} onResolve={linkOne} onDismiss={id => { setResolvingRow(null); dismissIds([id]) }} />}
+      {uploadOpen && <div className="attendance-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setUploadOpen(false) }}><div className="attendance-modal" role="dialog" aria-modal="true" aria-label="Upload attendance"><div className="attendance-modal-header"><div><p className="portal-eyebrow">Attendance upload</p><h2 className="portal-page-title">Upload Attendance</h2></div><button type="button" className="btn btn-secondary btn-sm" onClick={() => setUploadOpen(false)}>Close</button></div><AttendanceUpload token={adminToken} batches={batchNames} initialBatch={batch} initialDate={date} role="admin" onUploaded={() => {}} onNeedsAttention={() => { setUploadOpen(false); setRosterFilter("needs"); requestAnimationFrame(() => actionRequiredRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })) }} onDone={handleUploadDone} /></div></div>}
+      {historyOpen && <div className="attendance-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setHistoryOpen(false) }}><div className="attendance-modal attendance-history-modal" role="dialog" aria-modal="true" aria-label="Attendance history"><div className="attendance-modal-header"><div><p className="portal-eyebrow">Secondary view</p><h2 className="portal-page-title">History</h2></div><button type="button" className="btn btn-secondary btn-sm" onClick={() => setHistoryOpen(false)}>Close</button></div><AttendanceImportHistory token={adminToken} batches={batchNames} /></div></div>}
+      <AttendanceDetailDrawer row={detailRow} sessions={sessions} sessionSelection={detailRow ? (sessionSelections[detailRow.id] || sessionId) : ""} onSessionChange={value => detailRow && setSessionSelections(previous => ({ ...previous, [detailRow.id]: value }))} onApprove={() => detailRow && reviewAttendance(detailRow, "approve")} onReject={() => detailRow && reviewAttendance(detailRow, "reject")} onResolveSession={() => detailRow && reviewAttendance(detailRow, "resolve_session")} onMarkPresent={() => detailRow && markPresent(detailRow)} onClose={() => setDetailRow(null)} busy={Boolean(busyKey)} />
+      {resolvingRow && <AttendanceResolveDialog token={adminToken} row={resolvingRow} suggestion={resolvingRow.suggestion} onClose={() => setResolvingRow(null)} onResolve={linkOne} onDismiss={dismissOne} />}
     </div>
   )
 }

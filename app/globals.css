@@ -959,3 +959,74 @@ button.metric-card:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rg
   .attendance-row > :last-child { justify-content: flex-start; }
   .portal-footer { align-items: flex-start; flex-direction: column; }
 }
+
+/* Unified admin attendance workspace */
+.attendance-workspace { display: grid; gap: 16px; }
+.attendance-page-header { margin-bottom: 0; }
+.attendance-filter-bar { display: grid; gap: 16px; }
+.attendance-filter-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.attendance-filter-grid-primary { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 0; }
+.attendance-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.attendance-summary-grid .metric-card { min-height: 124px; }
+.attendance-roster-tools { display: flex; align-items: center; gap: 8px; min-width: min(360px, 100%); }
+.attendance-roster-tools .input { min-width: 0; }
+.attendance-roster { display: grid; gap: 6px; }
+.attendance-roster-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 9px 12px; border: 1px solid var(--portal-border); border-radius: var(--portal-radius-md); background: var(--portal-surface-muted); }
+.attendance-roster-row:hover { border-color: var(--portal-border-strong); }
+.attendance-roster-main { display: grid; grid-template-columns: minmax(140px, 1.2fr) minmax(112px, 0.45fr) minmax(110px, 0.7fr); align-items: center; gap: 12px; min-width: 0; padding: 3px 0; border: 0; background: transparent; color: var(--portal-text); text-align: left; cursor: pointer; }
+.attendance-student-name { overflow: hidden; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+.attendance-status { justify-self: start; }
+.attendance-source { color: var(--portal-text-secondary); font-size: 0.78rem; }
+.attendance-roster-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.attendance-action-required { scroll-margin-top: 20px; }
+.attendance-action-groups { display: grid; gap: 18px; }
+.attendance-action-group { display: grid; gap: 8px; }
+.attendance-action-group h3 { display: flex; align-items: center; gap: 8px; color: var(--portal-text); font-size: 0.86rem; font-weight: 750; }
+.attendance-action-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px; border: 1px solid var(--portal-border); border-radius: var(--portal-radius-md); background: var(--portal-surface-muted); }
+.attendance-action-session { width: auto; min-width: 170px; min-height: 32px; padding: 6px 32px 6px 9px; font-size: 0.74rem; }
+.attendance-modal-backdrop { position: fixed; inset: 0; z-index: 66; display: flex; align-items: flex-start; justify-content: center; overflow: auto; padding: 24px; background: rgba(15, 23, 42, 0.66); }
+.attendance-modal { width: min(920px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding: 22px; border: 1px solid var(--portal-border); border-radius: var(--portal-radius-lg); background: var(--portal-surface); box-shadow: var(--portal-shadow-sm); }
+.attendance-history-modal { width: min(1040px, 100%); }
+.attendance-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.attendance-upload-flow { display: grid; gap: 14px; }
+.attendance-upload-flow .empty-state { margin-top: 0; }
+.attendance-upload-submit { justify-self: start; }
+.attendance-dropzone { border: 1px dashed var(--portal-border-strong); border-radius: var(--portal-radius-md); background: var(--portal-surface-muted); transition: border-color 0.15s, background 0.15s; }
+.attendance-dropzone.is-dragging, .attendance-dropzone:hover { border-color: var(--portal-primary); background: var(--portal-primary-soft); }
+.attendance-dropzone input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.attendance-dropzone-label { display: grid; justify-items: center; gap: 6px; padding: 30px 16px; color: var(--portal-text-secondary); text-align: center; cursor: pointer; }
+.attendance-dropzone-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: var(--portal-primary-soft); color: var(--portal-primary); font-size: 1.3rem; font-weight: 800; }
+.attendance-dropzone-title { max-width: 100%; overflow: hidden; color: var(--portal-text); font-size: 0.92rem; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+.attendance-dropzone-subtitle { color: var(--portal-text-muted); font-size: 0.75rem; }
+.attendance-upload-preview { display: grid; gap: 12px; }
+.attendance-preview-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.attendance-preview-stat { display: grid; gap: 4px; padding: 14px; border: 1px solid var(--portal-border); border-radius: var(--portal-radius-md); background: var(--portal-surface-muted); }
+.attendance-preview-stat strong { color: var(--portal-text); font-size: 1.65rem; line-height: 1; }
+.attendance-preview-stat span { color: var(--portal-text-muted); font-size: 0.68rem; font-weight: 760; letter-spacing: 0.04em; }
+.attendance-preview-stat.is-ready { background: var(--portal-success-soft); border-color: color-mix(in srgb, var(--portal-success) 28%, var(--portal-border)); }
+.attendance-preview-stat.is-ready strong, .attendance-preview-stat.is-ready span { color: var(--portal-success); }
+.attendance-preview-stat.is-check { background: var(--portal-warning-soft); border-color: color-mix(in srgb, var(--portal-warning) 28%, var(--portal-border)); }
+.attendance-preview-stat.is-check strong, .attendance-preview-stat.is-check span { color: var(--portal-warning); }
+.attendance-exceptions { border-color: color-mix(in srgb, var(--portal-warning) 28%, var(--portal-border)); }
+.attendance-exception-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px; border-top: 1px solid var(--portal-border); }
+.attendance-confidence { font-size: 0.72rem; font-weight: 720; white-space: nowrap; }
+.attendance-collapsed-list { padding: 0; overflow: hidden; }
+.attendance-collapsed-list summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; color: var(--portal-text); font-size: 0.86rem; font-weight: 720; cursor: pointer; list-style: none; }
+.attendance-collapsed-list summary::-webkit-details-marker { display: none; }
+.attendance-collapsed-list summary span:last-child { color: var(--portal-primary); font-size: 0.76rem; }
+.attendance-collapsed-list .upload-match-list { margin: 0; padding: 0 20px 16px; }
+.attendance-confirm-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.attendance-upload-success { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-color: color-mix(in srgb, var(--portal-success) 30%, var(--portal-border)); background: var(--portal-success-soft); }
+
+@media (max-width: 720px) {
+  .attendance-filter-heading, .attendance-confirm-bar, .attendance-upload-success { align-items: stretch; flex-direction: column; }
+  .attendance-filter-grid-primary, .attendance-summary-grid, .attendance-preview-summary { grid-template-columns: minmax(0, 1fr); }
+  .attendance-roster-tools { width: 100%; min-width: 0; }
+  .attendance-roster-tools .btn { flex: 0 0 auto; }
+  .attendance-roster-main { grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+  .attendance-source { grid-column: 1 / -1; }
+  .attendance-roster-row, .attendance-action-row, .attendance-exception-row { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
+  .attendance-roster-actions, .attendance-action-row > .flex, .attendance-exception-row > .flex { justify-content: flex-start; }
+  .attendance-modal-backdrop { padding: 8px; }
+  .attendance-modal { max-height: calc(100vh - 16px); padding: 16px; }
+}

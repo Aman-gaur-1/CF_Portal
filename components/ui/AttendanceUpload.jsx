@@ -11,24 +11,44 @@ function confidenceLabel(confidence) {
   if (confidence === "exact") return "Exact match"
   if (confidence === "high") return "Close match"
   if (confidence === "low") return "Possible match"
-  return "No match"
+  return "No safe match"
 }
 
 function confidenceTone(confidence) {
-  if (confidence === "exact") return "var(--success)"
-  if (confidence === "high") return "var(--success)"
-  if (confidence === "low") return "var(--warning)"
-  return "var(--danger)"
+  if (confidence === "exact" || confidence === "high" || confidence === "alias") return "var(--portal-success)"
+  if (confidence === "low") return "var(--portal-warning)"
+  return "var(--portal-danger)"
 }
 
-export default function AttendanceUpload({ token, batches = [], role = "teacher", onUploaded, onNeedsAttention }) {
-  const [batch, setBatch] = useState("")
-  const [date, setDate] = useState("")
+function friendlyError(message) {
+  const value = String(message || "")
+  if (/already imported/i.test(value)) return "This attendance report has already been uploaded."
+  if (/could not process attendance upload|no names found|participant list/i.test(value)) return "We couldn't read this Teams report. Please upload the original attendance CSV, XLS, or XLSX file."
+  return value || "We couldn't upload this attendance report. Please try again."
+}
+
+function detectedTime(value) {
+  const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i)
+  if (!match) return ""
+  let hour = Number(match[1])
+  const minute = match[2]
+  const meridiem = match[3]?.toUpperCase()
+  if (meridiem === "PM" && hour < 12) hour += 12
+  if (meridiem === "AM" && hour === 12) hour = 0
+  if (hour > 23) return ""
+  return `${String(hour).padStart(2, "0")}:${minute}`
+}
+
+export default function AttendanceUpload({ token, batches = [], role = "teacher", initialBatch = "", initialDate = "", onUploaded, onNeedsAttention, onDone }) {
+  const [batch, setBatch] = useState(initialBatch)
+  const [date, setDate] = useState(initialDate)
   const [sessionTitle, setSessionTitle] = useState("")
   const [sessionStart, setSessionStart] = useState("")
   const [sessionEnd, setSessionEnd] = useState("")
   const [showSessionDetails, setShowSessionDetails] = useState(false)
   const [file, setFile] = useState(null)
+  const [fileMeta, setFileMeta] = useState(null)
+  const [isDragging, setIsDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [preview, setPreview] = useState(null)
@@ -40,39 +60,58 @@ export default function AttendanceUpload({ token, batches = [], role = "teacher"
   const reset = useCallback(() => {
     setPreview(null)
     setResult(null)
+    setFileMeta(null)
     setError("")
     setFile(null)
     setUncertainSelections({})
+    setSessionTitle("")
+    setSessionStart("")
+    setSessionEnd("")
+    setShowSessionDetails(false)
     if (fileRef.current) fileRef.current.value = ""
   }, [])
 
-  async function handlePreview(e) {
-    e.preventDefault()
+  function chooseFile(nextFile) {
+    setFile(nextFile || null)
+    setPreview(null)
+    setResult(null)
+    setFileMeta(null)
+    setError("")
+  }
+
+  async function handlePreview(event) {
+    event.preventDefault()
     if (!batch || !date || !file) { setError("Select a batch, date, and file."); return }
     setUploading(true)
     setError("")
     setPreview(null)
     setResult(null)
     try {
-      const fd = new FormData()
-      fd.append("action", "preview")
-      fd.append("batch", batch)
-      fd.append("date", date)
-      fd.append("sessionTitle", sessionTitle)
-      fd.append("sessionStart", sessionStart)
-      fd.append("sessionEnd", sessionEnd)
-      fd.append("file", file)
-      const res = await fetch("/api/attendance-upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Upload failed.")
+      const form = new FormData()
+      form.append("action", "preview")
+      form.append("batch", batch)
+      form.append("date", date)
+      form.append("sessionTitle", sessionTitle)
+      form.append("sessionStart", sessionStart)
+      form.append("sessionEnd", sessionEnd)
+      form.append("file", file)
+      const response = await fetch("/api/attendance-upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || "We couldn't preview this report.")
+      const meta = data.fileMeta || null
+      setFileMeta(meta)
+      if (meta?.meetingTitle && !sessionTitle) setSessionTitle(meta.meetingTitle)
+      const suggestedStart = detectedTime(meta?.startTime)
+      const suggestedEnd = detectedTime(meta?.endTime)
+      if (suggestedStart && !sessionStart) setSessionStart(suggestedStart)
+      if (suggestedEnd && !sessionEnd) setSessionEnd(suggestedEnd)
+      if (meta?.meetingTitle || suggestedStart || suggestedEnd) setShowSessionDetails(true)
       setPreview(data.preview)
       const initial = {}
-      for (const u of (data.preview?.uncertain || [])) {
-        initial[u.fileName] = false
-      }
+      for (const item of [...(data.preview?.uncertain || []), ...(data.preview?.unmatched || [])]) initial[item.fileName] = false
       setUncertainSelections(initial)
-    } catch (err) {
-      setError(err.message || "Could not preview upload.")
+    } catch (uploadError) {
+      setError(friendlyError(uploadError.message))
     } finally {
       setUploading(false)
     }
@@ -84,270 +123,88 @@ export default function AttendanceUpload({ token, batches = [], role = "teacher"
     setError("")
     try {
       const records = [
-        ...preview.matched.map(m => ({ studentId: m.studentId, fileName: m.fileName, participantName: m.fileName, matchType: m.type })),
-        ...preview.uncertain.filter(u => uncertainSelections[u.fileName]).map(u => ({ studentId: u.studentId, fileName: u.fileName, participantName: u.fileName, matchType: u.type })),
-        ...preview.unmatched.filter(u => u.bestMatch && uncertainSelections[u.fileName]).map(u => ({ studentId: u.bestMatch.studentId, fileName: u.fileName, participantName: u.fileName, matchType: u.type })),
+        ...preview.matched.map(item => ({ studentId: item.studentId, fileName: item.fileName, participantName: item.fileName, matchType: item.type })),
+        ...preview.uncertain.filter(item => uncertainSelections[item.fileName]).map(item => ({ studentId: item.studentId, fileName: item.fileName, participantName: item.fileName, matchType: item.type })),
+        ...preview.unmatched.filter(item => item.bestMatch && uncertainSelections[item.fileName]).map(item => ({ studentId: item.bestMatch.studentId, fileName: item.fileName, participantName: item.fileName, matchType: item.type })),
       ]
-
       const skippedNames = [
-        ...preview.uncertain.filter(u => !uncertainSelections[u.fileName]).map(u => u.fileName),
-        ...preview.unmatched.filter(u => !u.bestMatch || !uncertainSelections[u.fileName]).map(u => u.fileName),
+        ...preview.uncertain.filter(item => !uncertainSelections[item.fileName]).map(item => item.fileName),
+        ...preview.unmatched.filter(item => !item.bestMatch || !uncertainSelections[item.fileName]).map(item => item.fileName),
       ]
-      if (!records.length && !skippedNames.length) { setError("No records to confirm."); setConfirming(false); return }
-      const alreadyMarkedNames = preview.alreadyMarked.map(a => `${a.fileName} → ${a.studentName}`)
+      if (!records.length && !skippedNames.length) { setError("There are no safe attendance records to confirm."); setConfirming(false); return }
 
-      const fd = new FormData()
-      fd.append("action", "confirm")
-      fd.append("batch", batch)
-      fd.append("date", date)
-      fd.append("sessionTitle", sessionTitle)
-      fd.append("sessionStart", sessionStart)
-      fd.append("sessionEnd", sessionEnd)
-      fd.append("file", file)
-      fd.append("records", JSON.stringify(records))
+      const form = new FormData()
+      form.append("action", "confirm")
+      form.append("batch", batch)
+      form.append("date", date)
+      form.append("sessionTitle", sessionTitle)
+      form.append("sessionStart", sessionStart)
+      form.append("sessionEnd", sessionEnd)
+      form.append("file", file)
+      form.append("records", JSON.stringify(records))
       if (skippedNames.length) {
-        const unmatched = [
-          ...preview.uncertain.filter(u => !uncertainSelections[u.fileName]).map(u => ({ participantName: u.fileName, studentId: u.studentId, similarity: u.similarity, type: u.type, reason: u.reason })),
-          ...preview.unmatched.filter(u => !u.bestMatch || !uncertainSelections[u.fileName]).map(u => ({ participantName: u.fileName, bestMatch: u.bestMatch, similarity: u.similarity, type: u.type, reason: u.reason })),
-        ]
-        fd.append("unmatched", JSON.stringify(unmatched))
+        form.append("unmatched", JSON.stringify([
+          ...preview.uncertain.filter(item => !uncertainSelections[item.fileName]).map(item => ({ participantName: item.fileName, studentId: item.studentId, similarity: item.similarity, type: item.type, reason: item.reason })),
+          ...preview.unmatched.filter(item => !item.bestMatch || !uncertainSelections[item.fileName]).map(item => ({ participantName: item.fileName, bestMatch: item.bestMatch, similarity: item.similarity, type: item.type, reason: item.reason })),
+        ]))
       }
-      const res = await fetch("/api/attendance-upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fd })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Confirm failed.")
-      setResult({ ...data.result, skippedNames, alreadyMarkedNames, batch: preview.batch, date: preview.date, savedUnlinked: data.result.savedUnlinked || 0 })
+      const response = await fetch("/api/attendance-upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || "We couldn't confirm this report.")
+      const nextResult = { ...data.result, skippedNames, alreadyMarkedNames: preview.alreadyMarked.map(item => `${item.fileName} → ${item.studentName}`), batch: preview.batch, date: preview.date }
+      setResult(nextResult)
       setPreview(null)
-      if (onUploaded) onUploaded()
-    } catch (err) {
-      setError(err.message || "Could not confirm upload.")
+      onUploaded?.(nextResult)
+    } catch (confirmError) {
+      setError(friendlyError(confirmError.message))
     } finally {
       setConfirming(false)
     }
   }
 
-  function toggleUncertain(fileName) {
-    setUncertainSelections(prev => ({ ...prev, [fileName]: !prev[fileName] }))
-  }
-
   function setSelection(fileName, selected) {
-    setUncertainSelections(prev => ({ ...prev, [fileName]: selected }))
+    setUncertainSelections(previous => ({ ...previous, [fileName]: selected }))
   }
 
-  const totalToCreate = preview ? preview.matched.length + preview.uncertain.filter(u => uncertainSelections[u.fileName]).length + preview.unmatched.filter(u => u.bestMatch && uncertainSelections[u.fileName]).length : 0
-  const hasNeedsMatching = Boolean(preview && (preview.uncertain.length || preview.unmatched.length))
-  const needsAttentionCount = result?.savedUnlinked || result?.skippedNames?.length || 0
+  const acceptedUncertain = preview ? preview.uncertain.filter(item => uncertainSelections[item.fileName]).length : 0
+  const acceptedUnmatched = preview ? preview.unmatched.filter(item => item.bestMatch && uncertainSelections[item.fileName]).length : 0
+  const totalToCreate = preview ? preview.matched.length + acceptedUncertain + acceptedUnmatched : 0
+  const checkCount = preview ? preview.uncertain.filter(item => !uncertainSelections[item.fileName]).length + preview.unmatched.filter(item => !item.bestMatch || !uncertainSelections[item.fileName]).length : 0
+  const needsAttentionCount = result ? (result.savedUnlinked || result.skippedNames?.length || 0) : 0
 
   return (
-    <div className="grid gap-4">
-      <div className="card admin-panel">
-        <SectionHeading
-          title="Upload Attendance"
-          detail="Upload a class attendance report and review the matches before confirming."
-        />
-        <form className="attendance-upload-form" onSubmit={handlePreview}>
-          <div className="attendance-upload-fields">
-            <label className="attendance-field-label">Batch *
-              <SearchableBatchSelect batches={batches} value={batch} onChange={value => { setBatch(value); reset() }} placeholder="Select batch" aria-label="Batch" label="Batch" required />
-            </label>
-            <label className="attendance-field-label">Attendance Date *
-              <input className="input" type="date" value={date} onChange={e => { setDate(e.target.value); reset() }} aria-label="Attendance date" required />
-            </label>
-            <label className="attendance-field-label">Attendance File *
-              <input className="input" type="file" accept=".xlsx,.xls,.csv" ref={fileRef} onChange={e => { setFile(e.target.files?.[0] || null); setPreview(null); setResult(null); setError("") }} aria-label="Attendance file" required />
-            </label>
-          </div>
-          <button type="button" className="attendance-details-toggle" onClick={() => setShowSessionDetails(value => !value)} aria-expanded={showSessionDetails}>
-            {showSessionDetails ? "− Hide session details" : "+ Add session details"}
-          </button>
-          {showSessionDetails && <div className="attendance-session-details">
-            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Add session details when this batch had more than one class on this date.</p>
-            <div className="attendance-upload-fields">
-              <label className="attendance-field-label">Session Title
-                <input className="input" value={sessionTitle} onChange={e => setSessionTitle(e.target.value)} placeholder="Optional session title" aria-label="Session title" />
-              </label>
-              <label className="attendance-field-label">Start Time
-                <input className="input" type="time" value={sessionStart} onChange={e => setSessionStart(e.target.value)} aria-label="Session start time" />
-              </label>
-              <label className="attendance-field-label">End Time
-                <input className="input" type="time" value={sessionEnd} onChange={e => setSessionEnd(e.target.value)} aria-label="Session end time" />
-              </label>
-            </div>
-          </div>}
-          <p className="attendance-file-help">Microsoft Teams Excel or CSV · Supported: .xlsx, .xls, .csv · Max: 5 MB</p>
-          <button type="submit" className="btn btn-primary" disabled={uploading || !batch || !date || !file}>
-            {uploading ? <Spinner size="sm" /> : "Review matches"}
-          </button>
-        </form>
+    <div className="attendance-upload-flow">
+      <form className="attendance-upload-form" onSubmit={handlePreview}>
+        <div className="attendance-upload-fields">
+          <label className="attendance-field-label">Batch *<SearchableBatchSelect batches={batches} value={batch} onChange={value => { setBatch(value); setPreview(null); setResult(null) }} placeholder="Select batch" label="Batch" required /></label>
+          <label className="attendance-field-label">Attendance Date *<input className="input" type="date" value={date} onChange={event => { setDate(event.target.value); setPreview(null); setResult(null) }} aria-label="Attendance date" required /></label>
+        </div>
+
+        <div className={`attendance-dropzone ${isDragging ? "is-dragging" : ""}`} onDragEnter={event => { event.preventDefault(); setIsDragging(true) }} onDragOver={event => event.preventDefault()} onDragLeave={() => setIsDragging(false)} onDrop={event => { event.preventDefault(); setIsDragging(false); chooseFile(event.dataTransfer.files?.[0]) }}>
+          <input id="attendance-file" ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={event => chooseFile(event.target.files?.[0])} aria-label="Attendance file" />
+          <label htmlFor="attendance-file" className="attendance-dropzone-label"><span className="attendance-dropzone-icon" aria-hidden="true">↥</span><span className="attendance-dropzone-title">{file ? file.name : "Drop Microsoft Teams attendance file here"}</span><span className="attendance-dropzone-subtitle">or <u>Browse file</u> · CSV / XLS / XLSX · Max 5 MB</span></label>
+        </div>
+
+        <button type="button" className="attendance-details-toggle" onClick={() => setShowSessionDetails(value => !value)} aria-expanded={showSessionDetails}>{showSessionDetails ? "− Hide session details" : "+ Session details"}</button>
+        {showSessionDetails && <div className="attendance-session-details"><p className="text-sm" style={{ color: "var(--portal-text-secondary)" }}>Review the suggested class details before confirming. They are not trusted automatically.</p><div className="attendance-upload-fields"><label className="attendance-field-label">Session title<input className="input" value={sessionTitle} onChange={event => setSessionTitle(event.target.value)} placeholder="Optional session title" /></label><label className="attendance-field-label">Start time<input className="input" type="time" value={sessionStart} onChange={event => setSessionStart(event.target.value)} /></label><label className="attendance-field-label">End time<input className="input" type="time" value={sessionEnd} onChange={event => setSessionEnd(event.target.value)} /></label></div>{fileMeta?.participantSection && <p className="text-xs" style={{ color: "var(--portal-success)" }}>Participant section detected safely from this Teams report.</p>}</div>}
+        <button type="submit" className="btn btn-primary attendance-upload-submit" disabled={uploading || !batch || !date || !file}>{uploading ? <Spinner size="sm" /> : "Review Attendance"}</button>
         {error && <p className="upload-error">{error}</p>}
-      </div>
+      </form>
 
-      {result && (
-        <div className="grid gap-4">
-          <div className="card admin-panel">
-            <SectionHeading title="Attendance uploaded successfully" detail={`${result.batch} · ${result.date}`} />
-            <div className="attendance-upload-result">
-              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--success)" }}>{result.created}</span><span className="upload-stat-label">Marked present</span></div>
-              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--text-muted)" }}>{result.skipped}</span><span className="upload-stat-label">Already existed</span></div>
-              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--warning)" }}>{needsAttentionCount}</span><span className="upload-stat-label">Needs attention</span></div>
-              {result.errors > 0 && <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--danger)" }}>{result.errors}</span><span className="upload-stat-label">Errors</span></div>}
-            </div>
-            <div className="flex gap-2 flex-wrap mt-4">
-              {needsAttentionCount > 0 && <button type="button" className="btn btn-primary btn-sm" onClick={onNeedsAttention}>Resolve {needsAttentionCount} {needsAttentionCount === 1 ? "Name" : "Names"}</button>}
-              <button type="button" className="btn btn-secondary btn-sm" onClick={reset}>Upload Another Report</button>
-            </div>
-          </div>
+      {preview && <div className="attendance-upload-preview">
+        <div className="card admin-panel"><SectionHeading title="Attendance preview" detail={`${preview.totalNamesInFile} participants found · ${preview.batch} · ${preview.date}${preview.session?.title ? ` · ${preview.session.title}` : ""}`} />{preview.duplicate && <div className="upload-error">This attendance report has already been uploaded. Choose a different file or class.</div>}<div className="attendance-preview-summary"><div className="attendance-preview-stat is-ready"><strong>{totalToCreate}</strong><span>READY</span></div><div className="attendance-preview-stat is-check"><strong>{checkCount}</strong><span>CHECK</span></div><div className="attendance-preview-stat is-muted"><strong>{preview.alreadyMarked.length}</strong><span>ALREADY PRESENT</span></div></div></div>
 
-          {result.createdNames?.length > 0 && (
-            <details className="card admin-panel">
-              <summary className="font-semibold cursor-pointer">Marked present ({result.createdNames.length})</summary>
-              <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>These students now have approved attendance for this date.</p>
-              <div className="upload-match-list">
-                {result.createdNames.map(r => (
-                  <div className="upload-match-row" key={r.studentId}>
-                    <span className="upload-match-file">{r.fileName}</span>
-                    <span className="upload-match-arrow">→</span>
-                    <span className="upload-match-student">{r.studentName}</span>
-                    <span className="upload-match-badge" style={{ color: "var(--success)" }}>Approved</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
+        {checkCount > 0 && <div className="card admin-panel attendance-exceptions"><SectionHeading title={`Check these ${checkCount} name${checkCount === 1 ? "" : "s"}`} detail="Only uncertain or unmatched names need your attention." />{preview.uncertain.map(item => <div className="attendance-exception-row" key={`uncertain-${item.fileName}`}><div className="min-w-0"><p className="font-semibold">Uploaded: {item.fileName}</p><p className="text-sm mt-1" style={{ color: "var(--portal-text-secondary)" }}>Suggested: {item.studentName || "No safe match"}</p></div><span className="attendance-confidence" style={{ color: confidenceTone(item.confidence) }}>{confidenceLabel(item.confidence)}</span><div className="flex gap-2 flex-wrap"><button type="button" className={`btn btn-xs ${uncertainSelections[item.fileName] ? "btn-primary" : "btn-secondary"}`} onClick={() => setSelection(item.fileName, true)}>Accept</button><button type="button" className="btn btn-secondary btn-xs" onClick={() => setSelection(item.fileName, false)}>Leave for later</button></div></div>)}{preview.unmatched.map(item => <div className="attendance-exception-row" key={`unmatched-${item.fileName}`}><div className="min-w-0"><p className="font-semibold">Uploaded: {item.fileName}</p><p className="text-sm mt-1" style={{ color: "var(--portal-text-secondary)" }}>{item.bestMatch ? `Suggested: ${item.bestMatch.studentName}` : "No safe match"}</p></div><span className="attendance-confidence" style={{ color: "var(--portal-warning)" }}>Needs attention</span><div className="flex gap-2 flex-wrap">{item.bestMatch && <button type="button" className={`btn btn-xs ${uncertainSelections[item.fileName] ? "btn-primary" : "btn-secondary"}`} onClick={() => setSelection(item.fileName, true)}>Accept</button>}<button type="button" className="btn btn-secondary btn-xs" onClick={() => setSelection(item.fileName, false)}>Leave for later</button></div></div>)}</div>}
 
-          {result.alreadyMarkedNames?.length > 0 && (
-            <details className="card admin-panel">
-              <summary className="font-semibold cursor-pointer">Already existed ({result.alreadyMarkedNames.length})</summary>
-              <div className="upload-match-list">
-                {result.alreadyMarkedNames.map(name => (
-                  <div className="upload-match-row upload-match-muted" key={name}>
-                    <span className="upload-match-file">{name}</span>
-                    <span className="upload-match-badge">Skipped</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
+        {preview.matched.length > 0 && <details className="card admin-panel attendance-collapsed-list"><summary><span>✓ {preview.matched.length} participants ready to mark</span><span>View</span></summary><div className="upload-match-list">{preview.matched.map(item => <div className="upload-match-row" key={item.fileName}><span className="upload-match-file">{item.fileName}</span><span className="upload-match-arrow">→</span><span className="upload-match-student">{item.studentName}</span><span className="upload-match-badge" style={{ color: "var(--portal-success)" }}>Ready</span></div>)}</div></details>}
+        {preview.alreadyMarked.length > 0 && <details className="card admin-panel attendance-collapsed-list"><summary><span>{preview.alreadyMarked.length} already have attendance</span><span>View</span></summary><div className="upload-match-list">{preview.alreadyMarked.map(item => <div className="upload-match-row upload-match-muted" key={item.fileName}><span className="upload-match-file">{item.fileName} → {item.studentName}</span><span className="upload-match-badge">Already present</span></div>)}</div></details>}
 
-          {result.skippedNames?.length > 0 && (
-            <details className="card admin-panel">
-            <summary className="font-semibold cursor-pointer">Needs attention ({result.skippedNames.length})</summary>
-            <p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}>{result.savedUnlinked > 0 ? "Saved safely for later matching." : "These names could not be matched to a registered student."}</p>
-              <div className="upload-match-list">
-                {result.skippedNames.map(name => (
-                  <div className="upload-match-row upload-match-muted" key={name}>
-                    <span className="upload-match-file">{name}</span>
-                    <span className="upload-match-badge" style={{ color: result.savedUnlinked > 0 ? "var(--warning)" : "var(--danger)" }}>{result.savedUnlinked > 0 ? "Saved" : "Not matched"}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
-        </div>
-      )}
+        <div className="card admin-panel attendance-confirm-bar"><div><p className="font-semibold">{totalToCreate} student{totalToCreate === 1 ? "" : "s"} will be marked Present</p><p className="text-sm mt-1" style={{ color: "var(--portal-text-secondary)" }}>{preview.alreadyMarked.length} already has attendance · {checkCount} require attention</p></div><div className="flex gap-2 flex-wrap"><button type="button" className="btn btn-secondary" onClick={reset}>Cancel</button><button type="button" className="btn btn-primary" onClick={handleConfirm} disabled={confirming || (!totalToCreate && !checkCount) || Boolean(preview.duplicate)}>{confirming ? <Spinner size="sm" /> : totalToCreate ? `Confirm ${totalToCreate} Attendance` : "Save for later"}</button></div></div>
+      </div>}
 
-      {preview && (
-        <div className="grid gap-4">
-          <div className="card admin-panel">
-              <SectionHeading title="Match preview" detail={`${preview.totalNamesInFile} names found in file for ${preview.batch} on ${preview.date}${preview.session?.title ? ` · ${preview.session.title}` : ""}`} />
-            {preview.duplicate && <div className="upload-error mt-3">This attendance report was already imported on {String(preview.duplicate.uploadedAt || "").slice(0, 16).replace("T", " ")} by {preview.duplicate.uploadedBy || "another operator"}.</div>}
-            <div className="attendance-upload-result">
-              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--success)" }}>{preview.summary.willCreate}</span><span className="upload-stat-label">Ready to mark</span></div>
-              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--warning)" }}>{preview.summary.needsReview}</span><span className="upload-stat-label">Needs review</span></div>
-              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--text-muted)" }}>{preview.summary.alreadyExists}</span><span className="upload-stat-label">Already marked</span></div>
-              <div className="upload-stat"><span className="upload-stat-value" style={{ color: "var(--danger)" }}>{preview.summary.noMatch}</span><span className="upload-stat-label">Not matched</span></div>
-            </div>
-          </div>
+      {result && <div className="card admin-panel attendance-upload-success"><div><p className="portal-eyebrow">✓ Attendance uploaded</p><h2 className="section-heading-title">{result.created} marked Present</h2><p className="text-sm mt-1" style={{ color: "var(--portal-text-secondary)" }}>{result.skipped} already existed · {needsAttentionCount} need attention</p></div><div className="flex gap-2 flex-wrap"><button type="button" className="btn btn-secondary" onClick={() => { reset(); onDone?.(result) }}>Done</button>{needsAttentionCount > 0 && <button type="button" className="btn btn-primary" onClick={() => { reset(); onDone?.(result); onNeedsAttention?.(result) }}>Resolve {needsAttentionCount} {needsAttentionCount === 1 ? "Name" : "Names"}</button>}</div></div>}
 
-          {preview.matched.length > 0 && (
-            <div className="card admin-panel">
-              <SectionHeading title={`Ready to mark (${preview.matched.length})`} detail="These names were matched safely to registered students." />
-              <div className="upload-match-list">
-                {preview.matched.map(m => (
-                  <div className="upload-match-row" key={m.fileName}>
-                    <span className="upload-match-file">{m.fileName}</span>
-                    <span className="upload-match-arrow">→</span>
-                    <span className="upload-match-student">{m.studentName}</span>
-                    <span className="upload-match-badge" title={confidenceLabel(m.confidence)} style={{ color: "var(--success)" }}>Ready</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {preview.uncertain.length > 0 && (
-            <div className="card admin-panel">
-              <SectionHeading title={`Needs review (${preview.uncertain.length})`} detail="Choose Accept Match or Do Not Match for each suggested student." />
-              <div className="upload-match-list">
-                {preview.uncertain.map(u => (
-                  <div className="upload-match-row" key={u.fileName}>
-                    <div className="min-w-0"><span className="upload-match-file">Teams name: {u.fileName}</span><span className="upload-match-student block mt-1">Suggested student: {u.studentName || "No suggestion"}</span></div>
-                    <span className="upload-match-badge" style={{ color: confidenceTone(u.confidence) }}>Match confidence: {Math.round(u.similarity * 100)}%</span>
-                    <div className="flex gap-2 flex-wrap">
-                      <button type="button" className={`btn btn-sm ${uncertainSelections[u.fileName] ? "btn-primary" : "btn-secondary"}`} onClick={() => setSelection(u.fileName, true)}>Accept Match</button>
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setSelection(u.fileName, false)}>Do Not Match</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {preview.alreadyMarked.length > 0 && (
-            <div className="card admin-panel">
-              <SectionHeading title={`Already marked (${preview.alreadyMarked.length})`} detail="Attendance already exists for these students on this date." />
-              <div className="upload-match-list">
-                {preview.alreadyMarked.map(a => (
-                  <div className="upload-match-row upload-match-muted" key={a.fileName}>
-                    <span className="upload-match-file">{a.fileName}</span>
-                    <span className="upload-match-arrow">→</span>
-                    <span className="upload-match-student">{a.studentName}</span>
-                    <span className="upload-match-badge">{a.existingStatus}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {preview.unmatched.length > 0 && (
-            <div className="card admin-panel">
-              <SectionHeading title={`Not matched (${preview.unmatched.length})`} detail="These names will be saved in Needs Attention unless you accept a suggestion." />
-              <div className="upload-match-list">
-                {preview.unmatched.map(u => u.bestMatch ? (
-                  <div className="upload-match-row" key={u.fileName}>
-                    <div className="min-w-0"><span className="upload-match-file">Uploaded name: {u.fileName}</span><span className="upload-match-student block mt-1">Suggested student: {u.bestMatch.studentName}</span></div>
-                    <span className="upload-match-badge" style={{ color: "var(--warning)" }}>Needs attention</span>
-                    <div className="flex gap-2 flex-wrap">
-                      <button type="button" className={`btn btn-sm ${uncertainSelections[u.fileName] ? "btn-primary" : "btn-secondary"}`} onClick={() => setSelection(u.fileName, true)}>Accept Suggested Match</button>
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setSelection(u.fileName, false)}>Keep Unmatched</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="upload-match-row upload-match-muted" key={u.fileName}>
-                    <span className="upload-match-file">Uploaded name: {u.fileName}</span>
-                    <span className="upload-match-badge" style={{ color: "var(--danger)" }}>Needs attention</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="card admin-panel">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm"><b>{totalToCreate}</b> will be marked present · <b>{preview.alreadyMarked.length}</b> already exist · <b>{preview.uncertain.filter(u => !uncertainSelections[u.fileName]).length + preview.unmatched.filter(u => !u.bestMatch || !uncertainSelections[u.fileName]).length}</b> will need matching.</p>
-              <div className="flex gap-2">
-                <button type="button" className="btn btn-secondary btn-sm" onClick={reset}>Cancel</button>
-                <button type="button" className="btn btn-primary" onClick={handleConfirm} disabled={confirming || (!totalToCreate && !hasNeedsMatching) || Boolean(preview.duplicate)}>
-                  {confirming ? <Spinner size="sm" /> : totalToCreate ? `Confirm ${totalToCreate} Attendance Record${totalToCreate === 1 ? "" : "s"}` : "Save Needs Attention"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {!preview && !result && (
-        <EmptyState icon="📊" title="Upload a Teams attendance report" message={`Select a batch and date, then upload a Microsoft Teams attendance Excel or CSV file. Names will be matched automatically using fuzzy matching.`} />
-      )}
+      {!preview && !result && <EmptyState icon="↥" title="Upload a Teams attendance report" message="Select a batch and date, then upload the original attendance file. Safe matches will be ready to mark; uncertain names will stay in Action Required." />}
     </div>
   )
 }

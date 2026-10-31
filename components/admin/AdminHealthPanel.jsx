@@ -39,14 +39,14 @@ export default function AdminHealthPanel({ adminToken, showError, success, batch
 
   return (
     <div className="grid gap-5">
-      <div className="card admin-panel">
+      {!hideNavigation && <div className="card admin-panel">
         <SectionHeading
           title={hideNavigation ? "Attendance" : "Student Health"}
           detail={hideNavigation ? "Upload class attendance, review student requests, and resolve unmatched names." : "Health Card catalog, calendar, scoring, and attendance operations."}
           action={<RefreshButton onClick={load} disabled={loading} />}
         />
         {!hideNavigation && <div className="tab-list mt-5 mb-0" role="tablist" aria-label="Student Health sections">{TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={`tab-item ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</button>)}</div>}
-      </div>
+      </div>}
       {tab === "attendance" && <AdminAttendancePanel adminToken={adminToken} batches={batches} success={success} showError={showError} focusMode={attendanceFocus} />}
       {tab === "advanced" && <div className="grid gap-4"><AdminCourseworkSetupPanel adminToken={adminToken} success={success} showError={showError} /><AdminCourseworkPanel adminToken={adminToken} batches={batches} success={success} showError={showError} /><AdminCalendarPanel adminToken={adminToken} batches={batches} success={success} showError={showError} /></div>}
       {tab === "overview" && (loading ? <div className="card admin-panel flex justify-center"><Spinner size="lg" /></div> : data && <>
