@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect } from "react"
 import { supabase } from "@/lib/supabase"
-import BatchPicker from "@/components/student/BatchPicker"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 import Spinner from "@/components/ui/Spinner"
 import Tabs from "@/components/ui/Tabs"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
@@ -132,7 +132,7 @@ export default function StudentAuth({ onLogin }) {
                 <div><label className="label">Student Name</label><input className="input" value={legacyName} onChange={e => setLegacyName(e.target.value)} placeholder="Enter your full name" autoComplete="name" /></div>
                 <div>
                   <label className="label">Batch</label>
-                  <BatchPicker value={legacyBatch} onChange={setLegacyBatch} batches={batches} label="Select your batch" />
+                  <SearchableBatchSelect value={legacyBatch} onChange={setLegacyBatch} batches={batches} placeholder="Select your batch" label="Select your batch" required />
                 </div>
                 <div><label className="label">Password</label><input type="password" className="input" value={loginPass} onChange={e => setLoginPass(e.target.value)} placeholder="Enter password" autoComplete="current-password" /></div>
                 <button type="submit" className="btn btn-primary w-full flex items-center justify-center gap-2 mt-2" disabled={loading}>
@@ -155,7 +155,7 @@ export default function StudentAuth({ onLogin }) {
               <div><label className="label">Full Name</label><input className="input" value={regName} onChange={e => setRegName(e.target.value)} placeholder="Enter your full name" /></div>
               <div>
                 <label className="label">Select Batch</label>
-                <BatchPicker value={regBatch} onChange={setRegBatch} batches={batches} label="Select batch" />
+                <SearchableBatchSelect value={regBatch} onChange={setRegBatch} batches={batches} placeholder="Select batch" label="Select batch" required />
               </div>
               <div><label className="label">Password (min 8 chars)</label><input type="password" className="input" value={regPass} onChange={e => setRegPass(e.target.value)} placeholder="Create a password" /></div>
               <div><label className="label">Confirm Password</label><input type="password" className="input" value={regConfirm} onChange={e => setRegConfirm(e.target.value)} placeholder="Confirm password" /></div>

@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import Spinner from "@/components/ui/Spinner"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 
 function csvValue(value) {
   return `"${String(value ?? "").replace(/"/g, '""')}"`
@@ -81,7 +82,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], students = [
           <button type="button" className="btn btn-secondary btn-sm" onClick={downloadTemplate}>Download roster template</button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <label className="label">Batch<select className="input mt-1" value={batch} onChange={event => setBatch(event.target.value)}><option value="">Select batch</option>{batches.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
+          <label className="label">Batch<SearchableBatchSelect batches={batches} value={batch} onChange={setBatch} placeholder="Select batch" label="Roster batch" required /></label>
           <label className="label md:col-span-2">Roster (.xlsx, .xls, .csv)<input className="input mt-1" type="file" accept=".xlsx,.xls,.csv" onChange={event => setFile(event.target.files?.[0] || null)} /></label>
         </div>
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>Current students in this batch: {batchStudentCount}. Required column: Student Name. Optional: Email, Phone, External Student ID.</p>

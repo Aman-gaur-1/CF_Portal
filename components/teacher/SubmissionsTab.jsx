@@ -13,6 +13,7 @@ import PaginationControls from "@/components/ui/PaginationControls"
 import RefreshButton from "@/components/ui/RefreshButton"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
 import TeacherQueryPanel from "@/components/teacher/TeacherQueryPanel"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const DEFAULT_PHASE_OPTIONS = []
@@ -1176,7 +1177,6 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
     setSelectedSubmissionIds(prev => prev.includes(key) ? prev.filter(item => item !== key) : [...prev, key])
   }
 
-  const batchOptions = useMemo(() => ["All Batches", ...batches.map(b => b.name)], [batches])
   const submissionCounts = useMemo(() => ({
     all: globalStats.totalSubmissions,
     pending: globalStats.totalPending,
@@ -1294,9 +1294,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
         <select className="select" value={statusFilter} onChange={e => handleStatusFilterChange(e.target.value)}>
           {statusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
-        <select className="select" value={batchFilter} onChange={e => { setBatchFilter(e.target.value); setPage(1) }}>
-          {batchOptions.map(b => <option key={b}>{b}</option>)}
-        </select>
+        <SearchableBatchSelect batches={batches} value={batchFilter} onChange={value => { setBatchFilter(value); setPage(1) }} allOption allValue="All Batches" allLabel="All Batches" label="Submission batch filter" />
         <SmartSearchInput value={searchInput} onChange={setSearchInput} />
         <div className="flex gap-2 flex-wrap items-center">
           {selectedCount > 0 && (

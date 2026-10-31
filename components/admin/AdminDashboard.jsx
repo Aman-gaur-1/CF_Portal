@@ -19,6 +19,7 @@ import BatchSetupPanel from "@/components/admin/BatchSetupPanel"
 import CurriculumPanel from "@/components/admin/CurriculumPanel"
 import StaffStudentHealthCard from "@/components/ui/StaffStudentHealthCard"
 import CorrectCourseworkMappingModal from "@/components/admin/CorrectCourseworkMappingModal"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 import PageHeader from "@/components/ui/PageHeader"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
@@ -799,10 +800,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
           <div className="grid gap-3 md:grid-cols-2 mb-4">
             <input className="input" value={studentSearch} onChange={e => setStudentSearch(e.target.value)} placeholder="Search students" />
             <div className="grid grid-cols-2 gap-2">
-              <select className="select" value={studentBatchFilter} onChange={e => setStudentBatchFilter(e.target.value)} aria-label="Filter students by batch">
-                <option>All Batches</option>
-                {batches.map(batch => <option key={batch.id}>{batch.name}</option>)}
-              </select>
+              <SearchableBatchSelect batches={batches} value={studentBatchFilter} onChange={setStudentBatchFilter} allOption allValue="All Batches" allLabel="All Batches" label="Filter students by batch" />
               <select className="select" value={studentStatusFilter} onChange={e => { setStudentStatusFilter(e.target.value); load({ status: e.target.value }) }} aria-label="Filter students by status">
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
@@ -836,10 +834,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
                       {editingStudentId === student.id && (
                         <div className="grid gap-2 mt-3 md:grid-cols-3">
                           <input className="input" value={studentProfileForm.name} onChange={e => setStudentProfileForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Student name" />
-                          <select className="select" value={studentProfileForm.batch} onChange={e => setStudentProfileForm(prev => ({ ...prev, batch: e.target.value }))}>
-                            <option value="">No batch</option>
-                            {batches.map(batch => <option key={batch.id} value={batch.name}>{batch.name}</option>)}
-                          </select>
+                          <SearchableBatchSelect batches={batches} value={studentProfileForm.batch} onChange={value => setStudentProfileForm(prev => ({ ...prev, batch: value }))} placeholder="No batch" label="Student batch" />
                           <input type="password" className="input" value={studentProfileForm.password} onChange={e => setStudentProfileForm(prev => ({ ...prev, password: e.target.value }))} placeholder="New password (optional)" autoComplete="new-password" />
                         </div>
                       )}
@@ -853,10 +848,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
                       ) : (
                         <>
                           <button className="btn btn-secondary btn-sm" type="button" onClick={() => setHealthStudent(student)}>Health Card</button>
-                          {student.status === "active" && <select className="select text-sm max-w-[180px]" value={student.batch || ""} onChange={e => moveStudent(student.id, e.target.value)} disabled={saving} aria-label={`Batch for ${student.name}`}>
-                              <option value="">No batch</option>
-                              {batches.map(batch => <option key={batch.id} value={batch.name}>{batch.name}</option>)}
-                            </select>}
+                          {student.status === "active" && <SearchableBatchSelect batches={batches} value={student.batch || ""} onChange={value => moveStudent(student.id, value)} placeholder="No batch" label={`Batch for ${student.name}`} disabled={saving} className="max-w-[180px]" />}
                           <button className="btn btn-secondary btn-sm" onClick={() => openStudentProfile(student)}>Edit Profile</button>
                           {student.status === "active"
                             ? <button className="btn btn-danger-outline btn-sm" type="button" onClick={() => updateStudentLifecycle(student, "deactivate")} disabled={studentLifecycleBusyId === student.id}>Deactivate</button>

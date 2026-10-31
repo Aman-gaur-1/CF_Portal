@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import EmptyState from "@/components/ui/EmptyState"
 import Spinner from "@/components/ui/Spinner"
 import SectionHeading from "@/components/ui/SectionHeading"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 
 function formatDateTime(value) {
   return String(value || "").slice(0, 16).replace("T", " ") || "—"
@@ -60,7 +61,7 @@ export default function AttendanceImportHistory({ token, batches = [] }) {
       <div className="card admin-panel">
         <SectionHeading title="History" detail="Review attendance reports, counts, and later resolutions." action={<button type="button" className="btn btn-secondary btn-sm" onClick={load} disabled={loading}>Refresh</button>} />
         <div className="attendance-filter-grid mt-4">
-          <select className="select" value={batch} onChange={event => setBatch(event.target.value)} aria-label="Import batch filter"><option value="">All batches</option>{batches.map(value => <option key={value} value={value}>{value}</option>)}</select>
+          <SearchableBatchSelect batches={batches} value={batch} onChange={setBatch} allOption allLabel="All batches" label="Import batch filter" />
           <input className="input" type="date" value={date} onChange={event => setDate(event.target.value)} aria-label="Import date filter" />
           <input className="input" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search filename" aria-label="Search import filename" />
         </div>

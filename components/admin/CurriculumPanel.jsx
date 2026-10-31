@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Spinner from "@/components/ui/Spinner"
 import RefreshButton from "@/components/ui/RefreshButton"
 import BatchProgressControls from "@/components/coursework/BatchProgressControls"
+import SearchableBatchSelect, { SearchableBatchMultiSelect } from "@/components/ui/SearchableBatchSelect"
 import { courseworkIdentity } from "@/lib/coursework-identity"
 
 const PHASES = ["Python", "Data Analytics", "SQL"]
@@ -19,7 +20,6 @@ export default function CurriculumPanel({ adminToken, batches = [], success, sho
   const [batch, setBatch] = useState(batchNames[0] || "")
   const [releaseTargetMode, setReleaseTargetMode] = useState("single")
   const [selectedBatches, setSelectedBatches] = useState(batchNames[0] ? [batchNames[0]] : [])
-  const [batchSearch, setBatchSearch] = useState("")
   const [releasePhase, setReleasePhase] = useState("Python")
   const [releaseType, setReleaseType] = useState("assignment")
   const [releaseMode, setReleaseMode] = useState("covered-through")
@@ -77,7 +77,6 @@ export default function CurriculumPanel({ adminToken, batches = [], success, sho
   }, {}), [activeIds, activeKeys, canonicalItems, data.phaseSummary])
   const topicItems = useMemo(() => canonicalItems.filter(item => item.phase === releasePhase && item.item_type === releaseType).sort((left, right) => Number(left.sort_order) - Number(right.sort_order) || String(left.title).localeCompare(String(right.title))), [canonicalItems, releasePhase, releaseType])
   const visibleTopicItems = useMemo(() => topicItems.filter(item => !releaseSearch.trim() || `${item.title} ${item.sort_order}`.toLowerCase().includes(releaseSearch.trim().toLowerCase())), [releaseSearch, topicItems])
-  const visibleBatches = useMemo(() => batchNames.filter(name => !batchSearch.trim() || name.toLowerCase().includes(batchSearch.trim().toLowerCase())), [batchNames, batchSearch])
   const targetBatchNames = releaseTargetMode === "all" ? batchNames : releaseTargetMode === "selected" ? selectedBatches : (batch ? [batch] : [])
   const hasCanonicalData = loadedOnce && canonicalItems.length > 0
 
@@ -104,16 +103,6 @@ export default function CurriculumPanel({ adminToken, batches = [], success, sho
     setBatch(value)
     setSelectedBatches(value ? [value] : [])
     clearReleaseState()
-  }
-
-  function toggleBatch(name, checked) {
-    setSelectedBatches(current => checked ? [...new Set([...current, name])] : current.filter(value => value !== name))
-    setPreview(null)
-  }
-
-  function selectVisibleBatches(checked) {
-    setSelectedBatches(current => checked ? [...new Set([...current, ...visibleBatches])] : current.filter(name => !visibleBatches.includes(name)))
-    setPreview(null)
   }
 
   function selectVisibleTopics(checked) {
@@ -222,13 +211,13 @@ export default function CurriculumPanel({ adminToken, batches = [], success, sho
       <div><h3 className="text-lg font-bold">Bulk Release Coursework</h3><p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose target batches, then either advance cumulative progress or release specific canonical topics. A preview is always required.</p></div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
         <label className="grid gap-1 text-sm">Target mode<select className="select" value={releaseTargetMode} onChange={event => changeTargetMode(event.target.value)}><option value="single">One Batch</option><option value="selected">Selected Batches</option><option value="all">All Current Batches</option></select></label>
-        {releaseTargetMode === "single" && <label className="grid gap-1 text-sm">Batch<select className="select" value={batch} onChange={event => changeSingleBatch(event.target.value)}><option value="">Select batch</option>{batchNames.map(name => <option key={name} value={name}>{name}</option>)}</select></label>}
+        {releaseTargetMode === "single" && <label className="grid gap-1 text-sm">Batch<SearchableBatchSelect batches={batchNames} value={batch} onChange={changeSingleBatch} placeholder="Select batch" label="Release batch" required /></label>}
         {releaseTargetMode !== "single" && <div className="text-sm self-end pb-2"><b>{releaseTargetMode === "all" ? batchNames.length : selectedBatches.length} batch{(releaseTargetMode === "all" ? batchNames.length : selectedBatches.length) === 1 ? "" : "es"} selected</b></div>}
         <label className="grid gap-1 text-sm">Phase<select className="select" value={releasePhase} onChange={event => { setReleasePhase(event.target.value); clearReleaseState() }}>{PHASES.map(phase => <option key={phase} value={phase}>{phase}</option>)}</select></label>
         <label className="grid gap-1 text-sm">Type<select className="select" value={releaseType} onChange={event => { setReleaseType(event.target.value); clearReleaseState() }}><option value="assignment">Assignment</option><option value="project">Project</option></select></label>
       </div>
 
-      {releaseTargetMode === "selected" && <div className="grid gap-2"><div className="flex gap-2 flex-wrap"><input className="input" value={batchSearch} onChange={event => setBatchSearch(event.target.value)} placeholder="Search batches" aria-label="Search target batches" /><button className="btn btn-secondary btn-sm" type="button" onClick={() => selectVisibleBatches(true)} disabled={!visibleBatches.length}>Select all visible</button><button className="btn btn-secondary btn-sm" type="button" onClick={() => selectVisibleBatches(false)} disabled={!visibleBatches.length}>Clear visible</button></div><div className="grid gap-1 max-h-48 overflow-auto border rounded-lg p-2">{visibleBatches.map(name => <label className="flex items-center gap-2 text-sm" key={name}><input type="checkbox" checked={selectedBatches.includes(name)} onChange={event => toggleBatch(name, event.target.checked)} />{name}</label>)}{!visibleBatches.length && <p className="text-sm" style={{ color: "var(--text-secondary)" }}>No batches match the search.</p>}</div></div>}
+      {releaseTargetMode === "selected" && <SearchableBatchMultiSelect batches={batchNames} values={selectedBatches} onChange={value => { setSelectedBatches(value); setPreview(null) }} label="Target batches" placeholder="Select target batches" />}
       {releaseTargetMode === "all" && <p className="text-sm" style={{ color: "var(--portal-warning, #b45309)" }}>All Current Batches is high impact. The server will validate every batch and will not apply anything until you review and confirm the preview.</p>}
 
       <div className="grid gap-2 border-t pt-3" style={{ borderColor: "var(--border)" }}>

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react"
 import Spinner from "@/components/ui/Spinner"
 import { formatDate } from "@/lib/utils"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 
 function hoursBetween(start, end = new Date()) {
   const startTime = new Date(start).getTime()
@@ -204,10 +205,7 @@ export default function AdminQueriesPanel({ adminToken, showError, globalSearch 
           <option value="all">All trainers</option>
           {filters.trainers.map(name => <option key={name} value={name}>{name}</option>)}
         </select>
-        <select className="select" value={batch} onChange={event => setBatch(event.target.value)}>
-          <option value="all">All batches</option>
-          {filters.batches.map(name => <option key={name} value={name}>{name}</option>)}
-        </select>
+        <SearchableBatchSelect batches={filters.batches} value={batch} onChange={setBatch} allOption allValue="all" allLabel="All batches" label="Query batch filter" />
         <select className="select" value={phase} onChange={event => setPhase(event.target.value)}>
           <option value="all">All phases</option>
           {filters.phases.map(name => <option key={name} value={name}>{name}</option>)}

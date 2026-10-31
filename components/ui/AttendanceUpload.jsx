@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react"
 import Spinner from "@/components/ui/Spinner"
 import SectionHeading from "@/components/ui/SectionHeading"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 import EmptyState from "@/components/ui/EmptyState"
 
 function confidenceLabel(confidence) {
@@ -146,10 +147,7 @@ export default function AttendanceUpload({ token, batches = [], role = "teacher"
         <form className="attendance-upload-form" onSubmit={handlePreview}>
           <div className="attendance-upload-fields">
             <label className="attendance-field-label">Batch *
-              <select className="select" value={batch} onChange={e => { setBatch(e.target.value); reset() }} aria-label="Batch" required>
-                <option value="">Select batch</option>
-                {batches.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
+              <SearchableBatchSelect batches={batches} value={batch} onChange={value => { setBatch(value); reset() }} placeholder="Select batch" aria-label="Batch" label="Batch" required />
             </label>
             <label className="attendance-field-label">Attendance Date *
               <input className="input" type="date" value={date} onChange={e => { setDate(e.target.value); reset() }} aria-label="Attendance date" required />

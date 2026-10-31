@@ -8,6 +8,7 @@ import RefreshButton from "@/components/ui/RefreshButton"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 import StaffStudentHealthCard from "@/components/ui/StaffStudentHealthCard"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 
 const SCOPE_REFRESH_MS = 5000
 
@@ -86,7 +87,6 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
     return map
   }, [submissions])
 
-  const allBatches = ["All Batches", ...batches.map(batch => batch.name)]
   const filtered = students.filter(student =>
     (batchFilter === "All Batches" || student.batch === batchFilter) &&
     (!search.trim() || student.name?.toLowerCase().includes(search.trim().toLowerCase()))
@@ -171,9 +171,7 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
         <input className="input" placeholder="Search your assigned students..." value={search} onChange={e => setSearch(e.target.value)} />
-        <select className="select" value={batchFilter} onChange={e => setBatchFilter(e.target.value)}>
-          {allBatches.map(batch => <option key={batch}>{batch}</option>)}
-        </select>
+        <SearchableBatchSelect batches={batches} value={batchFilter} onChange={setBatchFilter} allOption allValue="All Batches" allLabel="All Batches" label="Filter students by batch" />
       </div>
 
       {loading ? (

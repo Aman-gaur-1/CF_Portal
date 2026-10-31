@@ -10,6 +10,7 @@ import SectionHeading from "@/components/ui/SectionHeading"
 import AttendanceUpload from "@/components/ui/AttendanceUpload"
 import AttendanceResolveDialog from "@/components/ui/AttendanceResolveDialog"
 import AttendanceImportHistory from "@/components/ui/AttendanceImportHistory"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
 
 function statusClass(status) {
@@ -229,10 +230,7 @@ export default function AttendanceTab({ teacherToken }) {
         <div className="grid gap-4">
           <div className="card admin-panel">
             <div className="attendance-filter-grid">
-              <select className="select" value={batch} onChange={e => setBatch(e.target.value)} aria-label="Batch filter">
-                <option value="">All assigned batches</option>
-                {batches.map(value => <option key={value} value={value}>{value}</option>)}
-              </select>
+              <SearchableBatchSelect batches={batches} value={batch} onChange={setBatch} allOption allLabel="All assigned batches" label="Batch filter" />
               <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} aria-label="Date filter" />
               <button type="button" className="btn btn-primary btn-sm" onClick={rematchAll} disabled={Boolean(actioningId) || !unlinked.length}>
                 {actioningId === "rematch-all" ? <Spinner size="sm" /> : "Re-match all"}
@@ -288,10 +286,7 @@ export default function AttendanceTab({ teacherToken }) {
             <MetricCard label="Rejected" value={counts.rejected || 0} onClick={() => setStatus("rejected")} style={{ cursor: "pointer", outline: status === "rejected" ? "2px solid var(--danger)" : "none" }} />
           </div>
           <div className="attendance-filter-grid">
-            <select className="select" value={batch} onChange={event => setBatch(event.target.value)} aria-label="Attendance batch filter">
-              <option value="">All assigned batches</option>
-              {batches.map(value => <option key={value} value={value}>{value}</option>)}
-            </select>
+            <SearchableBatchSelect batches={batches} value={batch} onChange={setBatch} allOption allLabel="All assigned batches" label="Attendance batch filter" />
             <input className="input" type="date" value={date} onChange={event => setDate(event.target.value)} aria-label="Attendance date filter" />
             <input className="input" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search student" aria-label="Search attendance student" />
             <select className="select" value={status} onChange={event => setStatus(event.target.value)} aria-label="Attendance status filter">

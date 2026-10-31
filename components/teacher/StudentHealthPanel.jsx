@@ -7,6 +7,7 @@ import StudentsTab from "@/components/teacher/StudentsTab"
 import Spinner from "@/components/ui/Spinner"
 import { courseworkIdentity } from "@/lib/coursework-identity"
 import BatchProgressControls from "@/components/coursework/BatchProgressControls"
+import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 
 const HEALTH_CARD_PHASES = ["Python", "Data Analytics", "SQL"]
 
@@ -138,10 +139,7 @@ export default function StudentHealthPanel({ teacherToken, initialTab = "overvie
         <section className="card admin-panel grid gap-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2" aria-label="Assigned batch phase summary">{phaseSummary.map(({ phase, active, available: availableCount }) => <button key={phase} type="button" className="stat-card text-left" onClick={() => { setActivationPhase(current => current === phase ? "" : phase); setSelectedIds([]) }}><div className="stat-label">{phase}</div><div className="text-sm mt-1">Active {active} · Available {availableCount}</div></button>)}</div>
           <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
-            <select className="select" value={selectedBatch} onChange={event => { setSelectedBatch(event.target.value); setSelectedIds([]) }} aria-label="Activation batch">
-              <option value="">Select assigned batch</option>
-              {(data?.batchNames || []).map(name => <option key={name} value={name}>{name}</option>)}
-            </select>
+            <SearchableBatchSelect batches={data?.batchNames || []} value={selectedBatch} onChange={value => { setSelectedBatch(value); setSelectedIds([]) }} placeholder="Select assigned batch" label="Activation batch" required />
             <select className="select" value={activationPhase} onChange={event => { setActivationPhase(event.target.value); setSelectedIds([]) }} aria-label="Activation phase"><option value="">All phases</option><option value="Python">Python</option><option value="Data Analytics">Data Analytics</option><option value="SQL">SQL</option></select>
             <select className="select" value={activationType} onChange={event => { setActivationType(event.target.value); setSelectedIds([]) }} aria-label="Activation type"><option value="">All types</option><option value="assignment">Assignment</option><option value="project">Project</option></select>
             <input className="input" value={activationSearch} onChange={event => { setActivationSearch(event.target.value); setSelectedIds([]) }} placeholder="Search catalog" aria-label="Search global catalog" />
