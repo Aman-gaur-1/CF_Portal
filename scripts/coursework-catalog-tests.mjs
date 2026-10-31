@@ -15,6 +15,7 @@ const migration = read('supabase/migrations/20261025180000_global_coursework_cat
 const canonicalMigration = read('supabase/migrations/20261025200000_canonical_coursework_reconciliation.sql')
 const aliasGuardMigration = read('supabase/migrations/20261025220000_canonical_alias_type_guard.sql')
 const authoritativeMigration = read('supabase/migrations/20261025230000_authoritative_overrides.sql')
+const historicalAliasMigration = read('supabase/migrations/20261031085936_authoritative_python_historical_reconciliation.sql')
 
 assert.equal(normalizeCatalogTitle('  Loops   Assignments  '), 'loops assignments')
 assert.equal(courseworkIdentity({ phase: 'python', item_type: 'assignment', title: '  Loops   Assignments ' }), 'python|assignment|loops assignments')
@@ -28,7 +29,10 @@ assert.deepEqual(canonicalCounts(), {
 assert.equal(new Set(CANONICAL_CURRICULUM.map(item => item.canonicalKey)).size, 47)
 assert.equal(normalizeCanonicalText('Pandas-Filtering Assignment'), 'pandas filtering assignment')
 assert.equal(CANONICAL_ALIASES.length, 26)
-assert.equal(CANONICAL_AUTHORITATIVE_OVERRIDES.length, 20)
+for (const alias of ['loop', 'loops', 'data type', 'data types', 'variable', 'variables', 'user input', 'user inputs', 'type casting', 'function', 'functions', 'basic function', 'basic functions', 'functions basic', 'advance function', 'advanced function', 'advance functions', 'advanced functions', 'advance_function_assignments', 'loop assignment', 'loops assignment']) {
+  assert.ok(CANONICAL_AUTHORITATIVE_OVERRIDES.some(([value]) => normalizeCanonicalText(value) === normalizeCanonicalText(alias)), `missing authoritative alias: ${alias}`)
+}
+assert.ok(!CANONICAL_AUTHORITATIVE_OVERRIDES.some(([value]) => ['fev', 'fec', 'testin'].includes(normalizeCanonicalText(value))))
 
 assert.match(migration, /create unique index if not exists coursework_items_global_identity_uidx/)
 assert.match(migration, /where batch is null and phase is not null/)
@@ -51,6 +55,13 @@ assert.doesNotMatch(aliasGuardMigration, /DELETE FROM public\.coursework_aliases
 assert.match(authoritativeMigration, /source = 'manual_authoritative'/)
 assert.match(authoritativeMigration, /confidence = 'CONFIRMED'/)
 assert.doesNotMatch(canonicalMigration, /delete\s+from\s+public\.submissions/i)
+assert.match(historicalAliasMigration, /manual_authoritative/)
+assert.match(historicalAliasMigration, /row_number\(\) OVER/)
+assert.match(historicalAliasMigration, /source_phase/)
+assert.match(historicalAliasMigration, /source_item_type/)
+assert.match(historicalAliasMigration, /counts_for_points/)
+assert.match(historicalAliasMigration, /coursework_item_id IS NULL OR source_item\.catalog_status <> 'canonical'/)
+assert.doesNotMatch(historicalAliasMigration, /delete\s+from\s+public\.(submissions|student_coursework_reconciliations)/i)
 
 assert.match(adminRoute, /\.is\('batch', null\)/)
 assert.match(adminRoute, /isGlobalCatalogItem\(item\)/)
@@ -77,6 +88,8 @@ assert.match(teacherPanel, /Active \{active\} · Available \{availableCount\}/)
 assert.match(teacherPanel, /HEALTH_CARD_PHASES/)
 
 assert.match(read('components/student/StudentView.jsx'), /activeMs: 15000/)
+assert.match(read('components/student/ScoreSection.jsx'), /unique assignments/)
+assert.match(read('components/student/StudentView.jsx'), /Submission Attempts/)
 
 const mixedBatch = 'SK | 8 APRIL | 08:00 AM'
 const mixedItems = [

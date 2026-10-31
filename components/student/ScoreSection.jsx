@@ -25,7 +25,7 @@ export default function ScoreSection({ submissions, courseworkSummary }) {
         <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>Coursework Points</p>
         <p className="text-5xl font-black gradient-text mb-2">{formatCourseworkPoints(score)} pts</p>
         <p className="text-xs mb-3" style={{ color: "var(--text-secondary)" }}>
-          {assignmentCount} assignments · {projectCount} projects
+          {assignmentCount} unique assignments · {projectCount} unique projects
         </p>
         <span className="inline-flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-full mb-4" style={{ background: badge.bg, color: badge.color }}>
           {badge.icon} {badge.name}

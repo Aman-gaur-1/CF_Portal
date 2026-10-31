@@ -502,7 +502,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
                 <ScoreSection submissions={submissions} courseworkSummary={courseworkSummary} />
 
                 <div className="grid grid-cols-3 gap-3 mb-6">
-                  {[[submissions.length, "Total Submitted"], [pending, "Pending Feedback"], [submissions.length - pending, "Feedback Done"]].map(([n, l]) => (
+                  {[[submissions.length, "Submission Attempts"], [pending, "Feedback Pending"], [submissions.length - pending, "Feedback Done"]].map(([n, l]) => (
                     <div key={l} className="stat-card"><div className="stat-num">{n}</div><div className="stat-label">{l}</div></div>
                   ))}
                 </div>

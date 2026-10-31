@@ -94,7 +94,6 @@ export async function GET(request) {
       .from('student_coursework_reconciliations')
       .select('student_id,batch,coursework_item_id,source_submission_id,source_topic,item_type,confidence,status,counts_for_progress,confirmed_at,updated_at,created_at')
       .eq('student_id', student.id)
-      .eq('batch', student.batch)
       .eq('status', 'confirmed')
     if (reconciliationError && !isMissingHealthCardSchema(reconciliationError)) throw new Error(reconciliationError.message)
 
