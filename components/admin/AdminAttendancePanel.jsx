@@ -108,7 +108,7 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
 
   useEffect(() => {
     if (focusMode !== "needs") return
-    setRosterFilter("needs")
+    setRosterFilter("all")
     requestAnimationFrame(() => actionRequiredRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }))
   }, [focusMode])
 
@@ -316,7 +316,7 @@ export default function AdminAttendancePanel({ adminToken, batches = [], success
           <section className="attendance-summary-grid" aria-label="Attendance summary">
             <MetricCard label="Present" value={counts.present} hint={`${counts.recorded} of ${counts.registered} recorded`} tone="success" onClick={() => setRosterFilter("present")} />
             <MetricCard label="Pending Requests" value={counts.pendingRequests} hint="Student requests to review" tone="warning" onClick={() => setRosterFilter("pending")} />
-            <MetricCard label="Needs Attention" value={counts.needsAttention} hint="Names or requests to resolve" tone="warning" onClick={() => { setRosterFilter("needs"); requestAnimationFrame(() => actionRequiredRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })) }} />
+            <MetricCard label="Needs Attention" value={counts.needsAttention} hint="Names or requests to resolve" tone="warning" onClick={() => { setRosterFilter("all"); requestAnimationFrame(() => actionRequiredRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })) }} />
             <MetricCard label="Not Recorded" value={counts.notRecorded} hint={`${counts.recorded} of ${counts.registered} recorded`} onClick={() => setRosterFilter("not_recorded")} />
           </section>
 
