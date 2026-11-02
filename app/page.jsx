@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react"
 import StudentAuth from "@/components/student/StudentAuth"
 import StudentView from "@/components/student/StudentView"
+import StudentPasswordChange from "@/components/student/StudentPasswordChange"
 import Spinner from "@/components/ui/Spinner"
 
 const SESSION_KEY = "cf_student"
@@ -147,6 +148,13 @@ export default function HomePage() {
     fetch('/api/student-session', { method: 'DELETE', keepalive: true }).catch(() => {})
   }
 
+  function handlePasswordChanged(updatedStudent) {
+    const profile = safeStudentProfile(updatedStudent)
+    if (!profile) return
+    localStorage.setItem(SESSION_KEY, JSON.stringify(profile))
+    setStudent(profile)
+  }
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--bg-main)" }}>
       <Spinner size="lg" />
@@ -154,5 +162,6 @@ export default function HomePage() {
   )
 
   if (!student) return <StudentAuth onLogin={handleLogin} />
+  if (student.must_change_password) return <StudentPasswordChange student={student} onComplete={handlePasswordChanged} onLogout={handleLogout} />
   return <StudentView student={student} onLogout={handleLogout} onSessionRefresh={refreshStudentSession} />
 }

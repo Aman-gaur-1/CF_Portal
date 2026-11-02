@@ -27,7 +27,7 @@ const TABS = [
   { id: "overview", label: "Overview" },
   { id: "attendance", label: "Attendance" },
   { id: "students", label: "Students" },
-  { id: "batch-setup", label: "Batch Setup" },
+  { id: "batch-setup", label: "Bulk Onboard" },
   { id: "curriculum", label: "Curriculum" },
   { id: "advanced", label: "Optional Advanced" },
 ]
@@ -796,7 +796,10 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
         </details>
 
         <div className="card admin-panel">
-          <SectionTitle title="Students" detail={`${filteredStudents.length} visible`} />
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+            <SectionTitle title="Students" detail={`${filteredStudents.length} visible`} />
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => setTab("batch-setup")}>Bulk Onboard Students</button>
+          </div>
           <div className="grid gap-3 md:grid-cols-2 mb-4">
             <input className="input" value={studentSearch} onChange={e => setStudentSearch(e.target.value)} placeholder="Search students" />
             <div className="grid grid-cols-2 gap-2">
@@ -1099,7 +1102,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             {tab === "overview" && renderOverview()}
             {tab === "attendance" && <AdminHealthPanel adminToken={adminToken} showError={showError} success={success} batches={batches} initialTab="attendance" hideNavigation />}
             {tab === "students" && renderPeople()}
-            {tab === "batch-setup" && <BatchSetupPanel adminToken={adminToken} batches={batches} students={students} success={success} showError={showError} />}
+            {tab === "batch-setup" && <BatchSetupPanel adminToken={adminToken} batches={batches} success={success} showError={showError} onOpenStudents={() => setTab("students")} />}
             {tab === "curriculum" && <CurriculumPanel adminToken={adminToken} batches={batches} success={success} showError={showError} />}
             {tab === "advanced" && renderAdvanced()}
           </>
