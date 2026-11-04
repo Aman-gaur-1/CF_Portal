@@ -10,7 +10,7 @@ import { useRefreshAction } from "@/lib/use-refresh-action"
 import StaffStudentHealthCard from "@/components/ui/StaffStudentHealthCard"
 import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 
-const SCOPE_REFRESH_MS = 5000
+const SCOPE_REFRESH_MS = 5 * 60 * 1000
 
 function authHeaders(token) {
   return { Authorization: `Bearer ${token}` }

@@ -17,9 +17,10 @@ import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const DEFAULT_PHASE_OPTIONS = []
-const REVIEW_REFRESH_MS = 15000
+const REVIEW_REFRESH_MS = 60000
 const SEARCH_DEBOUNCE_MS = 250
 const BULK_PROGRESS_REFRESH_MS = 3000
+const BULK_PROGRESS_BACKOFF_MS = [3000, 5000, 10000, 15000]
 const REVIEW_ACTIVITY_HEARTBEAT_MS = 60000
 
 const TeacherAnalyticsCharts = dynamic(() => import("@/components/teacher/TeacherAnalyticsCharts"), {
@@ -483,7 +484,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
   const markedQueryNotificationIdsRef = useRef(new Set())
   const { toasts, success, error: showError } = useToast()
 
-  const load = useCallback(async ({ silent = false, requireAnalytics = false, throwOnError = false } = {}) => {
+  const load = useCallback(async ({ silent = false, requireAnalytics = false, throwOnError = false, includeSupporting = true } = {}) => {
     if (loadAbortRef.current) loadAbortRef.current.abort()
     const controller = new AbortController()
     loadAbortRef.current = controller
@@ -509,19 +510,22 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
         idsPreview: confirmedReviewedIds.slice(0, 5),
       })
       if (confirmedReviewedIds.length) params.set("confirmedReviewedIds", confirmedReviewedIds.join(","))
-      const [res, analyticsRes, phasesRes] = await Promise.all([
-        fetch(`/api/teacher-data?${params}`, { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal }),
-        fetch(`/api/teacher-analytics?${new URLSearchParams(confirmedReviewedIds.length ? { confirmedReviewedIds: confirmedReviewedIds.join(",") } : {})}`, { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal }),
-        fetch("/api/assignment-phases", { cache: "no-store", signal: controller.signal }),
-      ])
+      const requests = [fetch(`/api/teacher-data?${params}`, { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal })]
+      if (includeSupporting) {
+        requests.push(
+          fetch(`/api/teacher-analytics?${new URLSearchParams(confirmedReviewedIds.length ? { confirmedReviewedIds: confirmedReviewedIds.join(",") } : {})}`, { headers: authHeaders(teacherToken), cache: "no-store", signal: controller.signal }),
+          fetch("/api/assignment-phases", { cache: "no-store", signal: controller.signal }),
+        )
+      }
+      const [res, analyticsRes, phasesRes] = await Promise.all(requests)
       const scoped = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(scoped.error || "Could not load reviews.")
 
-      const analytics = await analyticsRes.json().catch(() => ({}))
-      if (requireAnalytics && !analyticsRes.ok) {
+      const analytics = analyticsRes ? await analyticsRes.json().catch(() => ({})) : null
+      if (requireAnalytics && analyticsRes && !analyticsRes.ok) {
         throw new Error(analytics.error || "Could not refresh review counts.")
       }
-      if (analyticsRes.ok) {
+      if (analyticsRes?.ok) {
         setGlobalStats({
           totalSubmissions: analytics.totalSubmissions || 0,
           totalPending: analytics.totalPending || 0,
@@ -531,7 +535,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
           batchDistribution: analytics.batchDistribution || [],
         })
       }
-      const phasePayload = phasesRes.ok ? await phasesRes.json().catch(() => ({})) : {}
+      const phasePayload = phasesRes?.ok ? await phasesRes.json().catch(() => ({})) : {}
       const activePhaseNames = (phasePayload.phases || []).map(phase => phase.name).filter(Boolean)
       const defaultPhaseName = phasePayload.defaultPhaseName || activePhaseNames[0] || ""
 
@@ -584,7 +588,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
   }, [aiStatusFilter, batchFilter, page, search, statusFilter, teacherToken])
 
   const refreshAction = useRefreshAction({
-    onRefresh: () => load({ silent: true, requireAnalytics: true, throwOnError: true }),
+    onRefresh: () => load({ silent: true, requireAnalytics: true, throwOnError: true, includeSupporting: true }),
     onSuccess: success,
     onError: showError,
   })
@@ -628,7 +632,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
   }, [loadQueries])
 
   useAdaptivePolling(
-    () => load({ silent: true }),
+    () => load({ silent: true, includeSupporting: false }),
     { enabled: Boolean(teacherToken), activeMs: REVIEW_REFRESH_MS }
   )
 
@@ -717,7 +721,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
 
   useAdaptivePolling(
     pollBulkStatus,
-    { enabled: Boolean(teacherToken) && isBulkJobActive(bulkJob), activeMs: BULK_PROGRESS_REFRESH_MS }
+    { enabled: Boolean(teacherToken) && isBulkJobActive(bulkJob), activeMs: BULK_PROGRESS_REFRESH_MS, backoffMs: BULK_PROGRESS_BACKOFF_MS }
   )
 
   useEffect(() => {
@@ -786,12 +790,21 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
     resetInactivityTimer()
     window.addEventListener("pointerdown", resetInactivityTimer)
     window.addEventListener("keydown", resetInactivityTimer)
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        sendReviewActivity(activeSubmissionId, "clear", { applyState: false, keepalive: true })
+      } else {
+        resetInactivityTimer()
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange)
 
     return () => {
       clearInactivityTimer()
       setSessionActive(false)
       window.removeEventListener("pointerdown", resetInactivityTimer)
       window.removeEventListener("keydown", resetInactivityTimer)
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
       sendReviewActivity(activeSubmissionId, "clear", { applyState: false, keepalive: true })
     }
   }, [activeSubmissionId, sendReviewActivity])
@@ -801,7 +814,6 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
     {
       enabled: Boolean(teacherToken) && activeSubmissionId !== null && reviewSessionActive,
       activeMs: REVIEW_ACTIVITY_HEARTBEAT_MS,
-      hiddenMs: REVIEW_ACTIVITY_HEARTBEAT_MS,
     }
   )
 

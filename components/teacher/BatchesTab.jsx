@@ -9,7 +9,7 @@ import { isReviewedSubmission } from "@/lib/review-state"
 import { ToastContainer, useToast } from "@/components/ui/Toast"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
-const SCOPE_REFRESH_MS = 5000
+const SCOPE_REFRESH_MS = 5 * 60 * 1000
 
 function authHeaders(token) {
   return { Authorization: `Bearer ${token}` }

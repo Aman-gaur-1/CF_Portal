@@ -87,7 +87,8 @@ assert.match(teacherPanel, /Search global catalog/)
 assert.match(teacherPanel, /Active \{active\} · Available \{availableCount\}/)
 assert.match(teacherPanel, /HEALTH_CARD_PHASES/)
 
-assert.match(read('components/student/StudentView.jsx'), /activeMs: 15000/)
+assert.match(read('components/student/StudentView.jsx'), /activeMs: 5 \* 60 \* 1000/)
+assert.doesNotMatch(read('components/student/StudentView.jsx'), /activeMs: 15000/)
 assert.match(read('components/student/ScoreSection.jsx'), /unique assignments/)
 assert.match(read('components/student/StudentView.jsx'), /Submission Attempts/)
 

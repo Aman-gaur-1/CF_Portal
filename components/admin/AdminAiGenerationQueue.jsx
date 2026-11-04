@@ -8,6 +8,7 @@ import { useAdaptivePolling } from "@/lib/use-adaptive-polling"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const SEARCH_DEBOUNCE_MS = 250
+const AI_QUEUE_BACKOFF_MS = [4000, 7000, 10000, 15000]
 const EMPTY_QUEUE_DATA = {
   trainers: [],
   phases: [],
@@ -123,7 +124,7 @@ export default function AdminAiGenerationQueue({ adminToken, success, showError,
 
   useAdaptivePolling(
     () => loadQueue({ silent: true }),
-    { enabled: Boolean(adminToken) && data.job?.status === "running", activeMs: 2500 }
+    { enabled: Boolean(adminToken) && data.job?.status === "running", activeMs: 4000, backoffMs: AI_QUEUE_BACKOFF_MS }
   )
 
   useEffect(() => {

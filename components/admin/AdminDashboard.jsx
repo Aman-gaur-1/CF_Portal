@@ -254,7 +254,8 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [metrics, setMetrics] = useState(EMPTY_ADMIN_METRICS)
   const [batchStats, setBatchStats] = useState({})
   const [studentSubmissionCounts, setStudentSubmissionCounts] = useState({})
-  const [submissions, setSubmissions] = useState([])
+  const [studentSubmissions, setStudentSubmissions] = useState([])
+  const [studentSubmissionsLoading, setStudentSubmissionsLoading] = useState(false)
   const [expandedStudentId, setExpandedStudentId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -306,7 +307,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
       setMetrics({ ...EMPTY_ADMIN_METRICS, ...(data.metrics || {}) })
       setBatchStats(data.batchStats || {})
       setStudentSubmissionCounts(data.studentSubmissionCounts || {})
-      setSubmissions(data.submissions || [])
+      setStudentSubmissions([])
 
       const firstTrainer =
         data.trainers?.[0]?.name ||
@@ -320,6 +321,32 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
     setLoading(false)
     await loadAiSettings()
   }
+
+  useEffect(() => {
+    if (!expandedStudentId) {
+      setStudentSubmissions([])
+      return undefined
+    }
+    const controller = new AbortController()
+    setStudentSubmissionsLoading(true)
+    fetch(`/api/admin-student-submissions?studentId=${encodeURIComponent(expandedStudentId)}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.error || "Could not load student submissions.")
+        setStudentSubmissions(data.submissions || [])
+      })
+      .catch(error => {
+        if (error.name !== "AbortError") showError(error.message || "Could not load student submissions.")
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setStudentSubmissionsLoading(false)
+      })
+    return () => controller.abort()
+  }, [adminToken, expandedStudentId, showError])
 
   const refreshAction = useRefreshAction({
     onRefresh: () => load({ silent: true }),
@@ -816,7 +843,6 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             <div className="grid gap-2">
               {filteredStudents.slice(0, 100).map(student => {
                 const count = studentSubmissionCounts[String(student.id)] || 0
-                const studentSubmissions = submissions.filter(row => String(row.student_id) === String(student.id))
                 const expanded = expandedStudentId === student.id
                 return (
                   <div key={student.id} className="admin-row">
@@ -826,7 +852,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
                       {student.status === "inactive" && <span className="badge-failed mt-2 inline-flex">inactive</span>}
                       {count > 0 && <button type="button" className="admin-student-submissions-toggle" onClick={() => setExpandedStudentId(expanded ? null : student.id)}>{expanded ? "Hide submissions" : "View submissions"}</button>}
                       {expanded && <div className="admin-student-submissions">
-                        {studentSubmissions.map(submission => <div className="admin-student-submission" key={submission.id}>
+                        {studentSubmissionsLoading ? <p className="text-xs" style={{ color: "var(--text-muted)" }}>Loading submissions…</p> : studentSubmissions.map(submission => <div className="admin-student-submission" key={submission.id}>
                           <div><b>{submission.topic || "Untitled assignment"}</b><span>{submission.phase || submission.submission_type || "Assignment"} · {submission.submission_type === "project" || submission.submission_type === "200" ? "Project · 10 pts" : "Assignment · 5 pts"}</span></div>
                           <div className="flex gap-2 items-center flex-wrap justify-end">
                             <span className={submission.feedback || submission.feedback_at ? "badge-done" : submission.ai_status === "failed" ? "badge-failed" : "badge-pending"}>{submission.feedback || submission.feedback_at ? "Reviewed" : submission.ai_status === "failed" ? "AI Failed" : "Pending"}</span>

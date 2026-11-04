@@ -11,10 +11,7 @@ import {
   getNotificationPreferences,
   setNotificationPreferences,
   loadNotificationAnalytics,
-  NOTIFICATION_TYPE,
   NOTIFICATION_USER_TYPE,
-  createNotification,
-  getAdminNotificationRecipients,
 } from '@/lib/notifications'
 
 export const dynamic = 'force-dynamic'
@@ -27,10 +24,6 @@ function jsonNoStore(body, init) {
       ...(init?.headers || {}),
     },
   })
-}
-
-function isOptionalQuerySourceMissing(error) {
-  return /assignment_queries|Could not find the table.*assignment_queries/i.test(String(error?.message || error || ''))
 }
 
 function normalizeStudentIdentity(value = {}) {
@@ -82,102 +75,19 @@ async function resolveRecipient(request, body = null) {
   return { error: 'Invalid userType', status: 400 }
 }
 
-async function ensureOperationalNotifications({ supabase, userType, userIdentifier }) {
-  if (userType !== NOTIFICATION_USER_TYPE.TEACHER && userType !== NOTIFICATION_USER_TYPE.ADMIN) return
-
-  const cutoff24 = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-  const cutoff48 = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
-  let query = supabase
-    .from('assignment_queries')
-    .select(`
-      id,
-      created_at,
-      submissions:submission_id (
-        id,
-        student_name,
-        batch,
-        topic
-      )
-    `)
-    .eq('status', 'open')
-    .lte('created_at', cutoff24)
-    .limit(100)
-
-  if (userType === NOTIFICATION_USER_TYPE.TEACHER) {
-    const { data: batches, error: batchError } = await supabase.from('batches').select('name').eq('created_by', userIdentifier)
-    if (batchError) throw new Error(batchError.message)
-    const batchNames = (batches || []).map(batch => batch.name).filter(Boolean)
-    if (!batchNames.length) return
-    const { data: submissions, error: submissionError } = await supabase.from('submissions').select('id').in('batch', batchNames)
-    if (submissionError) throw new Error(submissionError.message)
-    const ids = (submissions || []).map(row => row.id)
-    if (!ids.length) return
-    query = query.in('submission_id', ids)
-  }
-
-  const { data, error } = await query
-  if (error) {
-    // Query notifications are optional on Health Card-only staging schemas.
-    // Keep the notification bell usable without weakening auth or review APIs.
-    if (isOptionalQuerySourceMissing(error)) return
-    throw new Error(error.message)
-  }
-
-  for (const row of data || []) {
-    const submission = row.submissions || {}
-    if (userType === NOTIFICATION_USER_TYPE.TEACHER) {
-      await createNotification({
-        userType,
-        userIdentifier,
-        notificationType: NOTIFICATION_TYPE.HIGH_PRIORITY_QUERY,
-        title: 'High priority query',
-        message: `${submission.student_name || 'A student'} has a query pending for more than 24 hours.`,
-        referenceType: 'query',
-        referenceId: row.id,
-        icon: '!',
-        severity: 'warning',
-        actionLabel: 'Review Query',
-        actionUrl: '/teacher?tab=reviews&filter=open-queries',
-        pinned: true,
-        supabase,
-      })
-    } else {
-      const recipients = await getAdminNotificationRecipients(supabase)
-      const olderThan48 = row.created_at <= cutoff48
-      for (const adminName of recipients) {
-        await createNotification({
-          userType: NOTIFICATION_USER_TYPE.ADMIN,
-          userIdentifier: adminName,
-          notificationType: olderThan48 ? NOTIFICATION_TYPE.QUERIES_PENDING_48H : NOTIFICATION_TYPE.QUERIES_PENDING_24H,
-          title: olderThan48 ? 'Query pending over 48h' : 'Query pending over 24h',
-          message: `${submission.student_name || 'A student'} has an unresolved query for ${submission.topic || 'an assignment'}.`,
-          referenceType: 'query',
-          referenceId: row.id,
-          icon: '!',
-          severity: olderThan48 ? 'error' : 'warning',
-          actionLabel: 'View Queries',
-          actionUrl: '/admin?tab=queries',
-          pinned: true,
-          supabase,
-        })
-      }
-    }
-  }
-}
-
 export async function GET(request) {
   try {
     noStore()
     const recipient = await resolveRecipient(request)
     if (recipient.error) return jsonNoStore({ error: recipient.error }, { status: recipient.status })
 
-    await ensureOperationalNotifications(recipient)
     const limit = request.nextUrl.searchParams.get('limit')
     const before = request.nextUrl.searchParams.get('before')
+    const analyticsRequested = request.nextUrl.searchParams.get('analytics') === '1'
     const [result, preferences, analytics] = await Promise.all([
       listNotifications({ ...recipient, limit, before }),
       getNotificationPreferences(recipient),
-      recipient.userType === NOTIFICATION_USER_TYPE.ADMIN ? loadNotificationAnalytics(recipient) : Promise.resolve(null),
+      recipient.userType === NOTIFICATION_USER_TYPE.ADMIN && analyticsRequested ? loadNotificationAnalytics(recipient) : Promise.resolve(null),
     ])
     return jsonNoStore({ success: true, ...result, preferences, analytics })
   } catch (err) {

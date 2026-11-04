@@ -158,26 +158,26 @@ export async function GET(request) {
     const supabase = getSupabaseAdmin()
     const requestedStatus = String(request.nextUrl.searchParams.get('studentStatus') || 'active').trim().toLowerCase()
     if (!['active', 'inactive', 'all'].includes(requestedStatus)) return jsonNoStore({ error: 'Invalid student status filter.' }, { status: 400 })
-    const [students, batches, trainers, submissions] = await Promise.all([
+    const [students, batchesResult, trainersResult, aggregateResult] = await Promise.all([
       fetchAllStudents(supabase, requestedStatus),
-      fetchAllRows(supabase, 'batches', '*', 'created_at'),
-      fetchAllRows(supabase, 'trainers', '*', 'created_at'),
-      fetchAllRows(supabase, 'submissions', 'id,student_id,batch,topic,submitted_at,feedback,feedback_at,ai_feedback,ai_feedback_at,ai_status,phase,submission_type,coursework_item_id'),
+      supabase.from('batches').select('id,name,created_by,created_at').order('created_at', { ascending: false }),
+      supabase.from('trainers').select('id,name,created_by,created_at').order('created_at', { ascending: false }),
+      supabase.rpc('cf_admin_dashboard_aggregates', { p_student_status: requestedStatus }),
     ])
-
-    const metrics = loadMetricsFromSubmissionRows(submissions)
-    const batchStats = loadBatchStatsFromSubmissionRows(batches, submissions)
-    const studentSubmissionCounts = loadStudentSubmissionCountsFromSubmissionRows(students, submissions)
+    if (batchesResult.error) throw batchesResult.error
+    if (trainersResult.error) throw trainersResult.error
+    if (aggregateResult.error) throw aggregateResult.error
+    const aggregates = aggregateResult.data || {}
 
     return jsonNoStore({
       success: true,
       students,
-      batches,
-      trainers,
-      metrics: { ...EMPTY_METRICS, ...metrics },
-      batchStats,
-      studentSubmissionCounts,
-      submissions,
+      batches: batchesResult.data || [],
+      trainers: trainersResult.data || [],
+      metrics: { ...EMPTY_METRICS, ...(aggregates.metrics || {}) },
+      batchStats: aggregates.batchStats || {},
+      studentSubmissionCounts: aggregates.studentSubmissionCounts || {},
+      submissions: [],
       studentStatus: requestedStatus,
     })
   } catch (err) {

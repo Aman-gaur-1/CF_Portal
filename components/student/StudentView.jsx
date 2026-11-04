@@ -19,6 +19,7 @@ import { detectAssignmentLanguage } from "@/lib/assignment-analysis"
 
 const TABS = [{ id: "submit", label: "Submit coursework" }, { id: "feedback", label: "My submissions" }, { id: "health", label: "Health Card" }]
 const MAX_MB = 10
+const PENDING_AI_BACKOFF_MS = [7000, 15000, 30000, 60000]
 
 const FEEDBACK_LANGUAGES = [
   { id: "english", label: "English" },
@@ -262,7 +263,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
 
   useAdaptivePolling(
     () => loadActiveCoursework(),
-    { enabled: tab === "submit", activeMs: 15000 }
+    { enabled: tab === "submit", activeMs: 5 * 60 * 1000 }
   )
 
   const typedCoursework = useMemo(() => activeCoursework.filter(item => item.item_type === selectedType), [activeCoursework, selectedType])
@@ -288,12 +289,12 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
     () => {
       loadSubmissions({ silent: true })
     },
-    { enabled: needsSubmissionPolling, activeMs: 5000 }
+    { enabled: needsSubmissionPolling, activeMs: 7000, backoffMs: PENDING_AI_BACKOFF_MS }
   )
 
   useAdaptivePolling(
     () => loadQueries().catch(() => {}),
-    { enabled: tab === "feedback" && studentQueryEnabled, activeMs: 15000 }
+    { enabled: tab === "feedback" && studentQueryEnabled, activeMs: 90 * 1000 }
   )
 
   function handleQueryCreated(query) {

@@ -92,9 +92,10 @@ export default function NotificationBell({ userType, authToken, student }) {
 
   const visiblePreferences = useMemo(() => ROLE_PREFERENCES[userType] || [], [userType])
 
-  const loadNotifications = useCallback(async ({ append = false } = {}) => {
+  const loadNotifications = useCallback(async ({ append = false, includeAnalytics = false } = {}) => {
     const params = new URLSearchParams(requestInfo.params)
     params.set("limit", "20")
+    if (includeAnalytics && userType === "admin") params.set("analytics", "1")
     const currentItems = itemsRef.current
     if (append && currentItems.length) params.set("before", currentItems[currentItems.length - 1].created_at)
     const res = await fetch(`/api/notifications?${params}`, {
@@ -112,7 +113,7 @@ export default function NotificationBell({ userType, authToken, student }) {
     setHasMore(Boolean(data.hasMore))
     setPreferences(data.preferences || {})
     setAnalytics(data.analytics || null)
-  }, [requestInfo])
+  }, [requestInfo, userType])
 
   useEffect(() => {
     loadNotifications().catch(() => {})
@@ -133,6 +134,10 @@ export default function NotificationBell({ userType, authToken, student }) {
     document.addEventListener("mousedown", handleClick)
     return () => document.removeEventListener("mousedown", handleClick)
   }, [])
+
+  useEffect(() => {
+    if (open && userType === "admin") loadNotifications({ includeAnalytics: true }).catch(() => {})
+  }, [loadNotifications, open, userType])
 
   useEffect(() => {
     if (!userType) return
@@ -165,7 +170,7 @@ export default function NotificationBell({ userType, authToken, student }) {
 
   useAdaptivePolling(
     () => loadNotifications().catch(() => {}),
-    { enabled: true, activeMs: realtimeReady ? 120000 : 30000, hiddenMs: realtimeReady ? 300000 : 60000 }
+    { enabled: true, activeMs: realtimeReady ? 10 * 60 * 1000 : 90 * 1000 }
   )
 
   async function patchNotifications(body) {
