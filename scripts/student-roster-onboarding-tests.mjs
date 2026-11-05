@@ -25,6 +25,20 @@ assert.equal(csvRows[0].name, 'CSV Student')
 assert.equal(csvRows[0].teamsDisplayName, 'CSV S')
 assert.equal(roster.parseRosterBuffer(workbookBuffer('xls'), 'roster.xls')[0].externalStudentId, 'EXT-1')
 assert.equal(roster.parseRosterBuffer(workbookBuffer('xlsx'), 'roster.xlsx')[0].teamsDisplayName, 'Aman T')
+for (const header of ['Phone', 'Phone Number', 'Phone No', 'Phone No.', 'Mobile', 'Mobile Number', 'Mobile No', 'Mobile No.', 'Contact', 'Contact Number', 'Contact No', 'Contact No.', 'WhatsApp Number', 'Whatsapp Number', 'WhatsApp No', 'Whatsapp No']) {
+  const sheet = XLSX.utils.aoa_to_sheet([['Student Name', header], ['Alias Header Student', '9806223653']])
+  const book = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(book, sheet, 'Roster')
+  const parsed = roster.parseRosterBufferWithMetadata(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }), `${header}.xlsx`)
+  assert.equal(parsed.rows[0].phone, '9806223653', `phone alias parsed: ${header}`)
+  assert.equal(parsed.phoneColumnDetected, true, `phone column detected: ${header}`)
+}
+const noPhoneSheet = XLSX.utils.aoa_to_sheet([['Student Name', 'Email'], ['No Phone Column', 'no-phone@example.invalid']])
+const noPhoneBook = XLSX.utils.book_new()
+XLSX.utils.book_append_sheet(noPhoneBook, noPhoneSheet, 'Roster')
+const noPhoneParsed = roster.parseRosterBufferWithMetadata(XLSX.write(noPhoneBook, { type: 'buffer', bookType: 'xlsx' }), 'no-phone.xlsx')
+assert.equal(noPhoneParsed.rows[0].phone, '')
+assert.equal(noPhoneParsed.phoneColumnDetected, false)
 
 const template = XLSX.read(roster.createRosterTemplateBuffer(), { type: 'buffer' })
 const templateRows = XLSX.utils.sheet_to_json(template.Sheets[template.SheetNames[0]], { header: 1 })
@@ -97,6 +111,20 @@ const aliasConflict = roster.classifyRosterRows([{ rowNumber: 2, name: 'Alias Ca
   aliases: [{ id: 'alias-1', student_id: 'same', batch: 'Batch A', alias: 'Existing Teams Name', normalized_alias: 'existing teams name', active: true }],
 })[0]
 assert.equal(aliasConflict.status, 'possible_duplicate')
+const existingWithoutPhone = roster.classifyRosterRows([{ rowNumber: 2, name: 'No Phone Existing', email: '', phone: '', externalStudentId: 'NO-PHONE-1', teamsDisplayName: '' }], [{ id: 'no-phone', name: 'No Phone Existing', batch: 'Batch A', phone: '', external_student_id: 'NO-PHONE-1' }], { batch: 'Batch A', aliases: [] })[0]
+assert.equal(existingWithoutPhone.status, 'existing')
+assert.equal(existingWithoutPhone.passwordReady, false)
+assert.equal(existingWithoutPhone.phoneStatus, 'missing')
+assert.match(existingWithoutPhone.reason, /Add a phone number to apply/)
+const mixedExisting = roster.classifyRosterRows([
+  { rowNumber: 2, name: 'Ready Existing', email: '', phone: '9806223653', externalStudentId: 'READY-1', teamsDisplayName: '' },
+  { rowNumber: 3, name: 'Missing Existing', email: '', phone: '', externalStudentId: 'MISSING-1', teamsDisplayName: '' },
+], [
+  { id: 'ready', name: 'Ready Existing', batch: 'Batch A', phone: '', external_student_id: 'READY-1' },
+  { id: 'missing', name: 'Missing Existing', batch: 'Batch A', phone: '', external_student_id: 'MISSING-1' },
+], { batch: 'Batch A', aliases: [] })
+assert.equal(mixedExisting.filter(row => row.passwordReady).length, 1)
+assert.equal(mixedExisting.filter(row => row.status === 'existing' && !row.passwordReady).length, 1)
 
 const used = new Set(['aman-test-01', 'aman-test-02'])
 assert.equal(roster.generateLoginId('Aman Test', used), 'aman-test-03')
@@ -133,6 +161,8 @@ assert.match(route, /loadAllExisting\(supabase\)/, 'strong identity checks load 
 assert.match(route, /student_batch_memberships/, 'new account membership is verified')
 assert.match(route, /source: 'roster_import'/, 'Teams names use the trusted alias architecture')
 assert.match(route, /reconcileWaitingAttendanceSafely/, 'registered identities are reconciled with attendance')
+assert.match(route, /parseRosterBufferWithMetadata/, 'preview exposes phone-column metadata')
+assert.match(route, /applyPattern && row\.passwordReady/, 'conversion only updates ready rows')
 assert.match(route, /row_results: rowResults/, 'audit outcomes are recorded')
 assert.doesNotMatch(route, /row_results:\s*credentials/, 'plaintext credentials never enter import audit history')
 assert.match(route, /existing_different_batch/)
@@ -150,6 +180,10 @@ assert.match(panel, /Download Student Credentials/)
 assert.match(panel, /Passwords are shown once/)
 assert.match(panel, /Apply Password Pattern/)
 assert.match(panel, /Passwords follow FirstName@last3#/)
+assert.match(panel, /PASSWORD READY/)
+assert.match(panel, /Phone column not detected/)
+assert.match(panel, /Roster coverage/)
+assert.match(panel, /patternReadyCount > 0/)
 assert.doesNotMatch(panel, /Temporary Password|temporaryPassword|Temporary passwords/)
 assert.match(panel, /Copy All Credentials/)
 assert.match(panel, /Search student or Login ID/)

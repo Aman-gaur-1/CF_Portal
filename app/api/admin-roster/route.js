@@ -9,7 +9,7 @@ import {
   generateLoginId,
   hashRosterFile,
   loadUsedLoginIds,
-  parseRosterBuffer,
+  parseRosterBufferWithMetadata,
 } from '@/lib/roster-import'
 import { buildStudentPatternPassword, maskStudentPhone } from '@/lib/student-password-pattern'
 import { isMissingHealthCardSchema, isUniqueViolation } from '@/lib/student-health-card'
@@ -33,6 +33,7 @@ function safeClassifiedRow(row) {
     phone: maskStudentPhone(row.phone),
     currentPhone: maskStudentPhone(row.matchedStudent?.phone),
     phoneUpdate: Boolean(row.phoneUpdate),
+    phoneStatus: row.phoneStatus,
     passwordReady: Boolean(row.passwordReady),
     passwordCollisionCount: row.passwordCollisionCount || 0,
     externalStudentId: row.externalStudentId,
@@ -83,19 +84,27 @@ async function validateBatch(supabase, batch) {
   return data || null
 }
 
-function summarize(classified) {
+function summarize(classified, { registeredCount = 0, uploadedCount = classified.length, phoneColumnDetected = true } = {}) {
   const possibleDuplicates = classified.filter(row => row.status === 'possible_duplicate').length
   const existingDifferentBatch = classified.filter(row => row.status === 'existing_different_batch').length
+  const existingRows = classified.filter(row => row.status === 'existing')
   return {
     total: classified.length,
     new: classified.filter(row => row.status === 'new').length,
-    existing: classified.filter(row => row.status === 'existing').length,
+    existing: existingRows.length,
     existingDifferentBatch,
     possibleDuplicates,
     reviewNeeded: possibleDuplicates + existingDifferentBatch,
     invalid: classified.filter(row => row.status === 'invalid').length,
     phoneUpdates: classified.filter(row => row.status === 'existing' && row.phoneUpdate).length,
-    passwordReady: classified.filter(row => row.passwordReady).length,
+    passwordReady: existingRows.filter(row => row.passwordReady).length,
+    phoneMissing: existingRows.filter(row => row.phoneStatus === 'missing').length,
+    invalidPhone: existingRows.filter(row => row.phoneStatus === 'invalid').length,
+    registeredCount,
+    uploadedCount,
+    matchedExistingCount: existingRows.length,
+    notIncludedCount: Math.max(registeredCount - existingRows.length, 0),
+    phoneColumnDetected,
     passwordCollisionWarnings: new Set(classified.filter(row => row.passwordCollisionCount > 1).map(row => row.passwordPattern)).size,
   }
 }
@@ -197,13 +206,15 @@ export async function POST(request) {
     const supabase = getSupabaseAdmin()
     if (!await validateBatch(supabase, upload.batch)) return jsonNoStore({ error: 'Select a valid batch.' }, { status: 400 })
 
-    const rows = parseRosterBuffer(upload.buffer, upload.file.name)
+    const parsedRoster = parseRosterBufferWithMetadata(upload.buffer, upload.file.name)
+    const rows = parsedRoster.rows
     if (!rows.length) return jsonNoStore({ error: 'No roster rows found. Student Name is required.' }, { status: 400 })
     const [existing, aliases] = await Promise.all([loadAllExisting(supabase), loadBatchAliases(supabase, upload.batch)])
     const classified = classifyRosterRows(rows, existing, { batch: upload.batch, aliases })
-    const summary = summarize(classified)
+    const registeredCount = existing.filter(student => String(student.batch) === upload.batch).length
+    const summary = summarize(classified, { registeredCount, uploadedCount: rows.length, phoneColumnDetected: parsedRoster.phoneColumnDetected })
     const safeRows = classified.map(safeClassifiedRow)
-    if (!['commit-new', 'apply-pattern'].includes(upload.action)) return jsonNoStore({ success: true, batch: upload.batch, summary, rows: safeRows })
+    if (!['commit-new', 'apply-pattern'].includes(upload.action)) return jsonNoStore({ success: true, batch: upload.batch, detectedColumns: parsedRoster.detectedColumns, phoneColumnDetected: parsedRoster.phoneColumnDetected, summary, rows: safeRows })
 
     const applyPattern = upload.action === 'apply-pattern'
     const usedLoginIds = applyPattern ? new Set() : await loadUsedLoginIds(supabase)
@@ -317,7 +328,7 @@ export async function POST(request) {
       metadata: { batch: upload.batch, total_rows: classified.length, created: applyPattern ? 0 : credentials.length, password_resets: passwordResets, phone_updates: phoneUpdated, failed, aliases_created: aliasesCreated, password_collision_warnings: summary.passwordCollisionWarnings },
       supabase,
     })
-    return jsonNoStore({ success: true, batch: upload.batch, summary: { ...summary, created: applyPattern ? 0 : credentials.filter(row => row.password).length, patternApplied, phoneUpdated, failed, aliasesCreated }, rows: safeRows, createdRows: rowResults, credentials })
+    return jsonNoStore({ success: true, batch: upload.batch, detectedColumns: parsedRoster.detectedColumns, phoneColumnDetected: parsedRoster.phoneColumnDetected, summary: { ...summary, created: applyPattern ? 0 : credentials.filter(row => row.password).length, patternApplied, phoneUpdated, failed, aliasesCreated }, rows: safeRows, createdRows: rowResults, credentials })
   } catch (error) {
     console.error('[admin-roster] failed', error?.message)
     if (isMissingHealthCardSchema(error)) return jsonNoStore({ error: 'Roster import schema is not configured yet.' }, { status: 503 })
