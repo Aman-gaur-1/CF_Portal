@@ -6,12 +6,12 @@ import {
   ROSTER_HEADERS,
   classifyRosterRows,
   createRosterTemplateBuffer,
-  generateLoginId,
   hashRosterFile,
   loadUsedLoginIds,
   parseRosterBufferWithMetadata,
 } from '@/lib/roster-import'
 import { buildStudentPatternPassword, maskStudentPhone } from '@/lib/student-password-pattern'
+import { generateStudentLoginId } from '@/lib/student-login-id'
 import { isMissingHealthCardSchema, isUniqueViolation } from '@/lib/student-health-card'
 import { normalizeParticipantName } from '@/lib/attendance-matching'
 import { loadBatchAliases, saveAlias } from '@/lib/attendance-domain'
@@ -35,6 +35,9 @@ function safeClassifiedRow(row) {
     phoneUpdate: Boolean(row.phoneUpdate),
     phoneStatus: row.phoneStatus,
     passwordReady: Boolean(row.passwordReady),
+    loginIdReady: Boolean(row.loginIdReady),
+    currentLoginId: matched?.login_id || null,
+    newLoginId: row.newLoginId || null,
     passwordCollisionCount: row.passwordCollisionCount || 0,
     externalStudentId: row.externalStudentId,
     teamsDisplayName: row.teamsDisplayName,
@@ -98,6 +101,8 @@ function summarize(classified, { registeredCount = 0, uploadedCount = classified
     invalid: classified.filter(row => row.status === 'invalid').length,
     phoneUpdates: classified.filter(row => row.status === 'existing' && row.phoneUpdate).length,
     passwordReady: existingRows.filter(row => row.passwordReady).length,
+    loginIdReady: existingRows.filter(row => row.loginIdReady).length,
+    newLoginIdReady: classified.filter(row => row.status === 'new' && row.loginIdReady).length,
     phoneMissing: existingRows.filter(row => row.phoneStatus === 'missing').length,
     invalidPhone: existingRows.filter(row => row.phoneStatus === 'invalid').length,
     registeredCount,
@@ -109,22 +114,53 @@ function summarize(classified, { registeredCount = 0, uploadedCount = classified
   }
 }
 
-async function createStudentWithUniqueLogin({ supabase, row, batch, usedLoginIds, password }) {
+function allocateLoginIdCandidates(classified, usedLoginIds) {
+  const newUsed = new Set(usedLoginIds)
+  const migrationUsed = new Set(usedLoginIds)
+
+  for (const row of classified) {
+    if (row.status !== 'new' || !row.passwordReady) continue
+    try {
+      row.loginIdCandidate = generateStudentLoginId({ name: row.name, phone: row.phone }, newUsed)
+      row.loginIdReady = true
+    } catch {
+      row.loginIdReady = false
+    }
+  }
+
+  for (const row of classified) {
+    if (row.status !== 'existing' || !row.passwordReady) continue
+    const oldLoginId = String(row.matchedStudent?.login_id || '').trim().toLowerCase()
+    if (oldLoginId) migrationUsed.delete(oldLoginId)
+    try {
+      row.newLoginId = generateStudentLoginId({ name: row.matchedStudent?.name || row.name, phone: row.phone || row.matchedStudent?.phone }, migrationUsed)
+      row.loginIdReady = true
+    } catch {
+      row.loginIdReady = false
+    }
+  }
+
+  return classified
+}
+
+async function createStudentWithUniqueLogin({ supabase, row, batch, usedLoginIds, password, loginIdCandidate }) {
   const passwordHash = await hashStudentPasswordSecure(password)
+  let candidate = loginIdCandidate || generateStudentLoginId({ name: row.name, phone: row.phone }, usedLoginIds)
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const loginId = generateLoginId(row.name, usedLoginIds)
     const { data, error } = await supabase.from('students').insert({
       name: row.name.trim().replace(/\s+/g, ' '),
       batch,
       email: row.email || null,
       phone: row.phone || null,
       external_student_id: row.externalStudentId || null,
-      login_id: loginId,
+      login_id: candidate,
       password_hash: passwordHash,
       must_change_password: false,
     }).select('id,name,batch,login_id,must_change_password,status,created_at').single()
     if (!error) return data
     if (!isUniqueViolation(error) || !/login/i.test(error.message || '')) throw error
+    usedLoginIds.add(candidate.toLowerCase())
+    candidate = generateStudentLoginId({ name: row.name, phone: row.phone }, usedLoginIds)
   }
   throw new Error('Could not allocate a unique Login ID.')
 }
@@ -211,13 +247,14 @@ export async function POST(request) {
     if (!rows.length) return jsonNoStore({ error: 'No roster rows found. Student Name is required.' }, { status: 400 })
     const [existing, aliases] = await Promise.all([loadAllExisting(supabase), loadBatchAliases(supabase, upload.batch)])
     const classified = classifyRosterRows(rows, existing, { batch: upload.batch, aliases })
+    const usedLoginIds = await loadUsedLoginIds(supabase)
+    allocateLoginIdCandidates(classified, usedLoginIds)
     const registeredCount = existing.filter(student => String(student.batch) === upload.batch).length
     const summary = summarize(classified, { registeredCount, uploadedCount: rows.length, phoneColumnDetected: parsedRoster.phoneColumnDetected })
     const safeRows = classified.map(safeClassifiedRow)
     if (!['commit-new', 'apply-pattern'].includes(upload.action)) return jsonNoStore({ success: true, batch: upload.batch, detectedColumns: parsedRoster.detectedColumns, phoneColumnDetected: parsedRoster.phoneColumnDetected, summary, rows: safeRows })
 
     const applyPattern = upload.action === 'apply-pattern'
-    const usedLoginIds = applyPattern ? new Set() : await loadUsedLoginIds(supabase)
     const credentials = []
     const rowResults = []
     let aliasesCreated = 0
@@ -228,7 +265,7 @@ export async function POST(request) {
       const password = buildStudentPatternPassword({ name: row.name, phone: row.phone })
       let student = null
       try {
-        student = await createStudentWithUniqueLogin({ supabase, row, batch: upload.batch, usedLoginIds, password })
+        student = await createStudentWithUniqueLogin({ supabase, row, batch: upload.batch, usedLoginIds, password, loginIdCandidate: row.loginIdCandidate })
       } catch {
         rowResults.push({ rowNumber: row.rowNumber, name: row.name, status: 'failed', reason: 'Account creation could not be completed safely.' })
         continue
@@ -263,26 +300,39 @@ export async function POST(request) {
       rowResults.push({ rowNumber: row.rowNumber, name: student.name, studentId: student.id, loginId: student.login_id, status: 'created', aliasCreated, warnings })
     }
 
-    for (const row of classified.filter(candidate => candidate.status === 'existing' && candidate.matchedStudent && (candidate.teamsDisplayName || (applyPattern && candidate.passwordReady)))) {
+    for (const row of classified.filter(candidate => candidate.status === 'existing' && candidate.matchedStudent && (candidate.teamsDisplayName || (applyPattern && candidate.passwordReady && candidate.loginIdReady)))) {
       try {
         let student = row.matchedStudent
         let phoneWasUpdated = false
-        if (applyPattern && row.passwordReady) {
+        const oldLoginId = student.login_id || null
+        if (applyPattern && row.passwordReady && row.loginIdReady) {
           const password = buildStudentPatternPassword({ name: student.name, phone: row.phone || student.phone })
           const update = {
             password_hash: await hashStudentPasswordSecure(password),
             must_change_password: false,
+            login_id: row.newLoginId,
           }
           if (row.phoneUpdate) {
             update.phone = row.phone
             phoneWasUpdated = true
           }
-          const { data: updated, error: updateError } = await supabase
-            .from('students')
-            .update(update)
-            .eq('id', student.id)
-            .select('id,name,batch,phone,login_id,status,created_at')
-            .single()
+          let updated = null
+          let updateError = null
+          let candidate = row.newLoginId
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            const result = await supabase
+              .from('students')
+              .update({ ...update, login_id: candidate })
+              .eq('id', student.id)
+              .select('id,name,batch,phone,login_id,status,created_at')
+              .single()
+            updated = result.data
+            updateError = result.error
+            if (!updateError) break
+            if (!isUniqueViolation(updateError) || !/login/i.test(updateError.message || '')) throw updateError
+            usedLoginIds.add(candidate.toLowerCase())
+            candidate = generateStudentLoginId({ name: student.name, phone: row.phone || student.phone }, usedLoginIds)
+          }
           if (updateError) throw updateError
           student = updated
           passwordResets += 1
@@ -293,7 +343,7 @@ export async function POST(request) {
         const aliasResult = await rememberTeamsName({ supabase, student, teamsDisplayName: row.teamsDisplayName, admin })
         if (aliasResult.created) aliasesCreated += 1
         await reconcileWaitingAttendanceSafely({ supabase, student })
-        rowResults.push({ rowNumber: row.rowNumber, name: row.name, studentId: student.id, loginId: student.login_id || null, status: applyPattern && row.passwordReady ? 'pattern_applied' : 'already_onboarded', aliasCreated: Boolean(aliasResult.created), phoneUpdated: phoneWasUpdated })
+        rowResults.push({ rowNumber: row.rowNumber, name: row.name, studentId: student.id, oldLoginId, loginId: student.login_id || null, status: applyPattern && row.passwordReady && row.loginIdReady ? 'credential_pattern_applied' : 'already_onboarded', aliasCreated: Boolean(aliasResult.created), phoneUpdated: phoneWasUpdated })
       } catch {
         rowResults.push({ rowNumber: row.rowNumber, name: row.name, studentId: row.matchedStudent.id, loginId: row.matchedStudent.login_id || null, status: 'review_needed', reason: 'Student password, phone, or Teams identity update could not be completed safely.' })
       }
@@ -318,17 +368,27 @@ export async function POST(request) {
     if (auditError) throw auditError
 
     await appendActivity({
-      eventType: applyPattern ? 'student_pattern_password_applied' : 'student_roster_onboarded',
+      eventType: applyPattern ? 'student_credential_pattern_applied' : 'student_roster_onboarded',
       description: applyPattern
-        ? `Applied the ConsoleFlare password pattern to ${passwordResets} student account(s) in ${upload.batch}.`
+        ? `Applied the ConsoleFlare Login ID and password pattern to ${passwordResets} student account(s) in ${upload.batch}.`
         : `Onboarded ${credentials.length} student account(s) into ${upload.batch}.`,
       actorName: admin.name,
       actorRole: 'admin',
-      action: applyPattern ? 'apply_student_password_pattern' : 'bulk_onboard',
-      metadata: { batch: upload.batch, total_rows: classified.length, created: applyPattern ? 0 : credentials.length, password_resets: passwordResets, phone_updates: phoneUpdated, failed, aliases_created: aliasesCreated, password_collision_warnings: summary.passwordCollisionWarnings },
+      action: applyPattern ? 'apply_student_credential_pattern' : 'bulk_onboard',
+      metadata: {
+        batch: upload.batch,
+        total_rows: classified.length,
+        created: applyPattern ? 0 : credentials.length,
+        password_resets: passwordResets,
+        phone_updates: phoneUpdated,
+        failed,
+        aliases_created: aliasesCreated,
+        password_collision_warnings: summary.passwordCollisionWarnings,
+        login_id_updates: applyPattern ? rowResults.filter(row => row.status === 'credential_pattern_applied').map(row => ({ student_id: row.studentId, old_login_id: row.oldLoginId, new_login_id: row.loginId, phone_updated: row.phoneUpdated })) : [],
+      },
       supabase,
     })
-    return jsonNoStore({ success: true, batch: upload.batch, detectedColumns: parsedRoster.detectedColumns, phoneColumnDetected: parsedRoster.phoneColumnDetected, summary: { ...summary, created: applyPattern ? 0 : credentials.filter(row => row.password).length, patternApplied, phoneUpdated, failed, aliasesCreated }, rows: safeRows, createdRows: rowResults, credentials })
+    return jsonNoStore({ success: true, batch: upload.batch, detectedColumns: parsedRoster.detectedColumns, phoneColumnDetected: parsedRoster.phoneColumnDetected, summary: { ...summary, created: applyPattern ? 0 : credentials.filter(row => row.password).length, patternApplied, phoneUpdated, failed, aliasesCreated }, rows: classified.map(safeClassifiedRow), createdRows: rowResults, credentials })
   } catch (error) {
     console.error('[admin-roster] failed', error?.message)
     if (isMissingHealthCardSchema(error)) return jsonNoStore({ error: 'Roster import schema is not configured yet.' }, { status: 503 })

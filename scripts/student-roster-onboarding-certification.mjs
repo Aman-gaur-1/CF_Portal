@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as XLSX from 'xlsx'
 import { createClient } from '@supabase/supabase-js'
+import { hashStudentPasswordSecure } from '../lib/student-auth.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const target = process.env.CF_PORTAL_TARGET || 'staging'
@@ -61,7 +62,8 @@ function rosterFile(tag, names) {
   return Buffer.from([
     'Student Name,Email,Phone,External Student ID,Teams Display Name',
     `${names.alias},${tag.toLowerCase()}-alias@example.invalid,9806223653,${tag}-ALIAS,${names.aliasTeams}`,
-    `${names.exact},${tag.toLowerCase()}-exact@example.invalid,9806223654,${tag}-EXACT,`,
+    `${names.exact},${tag.toLowerCase()}-exact@example.invalid,9806223653,${tag}-EXACT,`,
+    `${names.legacy},${tag.toLowerCase()}-legacy@example.invalid,9876543253,${tag}-LEGACY,`,
   ].join('\n'))
 }
 
@@ -108,11 +110,12 @@ function attendanceForm(action, batch, date, bytes, records = null, unmatched = 
 const tag = `ROSTER-CERT-${Date.now()}`
 const batch = `${tag}-BATCH`
 const date = indiaDate()
-const names = { alias: `${tag} Alias Student`, aliasTeams: `${tag} Alias`, exact: `${tag} Exact Student`, unknown: `${tag} Unknown Person` }
+const names = { alias: `${tag} Alias Student`, aliasTeams: `${tag} Alias`, exact: `${tag} Exact Student`, legacy: `${tag} Legacy Student`, unknown: `${tag} Unknown Person` }
 const rosterBytes = rosterFile(tag, names)
 const attendanceBytes = attendanceFile(names)
 let batchId = null
 let studentIds = []
+let legacyStudentId = null
 let attendanceImportId = null
 let attendanceSessionId = null
 let baseline = null
@@ -135,6 +138,20 @@ try {
   assert.ifError(batchError)
   batchId = batchRow.id
 
+  const legacyLoginId = `${tag.toLowerCase()}-legacy-01`
+  const legacyPassword = 'Legacy@000#'
+  const { data: legacyStudent, error: legacyStudentError } = await db.from('students').insert({
+    name: names.legacy,
+    batch,
+    email: `${tag.toLowerCase()}-legacy@example.invalid`,
+    external_student_id: `${tag}-LEGACY`,
+    login_id: legacyLoginId,
+    password_hash: await hashStudentPasswordSecure(legacyPassword),
+    must_change_password: false,
+  }).select('id,name,batch,login_id').single()
+  assert.ifError(legacyStudentError)
+  legacyStudentId = legacyStudent.id
+
   const adminLogin = await api('/api/admin-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: adminUsername, password: adminPassword }) })
   adminHeaders = { Authorization: `Bearer ${adminLogin.payload.token}` }
 
@@ -144,20 +161,26 @@ try {
   const beforePreview = await countRows('students', query => query.eq('batch', batch))
   const preview = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: rosterForm('preview', batch, rosterBytes, tag) })
   assert.equal(preview.payload.summary.new, 2)
+  assert.equal(preview.payload.summary.existing, 1)
+  assert.equal(preview.payload.summary.loginIdReady, 1)
+  assert.equal(preview.payload.rows.find(row => row.name === names.legacy).newLoginId?.startsWith(tag.toLowerCase().replace(/[^a-z0-9]/g, '')), true)
   assert.equal(await countRows('students', query => query.eq('batch', batch)), beforePreview)
 
   const committed = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: rosterForm('commit-new', batch, rosterBytes, tag) })
   assert.equal(committed.payload.summary.created, 2)
   assert.equal(committed.payload.credentials.length, 2)
+  assert.equal(new Set(committed.payload.credentials.map(row => row.loginId)).size, 2, 'same base Login IDs receive global collision suffixes')
   const credentialByName = new Map(committed.payload.credentials.map(row => [row.name, row]))
   const aliasCredential = credentialByName.get(names.alias)
   assert.ok(aliasCredential?.loginId && aliasCredential?.password)
 
   const { data: students, error: studentError } = await db.from('students').select('id,name,batch,login_id,password_hash,must_change_password').eq('batch', batch).order('name')
   assert.ifError(studentError)
-  assert.equal(students.length, 2)
+  assert.equal(students.length, 3)
   studentIds = students.map(student => student.id)
+  assert.ok(studentIds.includes(legacyStudentId))
   for (const student of students) {
+    if (student.id === legacyStudentId) continue
     const credential = credentialByName.get(student.name)
     assert.ok(student.password_hash?.startsWith('$2'))
     assert.notEqual(student.password_hash, credential.password)
@@ -167,7 +190,7 @@ try {
 
   const { data: memberships, error: membershipError } = await db.from('student_batch_memberships').select('student_id,batch,ends_on').in('student_id', studentIds).eq('batch', batch).is('ends_on', null)
   assert.ifError(membershipError)
-  assert.equal(memberships.length, 2)
+  assert.equal(memberships.length, 3)
   const { data: aliases, error: aliasError } = await db.from('student_identity_aliases').select('student_id,alias,source,active').eq('batch', batch)
   assert.ifError(aliasError)
   assert.equal(aliases.length, 1)
@@ -178,10 +201,39 @@ try {
   const overviewText = JSON.stringify(overview.payload)
   for (const credential of committed.payload.credentials) assert.ok(!overviewText.includes(credential.password))
 
+  const legacyBefore = await db.from('students').select('id,name,batch,login_id').eq('id', legacyStudentId).single()
+  assert.ifError(legacyBefore.error)
+  const legacyMembershipsBefore = await countRows('student_batch_memberships', query => query.eq('student_id', legacyStudentId))
+  const legacyAttendanceBefore = await countRows('student_attendance', query => query.eq('student_id', legacyStudentId))
+  const legacySubmissionsBefore = await countRows('submissions', query => query.eq('student_id', legacyStudentId))
+  const oldLoginBefore = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: legacyLoginId, password: legacyPassword }) })
+  assert.equal(oldLoginBefore.response.status, 200)
+
   const duplicate = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: rosterForm('commit-new', batch, rosterBytes, tag) })
   assert.equal(duplicate.payload.summary.created, 0)
-  assert.equal(duplicate.payload.summary.existing, 2)
-  assert.equal(await countRows('students', query => query.eq('batch', batch)), 2)
+  assert.equal(duplicate.payload.summary.existing, 3)
+  assert.equal(await countRows('students', query => query.eq('batch', batch)), 3)
+
+  const migrationPreview = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: rosterForm('preview', batch, rosterBytes, tag) })
+  const legacyPreview = migrationPreview.payload.rows.find(row => row.name === names.legacy)
+  assert.equal(legacyPreview.currentLoginId, legacyLoginId)
+  assert.ok(legacyPreview.newLoginId)
+  assert.equal(legacyPreview.passwordReady, true)
+  const migration = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: rosterForm('apply-pattern', batch, rosterBytes, tag) })
+  assert.equal(migration.payload.summary.patternApplied, 3)
+  const migratedCredential = migration.payload.credentials.find(row => row.name === names.legacy)
+  assert.ok(migratedCredential?.loginId && migratedCredential?.password)
+  assert.notEqual(migratedCredential.loginId, legacyLoginId)
+  const oldLoginAfter = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: legacyLoginId, password: legacyPassword }) }, [401])
+  assert.equal(oldLoginAfter.response.status, 401)
+  const newLoginAfter = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: migratedCredential.loginId, password: migratedCredential.password }) })
+  assert.equal(newLoginAfter.response.status, 200)
+  const legacyAfter = await db.from('students').select('id,name,batch,login_id').eq('id', legacyStudentId).single()
+  assert.ifError(legacyAfter.error)
+  assert.deepEqual({ id: legacyAfter.data.id, name: legacyAfter.data.name, batch: legacyAfter.data.batch }, { id: legacyBefore.data.id, name: legacyBefore.data.name, batch: legacyBefore.data.batch })
+  assert.equal(await countRows('student_batch_memberships', query => query.eq('student_id', legacyStudentId)), legacyMembershipsBefore)
+  assert.equal(await countRows('student_attendance', query => query.eq('student_id', legacyStudentId)), legacyAttendanceBefore)
+  assert.equal(await countRows('submissions', query => query.eq('student_id', legacyStudentId)), legacySubmissionsBefore)
 
   const firstLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: aliasCredential.loginId, password: aliasCredential.password }) })
   assert.equal(firstLogin.payload.student.must_change_password, false)
@@ -208,13 +260,14 @@ try {
   assert.equal(confirmed.payload.result.savedUnlinked, 1)
   attendanceImportId = confirmed.payload.result.importId
   attendanceSessionId = confirmed.payload.result.sessionId
-  assert.equal(await countRows('students', query => query.eq('batch', batch)), 2, 'unknown attendance must not create an account')
+  assert.equal(await countRows('students', query => query.eq('batch', batch)), 3, 'unknown attendance must not create an account')
 
   const reset = await api('/api/admin-student-credentials', { method: 'POST', headers: { ...adminHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: students.find(student => student.name === names.alias).id }) })
   const resetPassword = reset.payload.credential.password
   assert.ok(resetPassword)
   assert.equal(resetPassword, aliasCredential.password)
-  const resetLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: aliasCredential.loginId, password: resetPassword }) })
+  assert.equal(reset.payload.credential.loginId, aliasCredential.loginId, 'password reset preserves the Login ID')
+  const resetLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: reset.payload.credential.loginId, password: resetPassword }) })
   assert.equal(resetLogin.payload.student.must_change_password, false)
   const { data: resetStudent, error: resetError } = await db.from('students').select('password_hash,must_change_password').eq('id', students.find(student => student.name === names.alias).id).single()
   assert.ifError(resetError)
@@ -226,6 +279,7 @@ try {
   const auditText = JSON.stringify(audits || [])
   assert.ok(!auditText.includes(resetPassword))
   for (const credential of committed.payload.credentials) assert.ok(!auditText.includes(credential.password))
+  for (const credential of migration.payload.credentials) assert.ok(!auditText.includes(credential.password))
   const { data: rosterAudits, error: rosterAuditError } = await db.from('student_roster_imports').select('row_results').eq('batch', batch)
   assert.ifError(rosterAuditError)
   const rosterAuditText = JSON.stringify(rosterAudits || [])
@@ -239,7 +293,7 @@ try {
     created: 2,
     hashesSecure: true,
     plaintextStored: false,
-    memberships: 2,
+    memberships: 3,
     teamsAlias: true,
     oneTimeHistory: true,
     passwordPattern: true,
@@ -251,6 +305,11 @@ try {
     unknownStayedUnlinked: true,
     resetPassword: true,
     duplicateRosterIdempotent: true,
+    collisionSuffix: true,
+    explicitExistingMigration: true,
+    oldLoginRejected: true,
+    newLoginAccepted: true,
+    identityHistoryPreserved: true,
   }
   console.log(JSON.stringify(certification))
 } finally {

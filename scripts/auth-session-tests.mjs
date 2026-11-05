@@ -8,7 +8,6 @@ process.env.TEACHER_SESSION_SECRET = 'teacher-test-secret'
 process.env.ADMIN_SESSION_SECRET = 'admin-test-secret'
 
 const studentAuth = await import('../lib/student-auth.js')
-const rosterImport = await import('../lib/roster-import.js')
 const teacherAuth = await import('../lib/teacher-auth.js')
 const adminAuth = await import('../lib/admin-auth.js')
 
@@ -52,9 +51,13 @@ assert.equal(
 assert.equal(studentAuth.escapeStudentNameForIlike('Asha_100%'), 'Asha\\_100\\%')
 
 const usedLoginIds = new Set(['asha-rao-01', 'asha-rao-02'])
-assert.equal(rosterImport.generateLoginId('Asha Rao', usedLoginIds), 'asha-rao-03', 'duplicate names receive the next unique login ID')
-assert.equal(rosterImport.generateLoginId('Asha Rao', usedLoginIds), 'asha-rao-04', 'same name across batches remains globally unique')
-assert.equal(rosterImport.generateLoginId('Asha Rao', new Set(['asha-rao-01'])), 'asha-rao-02', 'allocator advances on a collision instead of duplicating')
+const loginId = await import('../lib/student-login-id.js')
+assert.equal(loginId.buildStudentLoginIdBase({ name: 'Aman Gaur', phone: '9806223653' }), 'aman53')
+assert.equal(loginId.buildStudentLoginIdBase({ name: 'Abhishek Kumar Singh', phone: '9876543253' }), 'abhishek53')
+assert.equal(loginId.buildStudentLoginIdBase({ name: 'ANIL KUMAR', phone: '9876543210' }), 'anil10')
+assert.equal(loginId.buildStudentLoginIdBase({ name: 'Aman Gaur', phone: '+91 98062 23653' }), 'aman53')
+assert.equal(loginId.generateStudentLoginId({ name: 'Aman Gaur', phone: '9806223653' }, new Set(['aman53'])), 'aman53-2', 'duplicate Login IDs receive the next global suffix')
+assert.equal(loginId.generateStudentLoginId({ name: 'Aman Gaur', phone: '9806223653' }, new Set(['aman53', 'aman53-2'])), 'aman53-3', 'allocator advances globally on repeated collisions')
 
 const legacyHash = studentAuth.hashStudentPassword('legacy-password')
 assert.deepEqual(await studentAuth.verifyStudentPassword('legacy-password', legacyHash), { ok: true, needsUpgrade: true })

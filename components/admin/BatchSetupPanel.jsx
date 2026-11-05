@@ -49,7 +49,8 @@ function formatDate(value) {
 function rowStatus(row) {
   if (row.status === "new") return { label: "New", tone: "badge-done" }
   if (row.status === "existing") {
-    if (row.passwordReady) return { label: "Pattern ready", tone: "badge-done" }
+    if (row.passwordReady && row.loginIdReady) return { label: "Credentials ready", tone: "badge-done" }
+    if (row.passwordReady) return { label: "Login ID review", tone: "badge-pending" }
     if (row.phoneStatus === "invalid") return { label: "Invalid phone", tone: "badge-failed" }
     return { label: "Phone required", tone: "badge-pending" }
   }
@@ -202,8 +203,8 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
     if (!file || !batch) { showError("Select a batch and roster file first."); return }
     if (action === "apply-pattern" && patternReadyCount > 0) {
       const skippedCount = Math.max((preview?.summary?.existing || 0) - patternReadyCount, 0)
-      const skippedMessage = skippedCount ? ` ${skippedCount} student${skippedCount === 1 ? " is" : "s are"} missing a valid phone number and will not be changed.` : ""
-      if (!window.confirm(`${patternReadyCount} existing student${patternReadyCount === 1 ? "" : "s"} will have their password${patternReadyCount === 1 ? "" : "s"} reset using the ConsoleFlare pattern.${skippedMessage} Existing IDs, attendance, submissions, memberships, and batch assignments will be preserved.`)) return
+      const skippedMessage = skippedCount ? ` ${skippedCount} student${skippedCount === 1 ? " is" : "s are"} missing a valid phone number or Login ID and will not be changed.` : ""
+      if (!window.confirm(`${patternReadyCount} existing student${patternReadyCount === 1 ? "" : "s"} will receive new Login IDs and passwords using the ConsoleFlare credential pattern.${skippedMessage} Old Login IDs and passwords for these students will stop working. Student IDs, attendance, submissions, Health Card, memberships, and batch assignments will remain unchanged.`)) return
     }
     setLoading(true)
     try {
@@ -221,7 +222,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       } else {
         setCredentials(data.credentials || [])
         await loadOverview(batch)
-        success(`${data.summary?.created || 0} account(s) created and ${data.summary?.patternApplied || 0} existing password${data.summary?.patternApplied === 1 ? "" : "s"} applied. Download the credentials now.`)
+        success(`${data.summary?.created || 0} account(s) created and ${data.summary?.patternApplied || 0} existing credential${data.summary?.patternApplied === 1 ? "" : "s"} applied. Download the credentials now.`)
       }
     } catch (error) { showError(error.message) } finally { setLoading(false) }
   }
@@ -295,7 +296,9 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
   const activeStep = credentials.length ? 5 : preview ? 3 : file ? 2 : batch ? 1 : 0
   const newCount = preview?.summary?.new || 0
   const aliasUpdateCount = (preview?.rows || []).filter(row => row.status === "existing" && row.teamsDisplayName).length
-  const patternReadyCount = (preview?.rows || []).filter(row => row.status === "existing" && row.passwordReady).length
+  const patternReadyCount = (preview?.rows || []).filter(row => row.status === "existing" && row.passwordReady && row.loginIdReady).length
+  const passwordReadyCount = preview?.summary?.passwordReady || 0
+  const loginIdReadyCount = preview?.summary?.loginIdReady || 0
   const phoneMissingCount = preview?.summary?.phoneMissing || 0
   const invalidPhoneCount = preview?.summary?.invalidPhone || 0
   const actionableCount = newCount + aliasUpdateCount
@@ -339,27 +342,27 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
             </label>
           </div>
         </div>
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Required: Student Name and Phone. Optional: Email, External Student ID, Teams Display Name. The selected batch is authoritative. Passwords follow FirstName@last3#.</p>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Required: Student Name and Phone. Optional: Email, External Student ID, Teams Display Name. The selected batch is authoritative. Login IDs use first name + final 2 phone digits. Passwords follow FirstName@last3#.</p>
         <div className="flex gap-2 flex-wrap">
           <button type="button" className="btn btn-primary" onClick={() => submit("preview")} disabled={loading || !file || !batch}>{loading ? <Spinner size="sm" /> : "Preview Students"}</button>
           {preview && newCount > 0 && <button type="button" className="btn btn-primary" onClick={() => submit("commit-new")} disabled={loading || newCount === 0}>{loading ? <Spinner size="sm" /> : `Create ${newCount} Student Account${newCount === 1 ? "" : "s"}`}</button>}
           {preview && actionableCount > 0 && newCount === 0 && patternReadyCount === 0 && <button type="button" className="btn btn-primary" onClick={() => submit("commit-new")} disabled={loading}>{loading ? <Spinner size="sm" /> : "Apply Attendance Aliases"}</button>}
-          {preview && (patternReadyCount > 0 || (aliasUpdateCount > 0 && newCount === 0)) && <button type="button" className="btn btn-secondary" onClick={() => submit("apply-pattern")} disabled={loading}>{loading ? <Spinner size="sm" /> : patternReadyCount > 0 ? `Update Students & Apply Password Pattern${patternReadyCount === 1 ? "" : "s"}` : "Apply Attendance Aliases"}</button>}
+          {preview && (patternReadyCount > 0 || (aliasUpdateCount > 0 && newCount === 0)) && <button type="button" className="btn btn-secondary" onClick={() => submit("apply-pattern")} disabled={loading}>{loading ? <Spinner size="sm" /> : patternReadyCount > 0 ? `Update ${patternReadyCount} Student${patternReadyCount === 1 ? "" : "s"} & Apply Login Credentials` : "Apply Attendance Aliases"}</button>}
         </div>
       </section>
 
       {preview && <section className="card admin-panel grid gap-4">
-        <div><h3 className="text-lg font-bold">3. Review Students</h3><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Previewing creates nothing. New rows need a phone number. Existing rows are changed only after you explicitly apply the password pattern.</p></div>
+        <div><h3 className="text-lg font-bold">3. Review Students</h3><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Previewing creates nothing. New rows need a phone number. Existing rows are changed only after you explicitly apply the Login ID and password pattern.</p></div>
         {preview.phoneColumnDetected === false && <div className="rounded-xl p-4 grid gap-2" style={{ border: "1px solid var(--warning)", background: "rgba(245,158,11,0.08)" }} role="alert"><p className="font-semibold">⚠ Phone column not detected</p><p className="text-sm" style={{ color: "var(--text-secondary)" }}>Rename the column to Phone, Mobile Number, or Contact Number and preview again.</p><div className="flex gap-2 flex-wrap"><span className="text-xs" style={{ color: "var(--text-muted)" }}>Accepted examples: Phone · Mobile Number · Contact Number</span><button type="button" className="btn btn-secondary btn-sm" onClick={() => downloadTemplate("xlsx")}>Download Template</button></div></div>}
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-          {[["NEW STUDENTS", preview.summary?.new, "badge-done"], ["EXISTING STUDENTS", preview.summary?.existing, "badge-done"], ["PASSWORD READY", preview.summary?.passwordReady, "badge-done"], ["PHONE MISSING", phoneMissingCount, "badge-pending"], ["REVIEW NEEDED", preview.summary?.reviewNeeded, "badge-pending"], ["INVALID", (preview.summary?.invalid || 0) + invalidPhoneCount, "badge-failed"]].map(([label, value, tone]) => <div className="stat-card" key={label}><div className="stat-label">{label}</div><div className="stat-num">{value || 0}</div><span className={tone}>{label.toLowerCase()}</span></div>)}
+        <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
+          {[["NEW STUDENTS", preview.summary?.new, "badge-done"], ["EXISTING STUDENTS", preview.summary?.existing, "badge-done"], ["LOGIN IDs READY", loginIdReadyCount, "badge-done"], ["PASSWORDS READY", passwordReadyCount, "badge-done"], ["PHONE MISSING", phoneMissingCount, "badge-pending"], ["REVIEW NEEDED", preview.summary?.reviewNeeded, "badge-pending"], ["INVALID", (preview.summary?.invalid || 0) + invalidPhoneCount, "badge-failed"]].map(([label, value, tone]) => <div className="stat-card" key={label}><div className="stat-label">{label}</div><div className="stat-num">{value || 0}</div><span className={tone}>{label.toLowerCase()}</span></div>)}
         </div>
         {(preview.summary?.registeredCount || 0) > 0 && <div className="rounded-xl p-4 grid gap-2" style={{ border: "1px solid var(--border)", background: "var(--surface)" }}><p className="font-semibold">Roster coverage</p><div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm"><span>Uploaded Students: <b>{preview.summary?.uploadedCount || 0}</b></span><span>Registered in Batch: <b>{preview.summary?.registeredCount || 0}</b></span><span>Matched Existing: <b>{preview.summary?.matchedExistingCount || 0}</b></span><span>Not Included in Upload: <b>{preview.summary?.notIncludedCount || 0}</b></span></div>{preview.summary?.notIncludedCount > 0 && <p className="text-xs" style={{ color: "var(--warning)" }}>Only uploaded and safely matched students can be changed. Students absent from this file will not be reset.</p>}</div>}
         <div className="grid gap-2">
           {(preview.rows || []).map(row => {
             const status = rowStatus(row)
             return <div className="admin-row items-start" key={`${row.rowNumber}-${row.name}`}>
-              <div className="min-w-0"><p className="font-semibold">{row.name || `Row ${row.rowNumber}`}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{[row.email, row.phoneUpdate ? `New: ${row.phone || "Not available"}` : row.phone && `Phone: ${row.phone}`, row.phoneUpdate && `Current: ${row.currentPhone || "Not available"}`, row.teamsDisplayName && `Teams: ${row.teamsDisplayName}`].filter(Boolean).join(" · ") || "No optional identity details"}</p><p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{row.reason || (row.passwordCollisionCount > 1 ? "Password pattern collision warning: review the generated credentials before distribution." : "Ready to create")}</p>{row.passwordCollisionCount > 1 && <p className="text-xs mt-1" style={{ color: "var(--warning)" }}>{row.passwordCollisionCount} students generate the same password pattern. This is allowed, but distribute credentials carefully.</p>}</div>
+              <div className="min-w-0"><p className="font-semibold">{row.name || `Row ${row.rowNumber}`}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{[row.email, row.phoneUpdate ? `New: ${row.phone || "Not available"}` : row.phone && `Phone: ${row.phone}`, row.phoneUpdate && `Current: ${row.currentPhone || "Not available"}`, row.status === "existing" && row.currentLoginId && `Current Login ID: ${row.currentLoginId}`, row.status === "existing" && row.newLoginId && `New Login ID: ${row.newLoginId}`, row.teamsDisplayName && `Teams: ${row.teamsDisplayName}`].filter(Boolean).join(" · ") || "No optional identity details"}</p><p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{row.reason || (row.passwordCollisionCount > 1 ? "Password pattern collision warning: review the generated credentials before distribution." : "Ready to create")}</p>{row.passwordCollisionCount > 1 && <p className="text-xs mt-1" style={{ color: "var(--warning)" }}>{row.passwordCollisionCount} students generate the same password pattern. This is allowed, but distribute credentials carefully.</p>}</div>
               <div className="flex gap-2 flex-wrap justify-end"><span className={status.tone}>{status.label}</span>{row.status === "existing_different_batch" && row.matchedStudent && <button type="button" className="btn btn-secondary btn-sm" onClick={() => askTransfer({ id: row.matchedStudent.id, name: row.matchedStudent.name, batch: row.matchedStudent.batch }, batch)}>Assign / Transfer Existing Student</button>}</div>
             </div>
           })}
