@@ -7,11 +7,11 @@ import {
   classifyRosterRows,
   createRosterTemplateBuffer,
   generateLoginId,
-  generateTemporaryPassword,
   hashRosterFile,
   loadUsedLoginIds,
   parseRosterBuffer,
 } from '@/lib/roster-import'
+import { buildStudentPatternPassword, maskStudentPhone } from '@/lib/student-password-pattern'
 import { isMissingHealthCardSchema, isUniqueViolation } from '@/lib/student-health-card'
 import { normalizeParticipantName } from '@/lib/attendance-matching'
 import { loadBatchAliases, saveAlias } from '@/lib/attendance-domain'
@@ -30,7 +30,11 @@ function safeClassifiedRow(row) {
     rowNumber: row.rowNumber,
     name: row.name,
     email: row.email,
-    phone: row.phone,
+    phone: maskStudentPhone(row.phone),
+    currentPhone: maskStudentPhone(row.matchedStudent?.phone),
+    phoneUpdate: Boolean(row.phoneUpdate),
+    passwordReady: Boolean(row.passwordReady),
+    passwordCollisionCount: row.passwordCollisionCount || 0,
     externalStudentId: row.externalStudentId,
     teamsDisplayName: row.teamsDisplayName,
     status: row.status,
@@ -90,11 +94,14 @@ function summarize(classified) {
     possibleDuplicates,
     reviewNeeded: possibleDuplicates + existingDifferentBatch,
     invalid: classified.filter(row => row.status === 'invalid').length,
+    phoneUpdates: classified.filter(row => row.status === 'existing' && row.phoneUpdate).length,
+    passwordReady: classified.filter(row => row.passwordReady).length,
+    passwordCollisionWarnings: new Set(classified.filter(row => row.passwordCollisionCount > 1).map(row => row.passwordPattern)).size,
   }
 }
 
-async function createStudentWithUniqueLogin({ supabase, row, batch, usedLoginIds, temporaryPassword }) {
-  const passwordHash = await hashStudentPasswordSecure(temporaryPassword)
+async function createStudentWithUniqueLogin({ supabase, row, batch, usedLoginIds, password }) {
+  const passwordHash = await hashStudentPasswordSecure(password)
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const loginId = generateLoginId(row.name, usedLoginIds)
     const { data, error } = await supabase.from('students').insert({
@@ -105,7 +112,7 @@ async function createStudentWithUniqueLogin({ supabase, row, batch, usedLoginIds
       external_student_id: row.externalStudentId || null,
       login_id: loginId,
       password_hash: passwordHash,
-      must_change_password: true,
+      must_change_password: false,
     }).select('id,name,batch,login_id,must_change_password,status,created_at').single()
     if (!error) return data
     if (!isUniqueViolation(error) || !/login/i.test(error.message || '')) throw error
@@ -196,23 +203,28 @@ export async function POST(request) {
     const classified = classifyRosterRows(rows, existing, { batch: upload.batch, aliases })
     const summary = summarize(classified)
     const safeRows = classified.map(safeClassifiedRow)
-    if (upload.action !== 'commit') return jsonNoStore({ success: true, batch: upload.batch, summary, rows: safeRows })
+    if (!['commit-new', 'apply-pattern'].includes(upload.action)) return jsonNoStore({ success: true, batch: upload.batch, summary, rows: safeRows })
 
-    const usedLoginIds = await loadUsedLoginIds(supabase)
+    const applyPattern = upload.action === 'apply-pattern'
+    const usedLoginIds = applyPattern ? new Set() : await loadUsedLoginIds(supabase)
     const credentials = []
     const rowResults = []
     let aliasesCreated = 0
-    for (const row of classified.filter(candidate => candidate.status === 'new')) {
-      const temporaryPassword = generateTemporaryPassword()
+    let phoneUpdated = 0
+    let passwordResets = 0
+    let patternApplied = 0
+    for (const row of classified.filter(candidate => candidate.status === 'new' && !applyPattern)) {
+      const password = buildStudentPatternPassword({ name: row.name, phone: row.phone })
       let student = null
       try {
-        student = await createStudentWithUniqueLogin({ supabase, row, batch: upload.batch, usedLoginIds, temporaryPassword })
+        student = await createStudentWithUniqueLogin({ supabase, row, batch: upload.batch, usedLoginIds, password })
       } catch {
         rowResults.push({ rowNumber: row.rowNumber, name: row.name, status: 'failed', reason: 'Account creation could not be completed safely.' })
         continue
       }
 
-      credentials.push({ name: student.name, batch: student.batch, loginId: student.login_id, temporaryPassword, externalStudentId: row.externalStudentId || '' })
+      credentials.push({ name: student.name, batch: student.batch, loginId: student.login_id, password, phoneEnding: row.phone.replace(/\D/g, '').slice(-3), externalStudentId: row.externalStudentId || '' })
+      passwordResets += 1
       const warnings = []
       let aliasCreated = false
       try {
@@ -240,14 +252,39 @@ export async function POST(request) {
       rowResults.push({ rowNumber: row.rowNumber, name: student.name, studentId: student.id, loginId: student.login_id, status: 'created', aliasCreated, warnings })
     }
 
-    for (const row of classified.filter(candidate => candidate.status === 'existing' && candidate.matchedStudent && candidate.teamsDisplayName)) {
+    for (const row of classified.filter(candidate => candidate.status === 'existing' && candidate.matchedStudent && (candidate.teamsDisplayName || (applyPattern && candidate.passwordReady)))) {
       try {
-        const aliasResult = await rememberTeamsName({ supabase, student: row.matchedStudent, teamsDisplayName: row.teamsDisplayName, admin })
+        let student = row.matchedStudent
+        let phoneWasUpdated = false
+        if (applyPattern && row.passwordReady) {
+          const password = buildStudentPatternPassword({ name: student.name, phone: row.phone || student.phone })
+          const update = {
+            password_hash: await hashStudentPasswordSecure(password),
+            must_change_password: false,
+          }
+          if (row.phoneUpdate) {
+            update.phone = row.phone
+            phoneWasUpdated = true
+          }
+          const { data: updated, error: updateError } = await supabase
+            .from('students')
+            .update(update)
+            .eq('id', student.id)
+            .select('id,name,batch,phone,login_id,status,created_at')
+            .single()
+          if (updateError) throw updateError
+          student = updated
+          passwordResets += 1
+          patternApplied += 1
+          if (phoneWasUpdated) phoneUpdated += 1
+          credentials.push({ name: student.name, batch: student.batch, loginId: student.login_id, password, phoneEnding: String(student.phone || '').replace(/\D/g, '').slice(-3), externalStudentId: row.externalStudentId || '' })
+        }
+        const aliasResult = await rememberTeamsName({ supabase, student, teamsDisplayName: row.teamsDisplayName, admin })
         if (aliasResult.created) aliasesCreated += 1
-        await reconcileWaitingAttendanceSafely({ supabase, student: row.matchedStudent })
-        rowResults.push({ rowNumber: row.rowNumber, name: row.name, studentId: row.matchedStudent.id, loginId: row.matchedStudent.login_id || null, status: 'already_onboarded', aliasCreated: Boolean(aliasResult.created) })
+        await reconcileWaitingAttendanceSafely({ supabase, student })
+        rowResults.push({ rowNumber: row.rowNumber, name: row.name, studentId: student.id, loginId: student.login_id || null, status: applyPattern && row.passwordReady ? 'pattern_applied' : 'already_onboarded', aliasCreated: Boolean(aliasResult.created), phoneUpdated: phoneWasUpdated })
       } catch {
-        rowResults.push({ rowNumber: row.rowNumber, name: row.name, studentId: row.matchedStudent.id, loginId: row.matchedStudent.login_id || null, status: 'review_needed', reason: 'Teams Display Name could not be assigned safely.' })
+        rowResults.push({ rowNumber: row.rowNumber, name: row.name, studentId: row.matchedStudent.id, loginId: row.matchedStudent.login_id || null, status: 'review_needed', reason: 'Student password, phone, or Teams identity update could not be completed safely.' })
       }
     }
 
@@ -270,15 +307,17 @@ export async function POST(request) {
     if (auditError) throw auditError
 
     await appendActivity({
-      eventType: 'student_roster_onboarded',
-      description: `Onboarded ${credentials.length} student account(s) into ${upload.batch}.`,
+      eventType: applyPattern ? 'student_pattern_password_applied' : 'student_roster_onboarded',
+      description: applyPattern
+        ? `Applied the ConsoleFlare password pattern to ${passwordResets} student account(s) in ${upload.batch}.`
+        : `Onboarded ${credentials.length} student account(s) into ${upload.batch}.`,
       actorName: admin.name,
       actorRole: 'admin',
-      action: 'bulk_onboard',
-      metadata: { batch: upload.batch, total_rows: classified.length, created: credentials.length, failed, aliases_created: aliasesCreated },
+      action: applyPattern ? 'apply_student_password_pattern' : 'bulk_onboard',
+      metadata: { batch: upload.batch, total_rows: classified.length, created: applyPattern ? 0 : credentials.length, password_resets: passwordResets, phone_updates: phoneUpdated, failed, aliases_created: aliasesCreated, password_collision_warnings: summary.passwordCollisionWarnings },
       supabase,
     })
-    return jsonNoStore({ success: true, batch: upload.batch, summary: { ...summary, created: credentials.length, failed, aliasesCreated }, rows: safeRows, createdRows: rowResults, credentials })
+    return jsonNoStore({ success: true, batch: upload.batch, summary: { ...summary, created: applyPattern ? 0 : credentials.filter(row => row.password).length, patternApplied, phoneUpdated, failed, aliasesCreated }, rows: safeRows, createdRows: rowResults, credentials })
   } catch (error) {
     console.error('[admin-roster] failed', error?.message)
     if (isMissingHealthCardSchema(error)) return jsonNoStore({ error: 'Roster import schema is not configured yet.' }, { status: 503 })

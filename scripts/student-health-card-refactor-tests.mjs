@@ -49,11 +49,11 @@ assert.deepEqual(deterministicCourseworkLeaderboard([
 ]).map(row => row.studentId), ['attendance-high', 'attendance-low'], 'attendance and lifetime do not alter coursework rank ordering')
 
 const roster = classifyRosterRows([
-  { rowNumber: 2, name: 'New Student', email: '', phone: '', externalStudentId: '' },
-  { rowNumber: 3, name: 'Existing Student', email: '', phone: '', externalStudentId: '' },
-  { rowNumber: 4, name: 'Existing Student Jr', email: '', phone: '', externalStudentId: '' },
+  { rowNumber: 2, name: 'New Student', email: '', phone: '9806223653', externalStudentId: '' },
+  { rowNumber: 3, name: 'Existing Student', email: '', phone: '9806223654', externalStudentId: '' },
+  { rowNumber: 4, name: 'Existing Student Jr', email: '', phone: '9806223655', externalStudentId: '' },
   { rowNumber: 5, name: '', email: '', phone: '', externalStudentId: '' },
-], [{ id: 'existing', name: 'Existing Student', batch: 'Batch A' }])
+], [{ id: 'existing', name: 'Existing Student', batch: 'Batch A', phone: '9806223654' }])
 assert.equal(roster.filter(row => row.status === 'new').length, 1)
 assert.equal(roster.filter(row => row.status === 'existing').length, 1)
 assert.equal(roster.filter(row => row.status === 'possible_duplicate').length, 1)

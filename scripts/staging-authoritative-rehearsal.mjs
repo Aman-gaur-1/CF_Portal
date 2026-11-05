@@ -45,10 +45,10 @@ try {
   const { data: batchRow, error: batchError } = await db.from('batches').insert({ name: batch, created_by: 'staging-rehearsal', created_at: new Date().toISOString() }).select('id').single()
   assert.ifError(batchError)
 
-  const roster = `Student Name,Email,Phone,External Student ID\nAuthoritative Rehearsal Student,authoritative-rehearsal@example.invalid,,${tag}-STUDENT`
+  const roster = `Student Name,Email,Phone,External Student ID\nAuthoritative Rehearsal Student,authoritative-rehearsal@example.invalid,9806223653,${tag}-STUDENT`
   const form = new FormData()
   form.append('batch', batch)
-  form.append('action', 'commit')
+  form.append('action', 'commit-new')
   form.append('file', new Blob([roster], { type: 'text/csv' }), `${tag}.csv`)
   const rosterResult = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: form })
   assert.equal(rosterResult.payload.summary.created, 1)
@@ -136,7 +136,7 @@ try {
     assert.ifError(pauseError)
   }
 
-  const studentLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: credential.loginId, password: credential.temporaryPassword }) })
+  const studentLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: credential.loginId, password: credential.password }) })
   const studentCoursework = await api('/api/student-coursework', { headers: { Authorization: `Bearer ${studentLogin.payload.student.token}` } })
   const visible = studentCoursework.payload.coursework
   assert.equal(visible.length, 20)

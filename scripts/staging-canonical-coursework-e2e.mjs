@@ -78,7 +78,7 @@ try {
   assert.ifError(batchError)
   assert.equal(batches.length, 2)
 
-  const rosterCsv = `Student Name,Email,Phone,External Student ID\nCanonical E2E Student,canonical-e2e@example.invalid,,${tag}-STUDENT`
+  const rosterCsv = `Student Name,Email,Phone,External Student ID\nCanonical E2E Student,canonical-e2e@example.invalid,9806223653,${tag}-STUDENT`
   const previewForm = new FormData()
   previewForm.append('batch', batch)
   previewForm.append('action', 'preview')
@@ -88,17 +88,17 @@ try {
 
   const commitForm = new FormData()
   commitForm.append('batch', batch)
-  commitForm.append('action', 'commit')
+  commitForm.append('action', 'commit-new')
   commitForm.append('file', new Blob([rosterCsv], { type: 'text/csv' }), `${tag}.csv`)
   const commit = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: commitForm })
   assert.equal(commit.payload.summary.created, 1)
   const credential = commit.payload.credentials[0]
-  assert.ok(credential.loginId && credential.temporaryPassword)
-  const credentialExport = `Name,Batch,Login ID,Temporary Password\n"${credential.name}","${credential.batch}","${credential.loginId}","${credential.temporaryPassword}"`
-  assert.match(credentialExport, /Temporary Password/)
+  assert.ok(credential.loginId && credential.password)
+  const credentialExport = `Name,Batch,Login ID,Password\n"${credential.name}","${credential.batch}","${credential.loginId}","${credential.password}"`
+  assert.match(credentialExport, /Password/)
   const duplicateForm = new FormData()
   duplicateForm.append('batch', batch)
-  duplicateForm.append('action', 'commit')
+  duplicateForm.append('action', 'commit-new')
   duplicateForm.append('file', new Blob([rosterCsv], { type: 'text/csv' }), `${tag}.csv`)
   const duplicate = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: duplicateForm })
   assert.equal(duplicate.payload.summary.created, 0)
@@ -108,7 +108,7 @@ try {
   assert.ifError(studentError)
   studentId = student.id
   assert.equal(student.batch, batch)
-  assert.ok(student.password_hash && !student.password_hash.includes(credential.temporaryPassword))
+  assert.ok(student.password_hash && !student.password_hash.includes(credential.password))
 
   const curriculumBefore = await api(`/api/admin-curriculum?batch=${encodeURIComponent(batch)}`, { headers: adminHeaders })
   const canonicalItems = curriculumBefore.payload.canonicalItems.filter(item => item.catalog_status === 'canonical')
@@ -128,7 +128,7 @@ try {
   const studentLogin = await api('/api/student-login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ loginId: credential.loginId, password: credential.temporaryPassword }),
+    body: JSON.stringify({ loginId: credential.loginId, password: credential.password }),
   })
   assert.equal(studentLogin.payload.success, true)
   const studentToken = studentLogin.payload.student.token

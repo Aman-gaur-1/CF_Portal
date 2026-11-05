@@ -47,7 +47,7 @@ const adminToken = adminLogin.payload.token
 assert.ok(adminToken)
 const authHeaders = { Authorization: `Bearer ${adminToken}` }
 
-const rosterCsv = `Student Name,Email,Phone,External Student ID\nCumulative Test Student,cumulative-test@example.invalid,,${tag}-STUDENT`
+const rosterCsv = `Student Name,Email,Phone,External Student ID\nCumulative Test Student,cumulative-test@example.invalid,9806223653,${tag}-STUDENT`
 const previewForm = new FormData()
 previewForm.append('batch', batch)
 previewForm.append('action', 'preview')
@@ -56,17 +56,17 @@ const previewResponse = await api('/api/admin-roster', { method: 'POST', headers
 assert.equal(previewResponse.payload.summary.new, 1)
 const commitForm = new FormData()
 commitForm.append('batch', batch)
-commitForm.append('action', 'commit')
+commitForm.append('action', 'commit-new')
 commitForm.append('file', new Blob([rosterCsv], { type: 'text/csv' }), `${tag}.csv`)
 const commitResponse = await api('/api/admin-roster', { method: 'POST', headers: authHeaders, body: commitForm })
 assert.equal(commitResponse.payload.summary.created, 1)
 const credential = commitResponse.payload.credentials[0]
-assert.ok(credential.loginId && credential.temporaryPassword)
-const exportedCredentialsCsv = ['Name,Batch,Login ID,Temporary Password', [credential.name, credential.batch, credential.loginId, credential.temporaryPassword].map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')].join('\n')
-assert.match(exportedCredentialsCsv, /Temporary Password/)
+assert.ok(credential.loginId && credential.password)
+const exportedCredentialsCsv = ['Name,Batch,Login ID,Password', [credential.name, credential.batch, credential.loginId, credential.password].map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')].join('\n')
+assert.match(exportedCredentialsCsv, /Password/)
 const duplicateForm = new FormData()
 duplicateForm.append('batch', batch)
-duplicateForm.append('action', 'commit')
+duplicateForm.append('action', 'commit-new')
 duplicateForm.append('file', new Blob([rosterCsv], { type: 'text/csv' }), `${tag}.csv`)
 const duplicateResponse = await api('/api/admin-roster', { method: 'POST', headers: authHeaders, body: duplicateForm })
 assert.equal(duplicateResponse.payload.summary.created, 0)
@@ -75,7 +75,7 @@ assert.equal(duplicateResponse.payload.summary.existing, 1)
 const { data: student, error: studentError } = await db.from('students').select('id,name,batch,login_id,password_hash').eq('login_id', credential.loginId).single()
 assert.ifError(studentError)
 assert.equal(student.batch, batch)
-assert.ok(student.password_hash && !student.password_hash.includes(credential.temporaryPassword))
+assert.ok(student.password_hash && !student.password_hash.includes(credential.password))
 
 const specs = [
   ['assignment', 'Python', 'P1', 10], ['assignment', 'Python', 'P2', 20], ['assignment', 'Python', 'P3', 30],
@@ -117,7 +117,7 @@ const { error: reconciliationError } = await db.from('student_coursework_reconci
 ])
 assert.ifError(reconciliationError)
 
-const studentLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: credential.loginId, password: credential.temporaryPassword }) })
+const studentLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: credential.loginId, password: credential.password }) })
 assert.equal(studentLogin.payload.success, true)
 const studentToken = studentLogin.payload.student.token
 const cookieHeader = studentLogin.response.headers.get('set-cookie')?.split(';')[0] || ''

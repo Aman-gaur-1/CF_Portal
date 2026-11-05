@@ -6,6 +6,7 @@ process.env.NODE_ENV = 'test'
 process.env.STUDENT_SESSION_SECRET = 'student-roster-test-secret'
 
 const roster = await import('../lib/roster-import.js')
+const passwordPattern = await import('../lib/student-password-pattern.js')
 const studentAuth = await import('../lib/student-auth.js')
 const attendance = await import('../lib/attendance-matching.js')
 
@@ -31,24 +32,54 @@ assert.deepEqual(templateRows[0], roster.ROSTER_HEADERS)
 assert.ok(templateRows[0].includes('Teams Display Name'))
 
 const existing = [
-  { id: 'same', name: 'Existing Same', batch: 'Batch A', email: 'same@example.invalid', external_student_id: 'SAME-1', login_id: 'existing-same-01', status: 'active' },
-  { id: 'other', name: 'Existing Other', batch: 'Batch B', email: 'other@example.invalid', external_student_id: 'OTHER-1', login_id: 'existing-other-01', status: 'active' },
-  { id: 'same-name-other-batch', name: 'Shared Name', batch: 'Batch B', email: null, external_student_id: null, login_id: 'shared-name-01', status: 'active' },
+  { id: 'same', name: 'Existing Same', batch: 'Batch A', email: 'same@example.invalid', phone: '7000000001', external_student_id: 'SAME-1', login_id: 'existing-same-01', status: 'active' },
+  { id: 'other', name: 'Existing Other', batch: 'Batch B', email: 'other@example.invalid', phone: '7000000002', external_student_id: 'OTHER-1', login_id: 'existing-other-01', status: 'active' },
+  { id: 'same-name-other-batch', name: 'Shared Name', batch: 'Batch B', email: null, phone: '7000000003', external_student_id: null, login_id: 'shared-name-01', status: 'active' },
 ]
 const classified = roster.classifyRosterRows([
-  { rowNumber: 2, name: 'New Student', email: 'new@example.invalid', phone: '', externalStudentId: 'NEW-1', teamsDisplayName: 'New S' },
+  { rowNumber: 2, name: 'New Student', email: 'new@example.invalid', phone: '+91 (900) 000-0001', externalStudentId: 'NEW-1', teamsDisplayName: 'New S' },
   { rowNumber: 3, name: 'Existing Same', email: 'same@example.invalid', phone: '', externalStudentId: '', teamsDisplayName: '' },
   { rowNumber: 4, name: 'Existing Other', email: '', phone: '', externalStudentId: 'OTHER-1', teamsDisplayName: '' },
-  { rowNumber: 5, name: 'New Student', email: 'new@example.invalid', phone: '', externalStudentId: 'NEW-1', teamsDisplayName: '' },
+  { rowNumber: 5, name: 'New Student', email: 'new@example.invalid', phone: '+91 (900) 000-0001', externalStudentId: 'NEW-1', teamsDisplayName: '' },
   { rowNumber: 6, name: '', email: 'missing@example.invalid', phone: '', externalStudentId: '', teamsDisplayName: '' },
-  { rowNumber: 7, name: 'Shared Name', email: '', phone: '', externalStudentId: '', teamsDisplayName: '' },
+  { rowNumber: 7, name: 'Shared Name', email: '', phone: '7000000004', externalStudentId: '', teamsDisplayName: '' },
+  { rowNumber: 8, name: 'Existing Student', email: '', phone: '9000000001', externalStudentId: 'SAME-1', teamsDisplayName: '' },
 ], existing, { batch: 'Batch A', aliases: [] })
 assert.equal(classified[0].status, 'new')
+assert.equal(classified[0].passwordReady, true)
+assert.equal(classified[0].passwordPattern, 'New@001#')
 assert.equal(classified[1].status, 'existing')
+assert.equal(classified[1].passwordReady, true, 'existing students with a stored phone can be reset only through explicit apply-pattern')
 assert.equal(classified[2].status, 'existing_different_batch')
 assert.equal(classified[3].status, 'possible_duplicate')
 assert.equal(classified[4].status, 'invalid')
 assert.equal(classified[5].status, 'new', 'names are not treated as globally unique')
+assert.equal(classified[6].status, 'existing')
+assert.equal(classified[6].phoneUpdate, true)
+assert.equal(classified[6].passwordReady, true)
+assert.equal(classified[6].passwordPattern, 'Existing@001#')
+assert.equal(classified[3].passwordCollisionCount, 0)
+const collisionRows = roster.classifyRosterRows([
+  { rowNumber: 2, name: 'Alice One', email: 'alice@example.invalid', phone: '9000000123', externalStudentId: 'COLLISION-1', teamsDisplayName: '' },
+  { rowNumber: 3, name: 'Bob Two', email: 'bob@example.invalid', phone: '9000000123', externalStudentId: 'COLLISION-2', teamsDisplayName: '' },
+], [], { batch: 'Batch A', aliases: [] })
+assert.equal(collisionRows[0].passwordPattern, 'Alice@123#')
+assert.equal(collisionRows[1].passwordPattern, 'Bob@123#')
+assert.equal(collisionRows[0].passwordCollisionCount, 1, 'different first names keep pattern passwords distinct')
+const sameFirstCollisionRows = roster.classifyRosterRows([
+  { rowNumber: 2, name: 'Alice One', email: 'alice1@example.invalid', phone: '9000000123', externalStudentId: 'COLLISION-3', teamsDisplayName: '' },
+  { rowNumber: 3, name: 'Alice Two', email: 'alice2@example.invalid', phone: '9000000123', externalStudentId: 'COLLISION-4', teamsDisplayName: '' },
+], [], { batch: 'Batch A', aliases: [] })
+assert.equal(sameFirstCollisionRows[0].passwordCollisionCount, 2, 'duplicate generated patterns are warned but not blocked')
+assert.equal(sameFirstCollisionRows[1].passwordCollisionCount, 2)
+
+assert.equal(passwordPattern.normalizePhoneDigits('+91 (980) 622-3653'), '919806223653')
+assert.equal(passwordPattern.buildStudentPatternPassword({ name: 'aman gaur', phone: '+91 (980) 622-3653' }), 'Aman@653#')
+assert.equal(passwordPattern.buildStudentPatternPassword({ name: "  rIYA o'neil  ", phone: '9876543210' }), "Riya@210#")
+assert.equal(passwordPattern.getStudentPatternPasswordInfo({ name: 'Phone Missing', phone: '' }).valid, false)
+assert.equal(passwordPattern.getStudentPatternPasswordInfo({ name: 'Phone Short', phone: '12' }).reason, passwordPattern.STUDENT_PATTERN_PHONE_ERROR)
+assert.equal(passwordPattern.getStudentPatternPasswordInfo({ name: '', phone: '9806223653' }).reason, 'Student first name is required.')
+assert.throws(() => passwordPattern.buildStudentPatternPassword({ name: 'Phone Missing', phone: '' }), /Phone number is required/)
 
 const strongEmailDuplicate = roster.classifyRosterRows([{ rowNumber: 2, name: 'Different Name', email: 'other@example.invalid', phone: '', externalStudentId: '', teamsDisplayName: '' }], existing, { batch: 'Batch A' })[0]
 assert.equal(strongEmailDuplicate.status, 'existing_different_batch')
@@ -61,7 +92,7 @@ assert.match(duplicateStrongRows[1].reason, /row 2/)
 const missingName = roster.classifyRosterRows([{ rowNumber: 2, name: '', email: '', phone: '', externalStudentId: '', teamsDisplayName: '' }], [], { batch: 'Batch A' })[0]
 assert.equal(missingName.reason, 'Student Name is required.')
 
-const aliasConflict = roster.classifyRosterRows([{ rowNumber: 2, name: 'Alias Candidate', email: '', phone: '', externalStudentId: '', teamsDisplayName: 'Existing Teams Name' }], existing, {
+const aliasConflict = roster.classifyRosterRows([{ rowNumber: 2, name: 'Alias Candidate', email: '', phone: '9000000005', externalStudentId: '', teamsDisplayName: 'Existing Teams Name' }], existing, {
   batch: 'Batch A',
   aliases: [{ id: 'alias-1', student_id: 'same', batch: 'Batch A', alias: 'Existing Teams Name', normalized_alias: 'existing teams name', active: true }],
 })[0]
@@ -69,14 +100,11 @@ assert.equal(aliasConflict.status, 'possible_duplicate')
 
 const used = new Set(['aman-test-01', 'aman-test-02'])
 assert.equal(roster.generateLoginId('Aman Test', used), 'aman-test-03')
-const firstTemporary = roster.generateTemporaryPassword()
-const secondTemporary = roster.generateTemporaryPassword()
-assert.notEqual(firstTemporary, secondTemporary)
-assert.match(firstTemporary, /^CF-[A-Za-z0-9_-]{12}$/)
-const secureHash = await studentAuth.hashStudentPasswordSecure(firstTemporary)
-assert.notEqual(secureHash, firstTemporary)
+const patternPassword = passwordPattern.buildStudentPatternPassword({ name: 'Aman Gaur', phone: '9806223653' })
+const secureHash = await studentAuth.hashStudentPasswordSecure(patternPassword)
+assert.notEqual(secureHash, patternPassword)
 assert.ok(secureHash.startsWith('$2'))
-assert.equal((await studentAuth.verifyStudentPassword(firstTemporary, secureHash)).ok, true)
+assert.equal((await studentAuth.verifyStudentPassword(patternPassword, secureHash)).ok, true)
 
 const flagged = { id: 'student-1', name: 'Temporary Student', batch: 'Batch A', must_change_password: true }
 const flaggedToken = studentAuth.createStudentToken(flagged)
@@ -109,8 +137,9 @@ assert.match(route, /row_results: rowResults/, 'audit outcomes are recorded')
 assert.doesNotMatch(route, /row_results:\s*credentials/, 'plaintext credentials never enter import audit history')
 assert.match(route, /existing_different_batch/)
 assert.match(route, /export async function PATCH/, 'different-batch transfer requires an explicit Admin action')
-assert.match(credentialRoute, /must_change_password: true/)
-assert.match(credentialRoute, /student_temporary_password_reset/)
+assert.match(credentialRoute, /must_change_password: false/)
+assert.match(credentialRoute, /student_pattern_password_reset/)
+assert.match(credentialRoute, /Add the student's phone number before resetting their password/)
 assert.doesNotMatch(credentialRoute, /currentPassword|current_password/)
 assert.match(passwordRoute, /must_change_password: false/)
 assert.match(passwordRoute, /hashStudentPasswordSecure\(password\)/)
@@ -118,7 +147,10 @@ assert.match(sessionRoute, /login_id,must_change_password/)
 assert.match(page, /student\.must_change_password/)
 assert.match(panel, /Preview Students/)
 assert.match(panel, /Download Student Credentials/)
-assert.match(panel, /Temporary passwords are shown once/)
+assert.match(panel, /Passwords are shown once/)
+assert.match(panel, /Apply Password Pattern/)
+assert.match(panel, /Passwords follow FirstName@last3#/)
+assert.doesNotMatch(panel, /Temporary Password|temporaryPassword|Temporary passwords/)
 assert.match(panel, /Copy All Credentials/)
 assert.match(panel, /Search student or Login ID/)
 assert.match(panel, /Teams Display Name/)

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getAdminFromRequest } from '@/lib/admin-auth'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { hashStudentPasswordSecure } from '@/lib/student-auth'
-import { generateTemporaryPassword } from '@/lib/roster-import'
+import { buildStudentPatternPassword } from '@/lib/student-password-pattern'
 import { isMissingHealthCardSchema } from '@/lib/student-health-card'
 import { appendActivity } from '@/lib/activity-log'
 
@@ -20,25 +20,30 @@ export async function POST(request) {
     const studentId = String(body.studentId || '').trim()
     if (!studentId) return jsonNoStore({ error: 'studentId is required.' }, { status: 400 })
     const supabase = getSupabaseAdmin()
-    const { data: student, error: loadError } = await supabase.from('students').select('id,name,batch,login_id').eq('id', studentId).maybeSingle()
+    const { data: student, error: loadError } = await supabase.from('students').select('id,name,batch,phone,login_id').eq('id', studentId).maybeSingle()
     if (loadError) throw loadError
     if (!student) return jsonNoStore({ error: 'Student not found.' }, { status: 404 })
-    const temporaryPassword = generateTemporaryPassword()
-    const { error } = await supabase.from('students').update({ password_hash: await hashStudentPasswordSecure(temporaryPassword), must_change_password: true }).eq('id', student.id)
+    let password
+    try {
+      password = buildStudentPatternPassword({ name: student.name, phone: student.phone })
+    } catch {
+      return jsonNoStore({ error: "Add the student's phone number before resetting their password." }, { status: 400 })
+    }
+    const { error } = await supabase.from('students').update({ password_hash: await hashStudentPasswordSecure(password), must_change_password: false }).eq('id', student.id)
     if (error) throw error
     await appendActivity({
-      eventType: 'student_temporary_password_reset',
-      description: `Reset the temporary password for ${student.name}.`,
+      eventType: 'student_pattern_password_reset',
+      description: `Reset the ConsoleFlare password pattern for ${student.name}.`,
       actorName: admin.name,
       actorRole: 'admin',
-      action: 'reset_student_password',
+      action: 'reset_student_password_pattern',
       metadata: { student_id: student.id, batch: student.batch, login_id: student.login_id || null },
       supabase,
     })
-    return jsonNoStore({ success: true, credential: { name: student.name, batch: student.batch, loginId: student.login_id || null, temporaryPassword } })
+    return jsonNoStore({ success: true, credential: { name: student.name, batch: student.batch, loginId: student.login_id || null, password, phoneEnding: String(student.phone || '').replace(/\D/g, '').slice(-3) } })
   } catch (error) {
     console.error('[admin-student-credentials] failed', error?.message)
     if (isMissingHealthCardSchema(error)) return jsonNoStore({ error: 'Roster credential fields are not configured yet.' }, { status: 503 })
-    return jsonNoStore({ error: 'Could not regenerate the temporary password.' }, { status: 500 })
+    return jsonNoStore({ error: 'Could not regenerate the student password.' }, { status: 500 })
   }
 }

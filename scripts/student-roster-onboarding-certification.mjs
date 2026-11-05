@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -61,8 +60,8 @@ async function countRows(table, filter = null) {
 function rosterFile(tag, names) {
   return Buffer.from([
     'Student Name,Email,Phone,External Student ID,Teams Display Name',
-    `${names.alias},${tag.toLowerCase()}-alias@example.invalid,,${tag}-ALIAS,${names.aliasTeams}`,
-    `${names.exact},${tag.toLowerCase()}-exact@example.invalid,,${tag}-EXACT,`,
+    `${names.alias},${tag.toLowerCase()}-alias@example.invalid,9806223653,${tag}-ALIAS,${names.aliasTeams}`,
+    `${names.exact},${tag.toLowerCase()}-exact@example.invalid,9806223654,${tag}-EXACT,`,
   ].join('\n'))
 }
 
@@ -112,7 +111,6 @@ const date = indiaDate()
 const names = { alias: `${tag} Alias Student`, aliasTeams: `${tag} Alias`, exact: `${tag} Exact Student`, unknown: `${tag} Unknown Person` }
 const rosterBytes = rosterFile(tag, names)
 const attendanceBytes = attendanceFile(names)
-const finalPassword = `CF!${crypto.randomBytes(12).toString('base64url')}`
 let batchId = null
 let studentIds = []
 let attendanceImportId = null
@@ -148,12 +146,12 @@ try {
   assert.equal(preview.payload.summary.new, 2)
   assert.equal(await countRows('students', query => query.eq('batch', batch)), beforePreview)
 
-  const committed = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: rosterForm('commit', batch, rosterBytes, tag) })
+  const committed = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: rosterForm('commit-new', batch, rosterBytes, tag) })
   assert.equal(committed.payload.summary.created, 2)
   assert.equal(committed.payload.credentials.length, 2)
   const credentialByName = new Map(committed.payload.credentials.map(row => [row.name, row]))
   const aliasCredential = credentialByName.get(names.alias)
-  assert.ok(aliasCredential?.loginId && aliasCredential?.temporaryPassword)
+  assert.ok(aliasCredential?.loginId && aliasCredential?.password)
 
   const { data: students, error: studentError } = await db.from('students').select('id,name,batch,login_id,password_hash,must_change_password').eq('batch', batch).order('name')
   assert.ifError(studentError)
@@ -162,8 +160,8 @@ try {
   for (const student of students) {
     const credential = credentialByName.get(student.name)
     assert.ok(student.password_hash?.startsWith('$2'))
-    assert.notEqual(student.password_hash, credential.temporaryPassword)
-    assert.equal(student.must_change_password, true)
+    assert.notEqual(student.password_hash, credential.password)
+    assert.equal(student.must_change_password, false)
     assert.equal(student.login_id, credential.loginId)
   }
 
@@ -178,20 +176,17 @@ try {
 
   const overview = await api(`/api/admin-roster?mode=overview&batch=${encodeURIComponent(batch)}`, { headers: adminHeaders })
   const overviewText = JSON.stringify(overview.payload)
-  for (const credential of committed.payload.credentials) assert.ok(!overviewText.includes(credential.temporaryPassword))
+  for (const credential of committed.payload.credentials) assert.ok(!overviewText.includes(credential.password))
 
-  const duplicate = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: rosterForm('commit', batch, rosterBytes, tag) })
+  const duplicate = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: rosterForm('commit-new', batch, rosterBytes, tag) })
   assert.equal(duplicate.payload.summary.created, 0)
   assert.equal(duplicate.payload.summary.existing, 2)
   assert.equal(await countRows('students', query => query.eq('batch', batch)), 2)
 
-  const firstLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: aliasCredential.loginId, password: aliasCredential.temporaryPassword }) })
-  assert.equal(firstLogin.payload.student.must_change_password, true)
-  await api('/api/student-health', { headers: { Authorization: `Bearer ${firstLogin.payload.student.token}` } }, [401])
-  const passwordChange = await api('/api/student-password', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${firstLogin.payload.student.token}` }, body: JSON.stringify({ password: finalPassword, confirmation: finalPassword }) })
-  assert.equal(passwordChange.payload.student.must_change_password, false)
-  await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: aliasCredential.loginId, password: aliasCredential.temporaryPassword }) }, [401])
-  const normalLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: aliasCredential.loginId, password: finalPassword }) })
+  const firstLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: aliasCredential.loginId, password: aliasCredential.password }) })
+  assert.equal(firstLogin.payload.student.must_change_password, false)
+  await api('/api/student-health', { headers: { Authorization: `Bearer ${firstLogin.payload.student.token}` } })
+  const normalLogin = firstLogin
   const studentToken = normalLogin.payload.student.token
   const sessionCookie = (normalLogin.response.headers.get('set-cookie') || '').split(';')[0]
   assert.ok(sessionCookie)
@@ -216,22 +211,25 @@ try {
   assert.equal(await countRows('students', query => query.eq('batch', batch)), 2, 'unknown attendance must not create an account')
 
   const reset = await api('/api/admin-student-credentials', { method: 'POST', headers: { ...adminHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: students.find(student => student.name === names.alias).id }) })
-  const resetPassword = reset.payload.credential.temporaryPassword
+  const resetPassword = reset.payload.credential.password
   assert.ok(resetPassword)
-  await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: aliasCredential.loginId, password: finalPassword }) }, [401])
+  assert.equal(resetPassword, aliasCredential.password)
   const resetLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: aliasCredential.loginId, password: resetPassword }) })
-  assert.equal(resetLogin.payload.student.must_change_password, true)
+  assert.equal(resetLogin.payload.student.must_change_password, false)
   const { data: resetStudent, error: resetError } = await db.from('students').select('password_hash,must_change_password').eq('id', students.find(student => student.name === names.alias).id).single()
   assert.ifError(resetError)
   assert.ok(resetStudent.password_hash.startsWith('$2'))
   assert.notEqual(resetStudent.password_hash, resetPassword)
-  assert.equal(resetStudent.must_change_password, true)
+  assert.equal(resetStudent.must_change_password, false)
   const { data: audits, error: auditError } = await db.from('activity_log').select('description,metadata').eq('metadata->>batch', batch)
   assert.ifError(auditError)
   const auditText = JSON.stringify(audits || [])
   assert.ok(!auditText.includes(resetPassword))
-  assert.ok(!auditText.includes(finalPassword))
-  for (const credential of committed.payload.credentials) assert.ok(!auditText.includes(credential.temporaryPassword))
+  for (const credential of committed.payload.credentials) assert.ok(!auditText.includes(credential.password))
+  const { data: rosterAudits, error: rosterAuditError } = await db.from('student_roster_imports').select('row_results').eq('batch', batch)
+  assert.ifError(rosterAuditError)
+  const rosterAuditText = JSON.stringify(rosterAudits || [])
+  for (const credential of committed.payload.credentials) assert.ok(!rosterAuditText.includes(credential.password))
 
   certification = {
     target,
@@ -244,7 +242,8 @@ try {
     memberships: 2,
     teamsAlias: true,
     oneTimeHistory: true,
-    firstPasswordChange: true,
+    passwordPattern: true,
+    firstLogin: true,
     sessionRefresh: true,
     studentPortal: true,
     attendanceExact: true,

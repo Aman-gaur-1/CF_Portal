@@ -34,7 +34,7 @@ function overviewMessage(error) {
 }
 
 function credentialText(row) {
-  return `ConsoleFlare Student Portal\n\nName: ${row.name}\nLogin ID: ${row.loginId}\nTemporary Password: ${row.temporaryPassword}\n\nPlease change your password after your first login.`
+  return `ConsoleFlare Student Portal\n\nName: ${row.name}\nLogin ID: ${row.loginId}\nPassword: ${row.password}\n\nKeep this password secure.`
 }
 
 function safeFilename(value) {
@@ -48,7 +48,7 @@ function formatDate(value) {
 
 function rowStatus(row) {
   if (row.status === "new") return { label: "New", tone: "badge-done" }
-  if (row.status === "existing") return { label: "Already onboarded", tone: "badge-done" }
+  if (row.status === "existing") return { label: row.passwordReady ? "Pattern ready" : "Already onboarded", tone: "badge-done" }
   if (row.status === "existing_different_batch") return { label: "Different batch", tone: "badge-pending" }
   if (row.status === "invalid") return { label: "Invalid", tone: "badge-failed" }
   return { label: "Review needed", tone: "badge-pending" }
@@ -196,6 +196,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
 
   async function submit(action) {
     if (!file || !batch) { showError("Select a batch and roster file first."); return }
+    if (action === "apply-pattern" && patternReadyCount > 0 && !window.confirm(`Reset the password${patternReadyCount === 1 ? "" : "s"} for ${patternReadyCount} existing student${patternReadyCount === 1 ? "" : "s"} using the ConsoleFlare pattern? Their Student IDs, attendance, submissions, and batch memberships will be preserved.`)) return
     setLoading(true)
     try {
       const formData = new FormData()
@@ -212,7 +213,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       } else {
         setCredentials(data.credentials || [])
         await loadOverview(batch)
-        success(`${data.summary?.created || 0} student account(s) created. Download the one-time credentials now.`)
+        success(`${data.summary?.created || 0} account(s) created and ${data.summary?.patternApplied || 0} existing password${data.summary?.patternApplied === 1 ? "" : "s"} applied. Download the credentials now.`)
       }
     } catch (error) { showError(error.message) } finally { setLoading(false) }
   }
@@ -223,7 +224,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not reset the password.")
       setCredentials(current => [...current.filter(row => row.loginId !== data.credential.loginId), data.credential])
-      success("A new temporary password is available once. Download or copy it now.")
+      success("The ConsoleFlare password pattern was applied once. Download or copy it now.")
     } catch (error) { showError(error.message) }
   }
 
@@ -252,7 +253,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
   }
 
   async function copyAllCredentials() {
-    try { await navigator.clipboard.writeText(credentials.map(credentialText).join("\n\n---\n\n")); success("All one-time credentials copied.") }
+    try { await navigator.clipboard.writeText(credentials.map(credentialText).join("\n\n---\n\n")); success("All credentials copied.") }
     catch { showError("Could not copy the credentials.") }
   }
 
@@ -263,7 +264,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       const rows = credentials.map(row => ({
         "Student Name": row.name,
         "Login ID": row.loginId,
-        "Temporary Password": row.temporaryPassword,
+        Password: row.password,
         Batch: row.batch,
         "External Student ID": row.externalStudentId || "",
       }))
@@ -286,6 +287,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
   const activeStep = credentials.length ? 5 : preview ? 3 : file ? 2 : batch ? 1 : 0
   const newCount = preview?.summary?.new || 0
   const aliasUpdateCount = (preview?.rows || []).filter(row => row.status === "existing" && row.teamsDisplayName).length
+  const patternReadyCount = (preview?.rows || []).filter(row => row.status === "existing" && row.passwordReady).length
   const actionableCount = newCount + aliasUpdateCount
 
   return (
@@ -327,15 +329,17 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
             </label>
           </div>
         </div>
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Required: Student Name. Optional: Email, Phone, External Student ID, Teams Display Name. The selected batch is authoritative.</p>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Required: Student Name and Phone. Optional: Email, External Student ID, Teams Display Name. The selected batch is authoritative. Passwords follow FirstName@last3#.</p>
         <div className="flex gap-2 flex-wrap">
           <button type="button" className="btn btn-primary" onClick={() => submit("preview")} disabled={loading || !file || !batch}>{loading ? <Spinner size="sm" /> : "Preview Students"}</button>
-          {preview && <button type="button" className="btn btn-primary" onClick={() => submit("commit")} disabled={loading || actionableCount === 0}>{loading ? <Spinner size="sm" /> : newCount > 0 ? `Create ${newCount} Student Account${newCount === 1 ? "" : "s"}` : "Apply Attendance Aliases"}</button>}
+          {preview && newCount > 0 && <button type="button" className="btn btn-primary" onClick={() => submit("commit-new")} disabled={loading || newCount === 0}>{loading ? <Spinner size="sm" /> : `Create ${newCount} Student Account${newCount === 1 ? "" : "s"}`}</button>}
+          {preview && actionableCount > 0 && newCount === 0 && patternReadyCount === 0 && <button type="button" className="btn btn-primary" onClick={() => submit("commit-new")} disabled={loading}>{loading ? <Spinner size="sm" /> : "Apply Attendance Aliases"}</button>}
+          {preview && (patternReadyCount > 0 || (aliasUpdateCount > 0 && newCount === 0)) && <button type="button" className="btn btn-secondary" onClick={() => submit("apply-pattern")} disabled={loading}>{loading ? <Spinner size="sm" /> : patternReadyCount > 0 ? `Update Students & Apply Password Pattern${patternReadyCount === 1 ? "" : "s"}` : "Apply Attendance Aliases"}</button>}
         </div>
       </section>
 
       {preview && <section className="card admin-panel grid gap-4">
-        <div><h3 className="text-lg font-bold">3. Review Students</h3><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Previewing creates nothing. Only rows marked New are created.</p></div>
+        <div><h3 className="text-lg font-bold">3. Review Students</h3><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Previewing creates nothing. New rows need a phone number. Existing rows are changed only after you explicitly apply the password pattern.</p></div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[["NEW STUDENTS", preview.summary?.new, "badge-done"], ["ALREADY EXIST", preview.summary?.existing, "badge-done"], ["REVIEW NEEDED", preview.summary?.reviewNeeded, "badge-pending"], ["INVALID", preview.summary?.invalid, "badge-failed"]].map(([label, value, tone]) => <div className="stat-card" key={label}><div className="stat-label">{label}</div><div className="stat-num">{value || 0}</div><span className={tone}>{label.toLowerCase()}</span></div>)}
         </div>
@@ -343,7 +347,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
           {(preview.rows || []).map(row => {
             const status = rowStatus(row)
             return <div className="admin-row items-start" key={`${row.rowNumber}-${row.name}`}>
-              <div className="min-w-0"><p className="font-semibold">{row.name || `Row ${row.rowNumber}`}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{[row.email, row.phone, row.teamsDisplayName && `Teams: ${row.teamsDisplayName}`].filter(Boolean).join(" · ") || "No optional identity details"}</p><p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{row.reason || "Ready to create"}</p></div>
+              <div className="min-w-0"><p className="font-semibold">{row.name || `Row ${row.rowNumber}`}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{[row.email, row.phoneUpdate ? `New: ${row.phone || "Not available"}` : row.phone && `Phone: ${row.phone}`, row.phoneUpdate && `Current: ${row.currentPhone || "Not available"}`, row.teamsDisplayName && `Teams: ${row.teamsDisplayName}`].filter(Boolean).join(" · ") || "No optional identity details"}</p><p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{row.reason || (row.passwordCollisionCount > 1 ? "Password pattern collision warning: review the generated credentials before distribution." : "Ready to create")}</p>{row.passwordCollisionCount > 1 && <p className="text-xs mt-1" style={{ color: "var(--warning)" }}>{row.passwordCollisionCount} students generate the same password pattern. This is allowed, but distribute credentials carefully.</p>}</div>
               <div className="flex gap-2 flex-wrap justify-end"><span className={status.tone}>{status.label}</span>{row.status === "existing_different_batch" && row.matchedStudent && <button type="button" className="btn btn-secondary btn-sm" onClick={() => askTransfer({ id: row.matchedStudent.id, name: row.matchedStudent.name, batch: row.matchedStudent.batch }, batch)}>Assign / Transfer Existing Student</button>}</div>
             </div>
           })}
@@ -351,8 +355,8 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       </section>}
 
       {credentials.length > 0 && <section className="card admin-panel grid gap-4" aria-labelledby="credential-result-title">
-        <div className="flex items-start justify-between gap-3 flex-wrap"><div><h3 id="credential-result-title" className="text-lg font-bold">✓ {credentials.length} Student Account{credentials.length === 1 ? "" : "s"} Created</h3><p className="text-sm mt-1" style={{ color: "var(--warning)" }}>Temporary passwords are shown once. Download the credential sheet before leaving this page. Lost passwords must be reset.</p></div><div className="flex gap-2 flex-wrap"><button type="button" className="btn btn-secondary" onClick={copyAllCredentials}>Copy All Credentials</button><button type="button" className="btn btn-primary" onClick={downloadCredentials}>Download Student Credentials</button></div></div>
-        <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="text-left p-2">Student</th><th className="text-left p-2">Login ID</th><th className="text-left p-2">Temporary Password</th><th className="text-left p-2">Batch</th><th className="p-2">Action</th></tr></thead><tbody>{credentials.map(row => <tr key={row.loginId} style={{ borderTop: "1px solid var(--border)" }}><td className="p-2 font-semibold">{row.name}</td><td className="p-2 font-mono">{row.loginId}</td><td className="p-2 font-mono">{row.temporaryPassword}</td><td className="p-2">{row.batch}</td><td className="p-2 text-right"><button type="button" className="btn btn-secondary btn-sm" onClick={() => copyCredential(row)}>Copy Login Details</button></td></tr>)}</tbody></table></div>
+        <div className="flex items-start justify-between gap-3 flex-wrap"><div><h3 id="credential-result-title" className="text-lg font-bold">✓ {credentials.length} Student Credential{credentials.length === 1 ? "" : "s"} Ready</h3><p className="text-sm mt-1" style={{ color: "var(--warning)" }}>Passwords are shown once. Download the credential sheet before leaving this page. Lost passwords must be reset.</p></div><div className="flex gap-2 flex-wrap"><button type="button" className="btn btn-secondary" onClick={copyAllCredentials}>Copy All Credentials</button><button type="button" className="btn btn-primary" onClick={downloadCredentials}>Download Student Credentials</button></div></div>
+        <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="text-left p-2">Student</th><th className="text-left p-2">Login ID</th><th className="text-left p-2">Password</th><th className="text-left p-2">Batch</th><th className="p-2">Action</th></tr></thead><tbody>{credentials.map(row => <tr key={row.loginId} style={{ borderTop: "1px solid var(--border)" }}><td className="p-2 font-semibold">{row.name}</td><td className="p-2 font-mono">{row.loginId}</td><td className="p-2 font-mono">{row.password}</td><td className="p-2">{row.batch}</td><td className="p-2 text-right"><button type="button" className="btn btn-secondary btn-sm" onClick={() => copyCredential(row)}>Copy Login Details</button></td></tr>)}</tbody></table></div>
       </section>}
 
       <section className="card admin-panel grid gap-4">
@@ -362,7 +366,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       </section>
 
       <section className="card admin-panel grid gap-3">
-        <div><h3 className="text-lg font-bold">Recent Onboarding History</h3><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>History includes outcomes and Login IDs where useful, never temporary passwords.</p></div>
+        <div><h3 className="text-lg font-bold">Recent Onboarding History</h3><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>History includes outcomes and Login IDs where useful, never passwords.</p></div>
         {overview.imports.length === 0 ? <p className="text-sm" style={{ color: "var(--text-muted)" }}>No roster imports for this batch yet.</p> : <div className="grid gap-2">{overview.imports.map(item => <div className="admin-row" key={item.id}><div><p className="font-semibold">{item.original_filename}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{formatDate(item.completed_at || item.created_at)} · Uploaded by {item.uploaded_by_name}</p></div><p className="text-xs text-right" style={{ color: "var(--text-secondary)" }}>{item.new_count} new · {item.existing_count} existing · {item.possible_duplicate_count} review · {item.invalid_count} invalid</p></div>)}</div>}
       </section>
 
