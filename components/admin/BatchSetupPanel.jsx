@@ -1,10 +1,37 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Spinner from "@/components/ui/Spinner"
 import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 
 const STEPS = ["Select Batch", "Upload Student Sheet", "Review Students", "Create Accounts", "Download Credentials"]
+const OVERVIEW_TIMEOUT_MS = 12000
+const OVERVIEW_RETRY_DELAY_MS = 500
+
+function overviewFailure(kind, message = "Could not load the batch roster.") {
+  const error = new Error(message)
+  error.overviewKind = kind
+  return error
+}
+
+function isRetryableNetworkError(error) {
+  return error?.name === "TypeError" || /fetch|network|connection|load failed/i.test(String(error?.message || ""))
+}
+
+function canRetryOverview() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return false
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return false
+  return true
+}
+
+function overviewMessage(error) {
+  if (error?.overviewKind === "offline") return "You appear to be offline. Reconnect and try again."
+  if (error?.overviewKind === "timeout") return "Loading the batch roster took too long. Please try again."
+  if (error?.overviewKind === "auth") return "Your Admin session has expired. Please log in again."
+  if (error?.overviewKind === "server") return "Could not load the batch roster. Please try again."
+  if (error?.overviewKind === "network") return "We couldn't load the batch students. Check your connection and try again."
+  return "Could not load the batch roster. Please try again."
+}
 
 function credentialText(row) {
   return `ConsoleFlare Student Portal\n\nName: ${row.name}\nLogin ID: ${row.loginId}\nTemporary Password: ${row.temporaryPassword}\n\nPlease change your password after your first login.`
@@ -36,34 +63,112 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(false)
   const [overviewLoading, setOverviewLoading] = useState(false)
+  const [overviewError, setOverviewError] = useState("")
   const [dragging, setDragging] = useState(false)
   const [transferTarget, setTransferTarget] = useState(null)
   const [transferBatch, setTransferBatch] = useState("")
+  const mountedRef = useRef(true)
+  const overviewRequestRef = useRef({ sequence: 0, controller: null })
 
   const batchNames = useMemo(() => batches.map(item => typeof item === "string" ? item : item.name).filter(Boolean), [batches])
 
+  const cancelOverview = useCallback(() => {
+    overviewRequestRef.current.sequence += 1
+    overviewRequestRef.current.controller?.abort()
+    overviewRequestRef.current.controller = null
+  }, [])
+
+  useEffect(() => () => {
+    mountedRef.current = false
+    cancelOverview()
+  }, [cancelOverview])
+
   const loadOverview = useCallback(async selectedBatch => {
-    if (!selectedBatch) { setOverview({ students: [], imports: [] }); return }
-    setOverviewLoading(true)
-    try {
-      const res = await fetch(`/api/admin-roster?mode=overview&batch=${encodeURIComponent(selectedBatch)}`, { headers: { Authorization: `Bearer ${adminToken}` }, cache: "no-store" })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || "Could not load the batch roster.")
-      setOverview({ students: data.students || [], imports: data.imports || [] })
-    } catch (error) {
-      showError(error.message)
-    } finally {
+    const sequence = overviewRequestRef.current.sequence + 1
+    overviewRequestRef.current.controller?.abort()
+    const controller = new AbortController()
+    overviewRequestRef.current = { sequence, controller }
+    const isCurrent = () => mountedRef.current && overviewRequestRef.current.sequence === sequence && !controller.signal.aborted
+
+    if (!selectedBatch) {
+      setOverview({ students: [], imports: [] })
+      setOverviewError("")
       setOverviewLoading(false)
+      return
+    }
+
+    setOverviewLoading(true)
+    setOverviewError("")
+
+    const fetchOverview = async attempt => {
+      if (!isCurrent()) return null
+      let timedOut = false
+      const timeoutId = window.setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, OVERVIEW_TIMEOUT_MS)
+      try {
+        const res = await fetch(`/api/admin-roster?mode=overview&batch=${encodeURIComponent(selectedBatch)}`, {
+          headers: { Authorization: `Bearer ${adminToken}` },
+          cache: "no-store",
+          signal: controller.signal,
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          const kind = res.status === 401 ? "auth" : res.status >= 500 ? "server" : "http"
+          throw overviewFailure(kind, data.error || "Could not load the batch roster.")
+        }
+        return data
+      } catch (error) {
+        if (controller.signal.aborted) {
+          if (timedOut) throw overviewFailure("timeout")
+          return null
+        }
+        if (error?.overviewKind) throw error
+        if (attempt === 0 && isRetryableNetworkError(error)) {
+          if (!canRetryOverview()) {
+            throw overviewFailure(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "network")
+          }
+          await new Promise(resolve => window.setTimeout(resolve, OVERVIEW_RETRY_DELAY_MS))
+          if (!isCurrent()) return null
+          if (!canRetryOverview()) {
+            throw overviewFailure(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "network")
+          }
+          return fetchOverview(1)
+        }
+        throw overviewFailure("network")
+      } finally {
+        window.clearTimeout(timeoutId)
+      }
+    }
+
+    try {
+      const data = await fetchOverview(0)
+      if (!data || !isCurrent()) return
+      setOverview({ students: data.students || [], imports: data.imports || [] })
+      setOverviewError("")
+    } catch (error) {
+      if (!isCurrent()) return
+      const message = overviewMessage(error)
+      setOverviewError(message)
+      showError(message)
+    } finally {
+      if (isCurrent()) setOverviewLoading(false)
+      if (overviewRequestRef.current.sequence === sequence) overviewRequestRef.current.controller = null
     }
   }, [adminToken, showError])
 
   useEffect(() => { loadOverview(batch) }, [batch, loadOverview])
 
   function selectBatch(value) {
+    cancelOverview()
     setBatch(value)
     setFile(null)
     setPreview(null)
     setCredentials([])
+    setOverview({ students: [], imports: [] })
+    setOverviewError("")
+    setOverviewLoading(false)
   }
 
   function chooseFile(nextFile) {
@@ -251,8 +356,9 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       </section>}
 
       <section className="card admin-panel grid gap-4">
-        <div className="flex items-start justify-between gap-3 flex-wrap"><div><h3 className="text-lg font-bold">Batch Students</h3><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Registered students are the authoritative attendance roster.</p></div><input className="input max-w-xs" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search student or Login ID" aria-label="Search batch students" /></div>
-        {overviewLoading ? <div className="flex justify-center py-8"><Spinner /></div> : filteredStudents.length === 0 ? <p className="text-sm py-5" style={{ color: "var(--text-muted)" }}>No students are registered in this batch yet.</p> : <div className="grid gap-2">{filteredStudents.map(student => <div className="admin-row" key={student.id}><div><p className="font-semibold">{student.name}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{student.login_id || "No Login ID"} · Onboarded {formatDate(student.created_at)}{student.attendanceAliases?.length ? ` · Teams: ${student.attendanceAliases.join(", ")}` : ""}</p></div><div className="flex gap-2 flex-wrap justify-end"><span className={student.status === "active" ? "badge-done" : "badge-failed"}>{student.status}</span>{onOpenStudents && <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenStudents}>View</button>}<button type="button" className="btn btn-secondary btn-sm" onClick={() => resetPassword(student)}>Reset Password</button><button type="button" className="btn btn-secondary btn-sm" onClick={() => askTransfer(student)}>Transfer Batch</button></div></div>)}</div>}
+        <div className="flex items-start justify-between gap-3 flex-wrap"><div><h3 className="text-lg font-bold">Batch Students</h3><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Registered students are the authoritative attendance roster.</p></div><div className="flex items-center gap-2 flex-wrap"><button type="button" className="btn btn-secondary btn-sm" onClick={() => loadOverview(batch)} disabled={!batch || overviewLoading}>{overviewLoading ? <Spinner size="sm" /> : "Refresh"}</button><input className="input max-w-xs" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search student or Login ID" aria-label="Search batch students" /></div></div>
+        {overviewError && <div className="rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap" style={{ border: "1px solid var(--danger)", background: "rgba(239,68,68,0.06)" }} role="alert"><div><p className="text-sm font-semibold">Couldn’t load batch students.</p><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>{overviewError}{overview.students.length > 0 ? " Showing the last loaded roster." : ""}</p></div><button type="button" className="btn btn-secondary btn-sm" onClick={() => loadOverview(batch)} disabled={!batch || overviewLoading}>Retry</button></div>}
+        {overviewLoading && overview.students.length === 0 ? <div className="flex justify-center py-8" aria-label="Loading batch students"><Spinner /></div> : filteredStudents.length === 0 ? overviewError ? null : <p className="text-sm py-5" style={{ color: "var(--text-muted)" }}>No students are registered in this batch yet.</p> : <div className="grid gap-2">{filteredStudents.map(student => <div className="admin-row" key={student.id}><div><p className="font-semibold">{student.name}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{student.login_id || "No Login ID"} · Onboarded {formatDate(student.created_at)}{student.attendanceAliases?.length ? ` · Teams: ${student.attendanceAliases.join(", ")}` : ""}</p></div><div className="flex gap-2 flex-wrap justify-end"><span className={student.status === "active" ? "badge-done" : "badge-failed"}>{student.status}</span>{onOpenStudents && <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenStudents}>View</button>}<button type="button" className="btn btn-secondary btn-sm" onClick={() => resetPassword(student)}>Reset Password</button><button type="button" className="btn btn-secondary btn-sm" onClick={() => askTransfer(student)}>Transfer Batch</button></div></div>)}</div>}
       </section>
 
       <section className="card admin-panel grid gap-3">

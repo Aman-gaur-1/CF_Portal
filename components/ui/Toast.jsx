@@ -22,7 +22,10 @@ export function useToast() {
     }, 3500)
   }, [])
 
-  return { toasts, success: (m) => show(m, "success"), error: (m) => show(m, "error") }
+  const success = useCallback(message => show(message, "success"), [show])
+  const error = useCallback(message => show(message, "error"), [show])
+
+  return { toasts, success, error }
 }
 
 export function ToastContainer({ toasts }) {

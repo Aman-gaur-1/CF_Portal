@@ -127,7 +127,7 @@ async function rememberTeamsName({ supabase, student, teamsDisplayName, admin })
 
 export async function GET(request) {
   const admin = getAdminFromRequest(request)
-  if (!admin) return new NextResponse('Unauthorized', { status: 401 })
+  if (!admin) return jsonNoStore({ error: 'Unauthorized' }, { status: 401 })
   const url = new URL(request.url)
   const mode = String(url.searchParams.get('mode') || 'template').toLowerCase()
 
@@ -141,7 +141,7 @@ export async function GET(request) {
         supabase.from('students').select('id,name,batch,login_id,status,created_at').eq('batch', batch).order('name'),
         loadBatchAliases(supabase, batch),
         supabase.from('student_roster_imports')
-          .select('id,batch,original_filename,uploaded_by_name,total_rows,new_count,existing_count,possible_duplicate_count,invalid_count,status,row_results,created_at,completed_at')
+          .select('id,batch,original_filename,uploaded_by_name,total_rows,new_count,existing_count,possible_duplicate_count,invalid_count,status,created_at,completed_at')
           .eq('batch', batch)
           .order('created_at', { ascending: false })
           .limit(20),
