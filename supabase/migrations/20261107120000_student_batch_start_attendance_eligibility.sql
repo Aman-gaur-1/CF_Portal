@@ -146,4 +146,7 @@ AFTER INSERT OR UPDATE OF batch ON public.students
 FOR EACH ROW
 EXECUTE FUNCTION public.cf_sync_student_batch_membership();
 
+REVOKE ALL ON FUNCTION public.cf_sync_student_batch_membership() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cf_sync_student_batch_membership() TO service_role;
+
 COMMIT;
