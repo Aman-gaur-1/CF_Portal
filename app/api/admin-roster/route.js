@@ -41,6 +41,7 @@ function safeClassifiedRow(row) {
     passwordCollisionCount: row.passwordCollisionCount || 0,
     externalStudentId: row.externalStudentId,
     teamsDisplayName: row.teamsDisplayName,
+    joinDate: row.joinDate || '',
     status: row.status,
     reason: row.reason,
     matchedStudent: matched ? {
@@ -157,7 +158,21 @@ async function createStudentWithUniqueLogin({ supabase, row, batch, usedLoginIds
       password_hash: passwordHash,
       must_change_password: false,
     }).select('id,name,batch,login_id,must_change_password,status,created_at').single()
-    if (!error) return data
+    if (!error) {
+      if (row.joinDate) {
+        const { data: membership, error: membershipError } = await supabase
+          .from('student_batch_memberships')
+          .update({ starts_on: row.joinDate, membership_source: 'explicit_join_date', updated_at: new Date().toISOString() })
+          .eq('student_id', data.id)
+          .eq('batch', data.batch)
+          .is('ends_on', null)
+          .select('id')
+          .maybeSingle()
+        if (membershipError) throw membershipError
+        if (!membership) throw new Error('Explicit join date could not be applied safely.')
+      }
+      return data
+    }
     if (!isUniqueViolation(error) || !/login/i.test(error.message || '')) throw error
     usedLoginIds.add(candidate.toLowerCase())
     candidate = generateStudentLoginId({ name: row.name, phone: row.phone }, usedLoginIds)

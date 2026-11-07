@@ -160,7 +160,7 @@ export async function GET(request) {
     if (!['active', 'inactive', 'all'].includes(requestedStatus)) return jsonNoStore({ error: 'Invalid student status filter.' }, { status: 400 })
     const [students, batchesResult, trainersResult, aggregateResult] = await Promise.all([
       fetchAllStudents(supabase, requestedStatus),
-      supabase.from('batches').select('id,name,created_by,created_at').order('created_at', { ascending: false }),
+      supabase.from('batches').select('id,name,created_by,created_at,starts_on').order('created_at', { ascending: false }),
       supabase.from('trainers').select('id,name,created_by,created_at').order('created_at', { ascending: false }),
       supabase.rpc('cf_admin_dashboard_aggregates', { p_student_status: requestedStatus }),
     ])

@@ -25,6 +25,9 @@ assert.equal(csvRows[0].name, 'CSV Student')
 assert.equal(csvRows[0].teamsDisplayName, 'CSV S')
 assert.equal(roster.parseRosterBuffer(workbookBuffer('xls'), 'roster.xls')[0].externalStudentId, 'EXT-1')
 assert.equal(roster.parseRosterBuffer(workbookBuffer('xlsx'), 'roster.xlsx')[0].teamsDisplayName, 'Aman T')
+assert.equal(roster.normalizeRosterJoinDate(roster.parseRosterBuffer(Buffer.from('Student Name,Phone,Join Date\nDate Student,9806223653,2026-11-02\n'), 'join-date.csv')[0].joinDate), '2026-11-02')
+assert.equal(roster.normalizeRosterJoinDate('2026-02-01'), null)
+assert.equal(roster.normalizeRosterJoinDate('2026-11-02'), '2026-11-02')
 for (const header of ['Phone', 'Phone Number', 'Phone No', 'Phone No.', 'Mobile', 'Mobile Number', 'Mobile No', 'Mobile No.', 'Contact', 'Contact Number', 'Contact No', 'Contact No.', 'WhatsApp Number', 'Whatsapp Number', 'WhatsApp No', 'Whatsapp No']) {
   const sheet = XLSX.utils.aoa_to_sheet([['Student Name', header], ['Alias Header Student', '9806223653']])
   const book = XLSX.utils.book_new()
@@ -62,6 +65,12 @@ const classified = roster.classifyRosterRows([
 assert.equal(classified[0].status, 'new')
 assert.equal(classified[0].passwordReady, true)
 assert.equal(classified[0].passwordPattern, 'New@001#')
+const joinDateRow = roster.classifyRosterRows([{ rowNumber: 2, name: 'Joined Later', email: 'later@example.invalid', phone: '9000000008', externalStudentId: 'JOIN-1', teamsDisplayName: '', joinDate: '2026-11-02' }], [], { batch: 'Batch A', aliases: [] })[0]
+assert.equal(joinDateRow.status, 'new')
+assert.equal(joinDateRow.joinDate, '2026-11-02')
+const invalidJoinDateRow = roster.classifyRosterRows([{ rowNumber: 2, name: 'Bad Date', email: 'bad-date@example.invalid', phone: '9000000009', externalStudentId: 'JOIN-2', teamsDisplayName: '', joinDate: 'not-a-date' }], [], { batch: 'Batch A', aliases: [] })[0]
+assert.equal(invalidJoinDateRow.status, 'invalid')
+assert.match(invalidJoinDateRow.reason, /Join Date/)
 assert.equal(classified[1].status, 'existing')
 assert.equal(classified[1].passwordReady, true, 'existing students with a stored phone can be reset only through explicit apply-pattern')
 assert.equal(classified[2].status, 'existing_different_batch')

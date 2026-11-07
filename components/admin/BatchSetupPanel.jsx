@@ -342,7 +342,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
             </label>
           </div>
         </div>
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Required: Student Name and Phone. Optional: Email, External Student ID, Teams Display Name. The selected batch is authoritative. Login IDs use first name + final 2 phone digits. Passwords follow FirstName@last3#.</p>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Required: Student Name and Phone. Optional: Email, External Student ID, Teams Display Name, Join Date (YYYY-MM-DD). The selected batch is authoritative; transfers keep their actual transfer date. Login IDs use first name + final 2 phone digits. Passwords follow FirstName@last3#.</p>
         <div className="flex gap-2 flex-wrap">
           <button type="button" className="btn btn-primary" onClick={() => submit("preview")} disabled={loading || !file || !batch}>{loading ? <Spinner size="sm" /> : "Preview Students"}</button>
           {preview && newCount > 0 && <button type="button" className="btn btn-primary" onClick={() => submit("commit-new")} disabled={loading || newCount === 0}>{loading ? <Spinner size="sm" /> : `Create ${newCount} Student Account${newCount === 1 ? "" : "s"}`}</button>}

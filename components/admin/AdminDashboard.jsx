@@ -270,6 +270,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [aiTestResult, setAiTestResult] = useState(null)
   const [newTrainer, setNewTrainer] = useState("")
   const [newBatch, setNewBatch] = useState("")
+  const [newBatchStartDate, setNewBatchStartDate] = useState("")
   const [batchTrainer, setBatchTrainer] = useState("")
   const [deleteBatchTarget, setDeleteBatchTarget] = useState(null)
   const [studentSearch, setStudentSearch] = useState("")
@@ -599,17 +600,20 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   async function addBatch() {
     const name = newBatch.trim()
     if (!name) { showError("Batch name is required."); return }
+    if (!newBatchStartDate) { showError("Batch start date is required."); return }
     if (!batchTrainer.trim()) { showError("Assign a teacher first."); return }
 
     setSaving(true)
     const { error } = await supabase.from("batches").insert({
       name,
       created_by: batchTrainer.trim(),
+      starts_on: newBatchStartDate,
       created_at: new Date().toISOString(),
     })
     setSaving(false)
     if (error) { showError(error.message?.includes("duplicate") ? "Batch already exists." : "Could not add batch."); return }
     setNewBatch("")
+    setNewBatchStartDate("")
     success("Batch created.")
     load({ silent: true })
   }
@@ -794,8 +798,9 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
 
           <div className="card admin-panel">
             <SectionTitle title="Batches" detail={`${batches.length} total`} />
-            <div className="grid gap-2 mb-4 md:grid-cols-[1fr_1fr_auto]">
+            <div className="grid gap-2 mb-4 md:grid-cols-[1fr_1fr_1fr_auto]">
               <input className="input" value={newBatch} onChange={e => setNewBatch(e.target.value)} placeholder="Batch name" />
+              <input className="input" type="date" value={newBatchStartDate} onChange={e => setNewBatchStartDate(e.target.value)} aria-label="Batch start date" />
               <select className="select" value={batchTrainer} onChange={e => setBatchTrainer(e.target.value)}>
                 {trainerNames.map(name => <option key={name} value={name}>{name}</option>)}
               </select>
@@ -806,7 +811,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
                 <RowShell key={batch.id}>
                   <div>
                     <p className="font-semibold">{batch.name}</p>
-                    <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{batch.studentCount} students - {batch.pendingCount} pending</p>
+                    <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{batch.studentCount} students - {batch.pendingCount} pending · starts {batch.starts_on || "legacy fallback"}</p>
                   </div>
                   <div className="admin-batch-actions">
                     <select className="select text-sm max-w-[220px]" value={batch.created_by || ""} onChange={e => assignBatch(batch.id, e.target.value)}>
