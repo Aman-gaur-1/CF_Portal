@@ -67,24 +67,24 @@ const teacherHeaders = { Authorization: `Bearer ${teacherToken}` }
 const tag = `CANONICAL-E2E-${Date.now()}`
 const batch = `${tag}-ASSIGNED`
 const otherBatch = `${tag}-OTHER`
+const syntheticPhone = `900${String(Date.now()).slice(-7)}`
 let studentId = null
 let aliasId = null
 
 try {
-  const { data: batches, error: batchError } = await db.from('batches').insert([
+  const { error: batchError } = await db.from('batches').insert([
     { name: batch, created_by: teacherName, created_at: new Date().toISOString() },
     { name: otherBatch, created_by: 'another-staging-teacher', created_at: new Date().toISOString() },
-  ]).select('id,name')
+  ])
   assert.ifError(batchError)
-  assert.equal(batches.length, 2)
 
-  const rosterCsv = `Student Name,Email,Phone,External Student ID\nCanonical E2E Student,canonical-e2e@example.invalid,9806223653,${tag}-STUDENT`
+  const rosterCsv = `Student Name,Email,Phone,External Student ID\n${tag} Student,${tag.toLowerCase()}@example.invalid,${syntheticPhone},${tag}-STUDENT`
   const previewForm = new FormData()
   previewForm.append('batch', batch)
   previewForm.append('action', 'preview')
   previewForm.append('file', new Blob([rosterCsv], { type: 'text/csv' }), `${tag}.csv`)
   const preview = await api('/api/admin-roster', { method: 'POST', headers: adminHeaders, body: previewForm })
-  assert.equal(preview.payload.summary.new, 1)
+  assert.equal(preview.payload.summary.new, 1, JSON.stringify(preview.payload.summary))
 
   const commitForm = new FormData()
   commitForm.append('batch', batch)

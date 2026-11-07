@@ -91,6 +91,7 @@ export default function NotificationBell({ userType, authToken, student }) {
   }, [authToken, student, userType])
 
   const visiblePreferences = useMemo(() => ROLE_PREFERENCES[userType] || [], [userType])
+  const notificationIdentity = userType === "student" ? student?.id : decodeTokenName(authToken)
 
   const loadNotifications = useCallback(async ({ append = false, includeAnalytics = false } = {}) => {
     const params = new URLSearchParams(requestInfo.params)
@@ -145,7 +146,7 @@ export default function NotificationBell({ userType, authToken, student }) {
       supabase.removeChannel(channelRef.current)
       channelRef.current = null
     }
-    const identifier = userType === "student" ? student?.id : decodeTokenName(authToken)
+    const identifier = notificationIdentity
     if (!identifier) return
     const channel = supabase
       .channel(`notifications-${userType}-${String(identifier).slice(0, 16)}`)
@@ -156,6 +157,7 @@ export default function NotificationBell({ userType, authToken, student }) {
         filter: `user_identifier=eq.${identifier}`,
       }, () => {
         loadNotifications().catch(() => {})
+        if (userType === "student") window.dispatchEvent(new Event("coursework:refresh"))
       })
       .subscribe(status => {
         if (status === "SUBSCRIBED") setRealtimeReady(true)
@@ -166,11 +168,17 @@ export default function NotificationBell({ userType, authToken, student }) {
       supabase.removeChannel(channel)
       if (channelRef.current === channel) channelRef.current = null
     }
-  }, [authToken, loadNotifications, student?.id, userType])
+  }, [loadNotifications, notificationIdentity, userType])
 
   useAdaptivePolling(
     () => loadNotifications().catch(() => {}),
-    { enabled: true, activeMs: realtimeReady ? 10 * 60 * 1000 : 90 * 1000 }
+    {
+      enabled: Boolean(notificationIdentity),
+      // Realtime is the primary refresh signal. The timer is only a visible-tab
+      // recovery path for disconnected channels, and is never scheduled while
+      // the tab is hidden by useAdaptivePolling.
+      activeMs: realtimeReady ? 15 * 60 * 1000 : 5 * 60 * 1000,
+    }
   )
 
   async function patchNotifications(body) {

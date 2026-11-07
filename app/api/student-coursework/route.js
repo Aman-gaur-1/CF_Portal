@@ -17,7 +17,7 @@ export async function GET(request) {
     const identity = getStudentFromRequest(request)
     if (!identity) return jsonNoStore({ error: 'Student authorization required' }, { status: 401 })
     const supabase = getSupabaseAdmin()
-    const { data: student, error: studentError } = await supabase.from('students').select('id,name,batch,status').eq('id', identity.id).eq('batch', identity.batch).eq('status', 'active').maybeSingle()
+    const { data: student, error: studentError } = await supabase.from('students').select('id,name,batch,status').eq('id', identity.id).eq('batch', identity.batch).eq('status', 'active').maybeSingle().abortSignal(request.signal)
     if (studentError) throw studentError
     if (!student) return jsonNoStore({ error: 'Student authorization required' }, { status: 401 })
 
@@ -27,19 +27,20 @@ export async function GET(request) {
       .eq('batch', student.batch)
       .eq('active', true)
       .order('activated_at', { ascending: true })
+      .abortSignal(request.signal)
     if (assignmentError) throw assignmentError
     const itemIds = [...new Set((assignments || []).map(row => row.coursework_item_id).filter(Boolean))]
     const [{ data: sourceItems, error: itemError }, { data: submissions, error: submissionError }, { data: reconciliations, error: reconciliationError }] = await Promise.all([
-      itemIds.length ? supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order,catalog_status,canonical_coursework_item_id').in('id', itemIds).eq('active', true) : { data: [], error: null },
-      supabase.from('submissions').select('coursework_item_id,submission_type,submitted_at').eq('student_id', student.id).not('coursework_item_id', 'is', null),
-      supabase.from('student_coursework_reconciliations').select('coursework_item_id,confidence,status,counts_for_progress').eq('student_id', student.id).eq('batch', student.batch).eq('status', 'confirmed').eq('counts_for_progress', true).in('confidence', ['confirmed', 'high_confidence']),
+      itemIds.length ? supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order,catalog_status,canonical_coursework_item_id').in('id', itemIds).eq('active', true).abortSignal(request.signal) : { data: [], error: null },
+      supabase.from('submissions').select('coursework_item_id,submission_type,submitted_at').eq('student_id', student.id).not('coursework_item_id', 'is', null).abortSignal(request.signal),
+      supabase.from('student_coursework_reconciliations').select('coursework_item_id,confidence,status,counts_for_progress').eq('student_id', student.id).eq('batch', student.batch).eq('status', 'confirmed').eq('counts_for_progress', true).in('confidence', ['confirmed', 'high_confidence']).abortSignal(request.signal),
     ])
     if (itemError) throw itemError
     if (submissionError) throw submissionError
     if (reconciliationError) throw reconciliationError
     const canonicalIds = [...new Set((sourceItems || []).map(item => item.canonical_coursework_item_id).filter(Boolean))]
     const { data: canonicalItems, error: canonicalItemError } = canonicalIds.length
-      ? await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order,catalog_status,canonical_coursework_item_id').in('id', canonicalIds).eq('catalog_status', 'canonical').eq('active', true).in('phase', HEALTH_CARD_PHASES)
+      ? await supabase.from('coursework_items').select('id,item_type,title,phase,batch,active,sort_order,catalog_status,canonical_coursework_item_id').in('id', canonicalIds).eq('catalog_status', 'canonical').eq('active', true).in('phase', HEALTH_CARD_PHASES).abortSignal(request.signal)
       : { data: [], error: null }
     if (canonicalItemError) throw canonicalItemError
     const items = [...(sourceItems || []), ...(canonicalItems || [])]

@@ -1,4 +1,9 @@
 {
+  "regions": ["bom1"],
+  "functions": {
+    "app/api/student-coursework/route.js": { "supportsCancellation": true },
+    "app/api/student-health/route.js": { "supportsCancellation": true }
+  },
   "crons": [
     {
       "path": "/api/cron/auto-approval",

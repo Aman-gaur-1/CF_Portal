@@ -28,6 +28,7 @@ async function requireCurrentStudent(request, supabase) {
     .eq('batch', tokenStudent.batch)
     .eq('status', 'active')
     .maybeSingle()
+    .abortSignal(request.signal)
 
   if (error) throw error
   return data || null
@@ -42,7 +43,7 @@ export async function GET(request) {
 
     const { data, error } = await supabase.rpc('cf_get_student_health_card', {
       p_student_id: student.id,
-    })
+    }).abortSignal(request.signal)
 
     if (error) {
       if (isMissingHealthCardSchema(error)) {
@@ -59,6 +60,7 @@ export async function GET(request) {
       .order('attendance_date', { ascending: false })
       .order('marked_at', { ascending: false })
       .limit(60)
+      .abortSignal(request.signal)
     if (attendanceError) throw attendanceError
 
     return jsonNoStore({

@@ -60,6 +60,10 @@ export async function POST(request) {
     return jsonNoStore({ success: true, activity: serializeReviewActivity(data, trainerName) })
   } catch (err) {
     const status = err?.status || 500
+    // Scope changes and stale browser tabs are expected to lose a review lease.
+    // Keep the authorization boundary enforced, but do not turn that expected
+    // rejection into a production error signal.
+    if (status === 403) return jsonNoStore({ error: 'Review activity is no longer in this teacher scope.' }, { status })
     console.error('[teacher-review-activity] failed', err?.message)
     return jsonNoStore({ error: status === 403 ? err.message : 'Could not update review activity' }, { status })
   }

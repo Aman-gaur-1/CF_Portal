@@ -17,7 +17,7 @@ import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 
 const DEFAULT_PHASE_OPTIONS = []
-const REVIEW_REFRESH_MS = 60000
+const REVIEW_REFRESH_MS = 5 * 60 * 1000
 const SEARCH_DEBOUNCE_MS = 250
 const BULK_PROGRESS_REFRESH_MS = 3000
 const BULK_PROGRESS_BACKOFF_MS = [3000, 5000, 10000, 15000]

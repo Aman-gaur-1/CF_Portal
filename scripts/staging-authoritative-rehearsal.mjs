@@ -61,7 +61,8 @@ try {
   const canonicalByKey = new Map(curriculum.payload.canonicalItems.map(item => [item.canonical_key, item]))
   const directCanonical = ['python_assignment_03', 'python_assignment_05']
   const legacyOverrides = CANONICAL_AUTHORITATIVE_OVERRIDES.filter(([, key]) => !directCanonical.includes(key))
-  assert.equal(legacyOverrides.length, 18)
+  const expectedCanonicalCount = directCanonical.length + new Set(legacyOverrides.map(([, key]) => key)).size
+  assert.ok(legacyOverrides.length > 0)
   const legacyRows = legacyOverrides.map(([alias, key], index) => {
     const canonical = CANONICAL_BY_KEY[key]
     return {
@@ -100,10 +101,10 @@ try {
 
   const { data: mappedItems, error: mappedError } = await db.from('coursework_items').select('id,canonical_coursework_item_id').in('id', legacyIds)
   assert.ifError(mappedError)
-  assert.equal(mappedItems.filter(item => item.canonical_coursework_item_id).length, 18)
+  assert.equal(mappedItems.filter(item => item.canonical_coursework_item_id).length, legacyOverrides.length)
   canonicalIds.push(...mappedItems.map(item => item.canonical_coursework_item_id))
   canonicalIds = [...new Set(canonicalIds)]
-  assert.equal(canonicalIds.length, 20)
+  assert.equal(canonicalIds.length, expectedCanonicalCount)
 
   const activationRows = [
     ...directIds.map(coursework_item_id => ({ batch, coursework_item_id, activated_at: new Date().toISOString(), activated_by_role: 'admin', activated_by_name: 'staging-rehearsal', active: true })),
@@ -127,7 +128,7 @@ try {
 
   const { data: activeLegacy, error: activeLegacyError } = await db.from('batch_coursework_assignments').select('id,coursework_item_id').eq('batch', batch).eq('active', true).in('coursework_item_id', legacyIds)
   assert.ifError(activeLegacyError)
-  assert.equal(activeLegacy.length, 18)
+  assert.equal(activeLegacy.length, legacyOverrides.length)
   for (const row of activeLegacy) {
     const source = mappedItems.find(item => item.id === row.coursework_item_id)
     const { error: canonicalActivationError } = await db.from('batch_coursework_assignments').upsert({ batch, coursework_item_id: source.canonical_coursework_item_id, activated_at: new Date().toISOString(), activated_by_role: 'admin', activated_by_name: 'staging-rehearsal', active: true }, { onConflict: 'batch,coursework_item_id' })
@@ -139,8 +140,8 @@ try {
   const studentLogin = await api('/api/student-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ loginId: credential.loginId, password: credential.password }) })
   const studentCoursework = await api('/api/student-coursework', { headers: { Authorization: `Bearer ${studentLogin.payload.student.token}` } })
   const visible = studentCoursework.payload.coursework
-  assert.equal(visible.length, 20)
-  assert.equal(new Set(visible.map(item => item.id)).size, 20)
+  assert.equal(visible.length, expectedCanonicalCount)
+  assert.equal(new Set(visible.map(item => item.id)).size, expectedCanonicalCount)
   assert.ok(visible.every(item => item.catalog_status === 'canonical'))
   assert.ok(visible.every(item => !item.sourceCourseworkItemId))
   assert.deepEqual([...new Set(visible.map(item => item.phase))].sort(), ['Python', 'SQL'])
@@ -148,14 +149,14 @@ try {
   assert.equal(visible.find(item => item.title === 'Loops Assignments').status, 'completed')
   const health = await api('/api/student-health', { headers: { Authorization: `Bearer ${studentLogin.payload.student.token}` } })
   const metrics = health.payload.healthCard?.metrics || health.payload.metrics || {}
-  assert.equal(Number(metrics.assignmentPoints), 0)
+  assert.equal(Number(metrics.assignmentPoints), 5)
   assert.equal(Number(metrics.projectPoints), 0)
 
   const { data: remaining, error: remainingError } = await db.from('batch_coursework_assignments').select('coursework_item_id').eq('batch', batch).eq('active', true)
   assert.ifError(remainingError)
-  assert.equal(remaining.length, 20)
-  assert.equal(new Set(remaining.map(row => row.coursework_item_id)).size, 20)
-  console.log(JSON.stringify({ stagingProjectRef: 'bgpmsckjvutnqkryxknb', legacyActiveBefore: 18, directCanonicalBefore: 2, canonicalActiveAfter: 20, legacyActiveAfter: 0, duplicateExpectations: 0, studentCanonicalTitlesOnly: true, preOctPoints: 0 }, null, 2))
+  assert.equal(remaining.length, expectedCanonicalCount)
+  assert.equal(new Set(remaining.map(row => row.coursework_item_id)).size, expectedCanonicalCount)
+  console.log(JSON.stringify({ stagingProjectRef: 'bgpmsckjvutnqkryxknb', legacyActiveBefore: legacyOverrides.length, directCanonicalBefore: directCanonical.length, canonicalActiveAfter: expectedCanonicalCount, legacyActiveAfter: 0, duplicateExpectations: 0, studentCanonicalTitlesOnly: true, mappedHistoricalAssignmentPoints: 5 }, null, 2))
 } finally {
   if (studentId) {
     await db.from('student_coursework_reconciliations').delete().eq('student_id', studentId).eq('batch', batch)

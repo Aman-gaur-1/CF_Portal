@@ -12,6 +12,7 @@ import StudentQueryPanel from "@/components/student/StudentQueryPanel"
 import ThemeToggle from "@/components/ui/ThemeToggle"
 import AiStatusBadge from "@/components/ui/AiStatusBadge"
 import NotificationBell from "@/components/ui/NotificationBell"
+import RefreshButton from "@/components/ui/RefreshButton"
 import StudentHealthCard from "@/components/student/StudentHealthCard"
 import PageHeader from "@/components/ui/PageHeader"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
@@ -121,6 +122,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
   const [selectedPhaseFilter, setSelectedPhaseFilter] = useState("")
   const [loadingSubs, setLoadingSubs] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [detectedAssignment, setDetectedAssignment] = useState({ language: "Unknown", phase: "Unknown", confidence: "none", evidence: [] })
   const [studentQueryEnabled, setStudentQueryEnabled] = useState(false)
   const [assignmentQueries, setAssignmentQueries] = useState([])
@@ -249,6 +251,20 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
     }
   }, [authenticatedFetch])
 
+  async function refreshCurrentView() {
+    setRefreshing(true)
+    try {
+      if (tab === "submit") await loadActiveCoursework()
+      if (tab === "feedback") {
+        await loadSubmissions({ silent: true })
+        if (studentQueryEnabled) await loadQueries()
+      }
+      if (tab === "health") await loadSubmissions({ silent: true })
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   useEffect(() => {
     if (tab === "submit") loadActiveCoursework()
     if (tab === "feedback") {
@@ -261,9 +277,26 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
     }
   }, [tab, loadActiveCoursework, loadSubmissions, loadQueries])
 
+  useEffect(() => {
+    function handleDataRefresh() {
+      if (tab === "submit") loadActiveCoursework().catch(() => {})
+      if (tab === "feedback") {
+        loadSubmissions({ silent: true })
+        if (studentQueryEnabled) loadQueries().catch(() => {})
+      }
+    }
+
+    window.addEventListener("notifications:refresh", handleDataRefresh)
+    window.addEventListener("coursework:refresh", handleDataRefresh)
+    return () => {
+      window.removeEventListener("notifications:refresh", handleDataRefresh)
+      window.removeEventListener("coursework:refresh", handleDataRefresh)
+    }
+  }, [loadActiveCoursework, loadQueries, loadSubmissions, studentQueryEnabled, tab])
+
   useAdaptivePolling(
     () => loadActiveCoursework(),
-    { enabled: tab === "submit", activeMs: 5 * 60 * 1000 }
+    { enabled: tab === "submit", activeMs: null }
   )
 
   const typedCoursework = useMemo(() => activeCoursework.filter(item => item.item_type === selectedType), [activeCoursework, selectedType])
@@ -294,7 +327,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
 
   useAdaptivePolling(
     () => loadQueries().catch(() => {}),
-    { enabled: tab === "feedback" && studentQueryEnabled, activeMs: 90 * 1000 }
+    { enabled: tab === "feedback" && studentQueryEnabled, activeMs: 5 * 60 * 1000 }
   )
 
   function handleQueryCreated(query) {
@@ -407,7 +440,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
           title="Assignment Portal"
           subtitle="Submit coursework, review feedback, and keep your Health Card progress in view."
           meta={<><span className="portal-chip">{student.name}</span><span className="portal-chip">{student.batch}</span></>}
-          actions={<><NotificationBell userType="student" student={student} /><ThemeToggle /><button className="btn btn-secondary btn-sm" onClick={onLogout}>Log out</button></>}
+          actions={<><NotificationBell userType="student" student={student} /><RefreshButton onClick={refreshCurrentView} refreshing={refreshing} /><ThemeToggle /><button className="btn btn-secondary btn-sm" onClick={onLogout}>Log out</button></>}
         />
 
         {showLegacyLoginId && student.login_id && (

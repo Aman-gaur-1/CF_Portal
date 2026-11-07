@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { createClient } from '@supabase/supabase-js'
 
 const baseUrl = process.env.CF_PORTAL_REVIEW_URL || 'http://localhost:3100'
-const batch = 'CUMULATIVE-TEST-20261025'
-const tag = 'CUMULATIVE-TEST-20261025'
+const tag = `CUMULATIVE-E2E-${Date.now()}`
+const batch = tag
 
 function readEnv(filePath) {
   const values = {}
@@ -47,7 +47,21 @@ const adminToken = adminLogin.payload.token
 assert.ok(adminToken)
 const authHeaders = { Authorization: `Bearer ${adminToken}` }
 
-const rosterCsv = `Student Name,Email,Phone,External Student ID\nCumulative Test Student,cumulative-test@example.invalid,9806223653,${tag}-STUDENT`
+let studentId = null
+const cleanupErrors = []
+async function cleanupRows(table, configure) {
+  let query = db.from(table).delete()
+  query = configure(query)
+  const { error } = await query
+  if (error) cleanupErrors.push(`${table}: ${error.message}`)
+}
+
+try {
+const { error: batchError } = await db.from('batches').insert({ name: batch, created_by: 'staging-validation', created_at: new Date().toISOString() })
+assert.ifError(batchError)
+
+const syntheticPhone = `900${String(Date.now()).slice(-7)}`
+const rosterCsv = `Student Name,Email,Phone,External Student ID\n${tag} Student,${tag.toLowerCase()}@example.invalid,${syntheticPhone},${tag}-STUDENT`
 const previewForm = new FormData()
 previewForm.append('batch', batch)
 previewForm.append('action', 'preview')
@@ -74,36 +88,44 @@ assert.equal(duplicateResponse.payload.summary.existing, 1)
 
 const { data: student, error: studentError } = await db.from('students').select('id,name,batch,login_id,password_hash').eq('login_id', credential.loginId).single()
 assert.ifError(studentError)
+studentId = student.id
 assert.equal(student.batch, batch)
 assert.ok(student.password_hash && !student.password_hash.includes(credential.password))
 
-const specs = [
-  ['assignment', 'Python', 'P1', 10], ['assignment', 'Python', 'P2', 20], ['assignment', 'Python', 'P3', 30],
-  ['assignment', 'Data Analytics', 'D1', 10], ['assignment', 'Data Analytics', 'D2', 20],
-  ['assignment', 'SQL', 'S1', 10], ['assignment', 'SQL', 'S2', 20], ['assignment', 'SQL', 'S3', 30], ['assignment', 'SQL', 'S4', 40],
-  ['project', 'SQL', 'SQL Project 1', 10],
-]
-for (const [itemType, phase, title, sortOrder] of specs) {
-  await api('/api/admin-curriculum', { method: 'POST', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: `${tag} ${title}`, itemType, phase, sortOrder, active: true }) })
-}
-
 const curriculum = await api(`/api/admin-curriculum?batch=${encodeURIComponent(batch)}`, { headers: authHeaders })
-const testItems = curriculum.payload.items.filter(item => item.title.startsWith(tag))
-assert.equal(testItems.length, specs.length)
-const item = (phase, itemType, title) => testItems.find(row => row.phase === phase && row.item_type === itemType && row.title === `${tag} ${title}`)
+const canonicalItems = curriculum.payload.canonicalItems.filter(item => item.catalog_status === 'canonical' && item.active && item.batch == null)
+const phaseItems = (phase, itemType) => canonicalItems.filter(item => item.phase === phase && item.item_type === itemType).sort((a, b) => Number(a.sort_order) - Number(b.sort_order))
+const pythonAssignments = phaseItems('Python', 'assignment')
+const dataAssignments = phaseItems('Data Analytics', 'assignment')
+const sqlAssignments = phaseItems('SQL', 'assignment')
+const sqlProjects = phaseItems('SQL', 'project')
+assert.ok(pythonAssignments.length >= 4 && dataAssignments.length >= 2 && sqlAssignments.length >= 5 && sqlProjects.length >= 1)
+const p1 = pythonAssignments[0]
+const p2 = pythonAssignments[1]
+const p3 = pythonAssignments[2]
+const d1 = dataAssignments[0]
+const d2 = dataAssignments[1]
+const s1 = sqlAssignments[0]
+const s2 = sqlAssignments[1]
+const s3 = sqlAssignments[2]
+const s4 = sqlAssignments[3]
+const s5 = sqlAssignments[4]
+const project = sqlProjects[0]
+const item = (phase, itemType, title) => ({
+  Python: { assignment: { P1: p1, P2: p2, P3: p3 } },
+  'Data Analytics': { assignment: { D1: d1, D2: d2 } },
+  SQL: { assignment: { S1: s1, S2: s2, S3: s3, S4: s4 }, project: { 'SQL Project 1': project } },
+}[phase][itemType][title])
 const release = async (phase, itemType, title) => api('/api/admin-curriculum', { method: 'POST', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'set-progress', batch, phase, itemType, coveredThroughCourseworkItemId: item(phase, itemType, title).id }) })
 await release('Python', 'assignment', 'P3')
 await release('Data Analytics', 'assignment', 'D2')
 await release('SQL', 'assignment', 'S2')
 await release('SQL', 'project', 'SQL Project 1')
 const afterRelease = await api(`/api/admin-curriculum?batch=${encodeURIComponent(batch)}`, { headers: authHeaders })
-const activeTitles = new Set(afterRelease.payload.activations.filter(row => row.active && row.item?.title?.startsWith(tag)).map(row => row.item.title))
-assert.deepEqual([...activeTitles].sort(), [`${tag} D1`, `${tag} D2`, `${tag} P1`, `${tag} P2`, `${tag} P3`, `${tag} S1`, `${tag} S2`, `${tag} SQL Project 1`].sort())
-assert.ok(!activeTitles.has(`${tag} S3`) && !activeTitles.has(`${tag} S4`))
+const activeIds = new Set(afterRelease.payload.activations.filter(row => row.active).map(row => row.coursework_item_id))
+assert.deepEqual([...activeIds].sort(), [p1.id, p2.id, p3.id, d1.id, d2.id, s1.id, s2.id, project.id].sort())
+assert.ok(!activeIds.has(s3.id) && !activeIds.has(s4.id) && !activeIds.has(s5.id))
 
-const { data: p1, error: p1Error } = await db.from('coursework_items').select('id').eq('title', `${tag} P1`).single()
-const { data: p2, error: p2Error } = await db.from('coursework_items').select('id').eq('title', `${tag} P2`).single()
-assert.ifError(p1Error); assert.ifError(p2Error)
 const historicalRows = [p1, p2].map((row, index) => ({
   student_id: student.id, student_name: student.name, batch, topic: `${tag} P${index + 1}`,
   submission_type: 'assignment', phase: 'Python', submitted_at: `2026-09-${15 + index}T10:00:00+05:30`,
@@ -125,16 +147,13 @@ assert.ok(cookieHeader)
 const session = await api('/api/student-session', { method: 'POST', headers: { Authorization: `Bearer ${studentToken}`, Cookie: cookieHeader } })
 assert.equal(session.payload.success, true)
 const studentCoursework = await api('/api/student-coursework', { headers: { Authorization: `Bearer ${studentToken}` } })
-const visibleTitles = new Set(studentCoursework.payload.coursework.filter(row => row.title.startsWith(tag)).map(row => row.title))
-assert.ok(visibleTitles.has(`${tag} P1`) && visibleTitles.has(`${tag} P2`) && visibleTitles.has(`${tag} P3`))
-assert.ok(visibleTitles.has(`${tag} D1`) && visibleTitles.has(`${tag} D2`) && visibleTitles.has(`${tag} S1`) && visibleTitles.has(`${tag} S2`) && visibleTitles.has(`${tag} SQL Project 1`))
-assert.ok(!visibleTitles.has(`${tag} S3`) && !visibleTitles.has(`${tag} S4`))
-assert.equal(studentCoursework.payload.coursework.find(row => row.title === `${tag} P1`).status, 'completed')
-assert.equal(studentCoursework.payload.coursework.find(row => row.title === `${tag} P3`).status, 'pending')
+const visibleIds = new Set(studentCoursework.payload.coursework.map(row => row.id))
+assert.deepEqual([...visibleIds].sort(), [p1.id, p2.id, p3.id, d1.id, d2.id, s1.id, s2.id, project.id].sort())
+assert.ok(!visibleIds.has(s3.id) && !visibleIds.has(s4.id) && !visibleIds.has(s5.id))
+assert.equal(studentCoursework.payload.coursework.find(row => row.id === p1.id).status, 'completed')
+assert.equal(studentCoursework.payload.coursework.find(row => row.id === p3.id).status, 'pending')
 
 const submit = async (courseworkItemId, text) => api('/api/student-submissions', { method: 'POST', headers: { Authorization: `Bearer ${studentToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ coursework_item_id: courseworkItemId, code_text: text, file_name: `${text}.py` }) })
-const s1 = item('SQL', 'assignment', 'S1')
-const project = item('SQL', 'project', 'SQL Project 1')
 const firstSubmission = await submit(s1.id, 'select 1;')
 const secondSubmission = await submit(s1.id, 'select 1; -- resubmission')
 const projectSubmission = await submit(project.id, 'select count(*) from sales;')
@@ -146,21 +165,36 @@ assert.equal(linkedRows.filter(row => row.coursework_item_id === project.id).len
 
 const health = await api('/api/student-health', { headers: { Authorization: `Bearer ${studentToken}` } })
 const metrics = health.payload.healthCard?.metrics || health.payload.metrics || {}
-assert.equal(Number(metrics.assignmentPoints), 5)
+assert.equal(Number(metrics.assignmentPoints), 15)
 assert.equal(Number(metrics.projectPoints), 10)
-assert.equal(Number(metrics.courseworkPoints), 15)
+assert.equal(Number(metrics.courseworkPoints), 25)
 assert.equal(Number(metrics.assignmentCompleted), 3)
 assert.equal(Number(metrics.assignmentPending), 4)
 assert.equal(Number(metrics.projectCompleted), 1)
 assert.equal(Number(metrics.projectPending), 0)
 const leaderboard = health.payload.healthCard?.leaderboard || health.payload.leaderboard || {}
 assert.ok(leaderboard.current)
-assert.equal(Number(leaderboard.current.totalPoints), 15)
+assert.equal(Number(leaderboard.current.totalPoints), 25)
 
 console.log(JSON.stringify({
   stagingProjectRef: 'bgpmsckjvutnqkryxknb', batch, studentName: student.name,
-  loginId: credential.loginId, credentialExport: `${batch}-student-credentials.csv`,
+  credentialExport: `${batch}-student-credentials.csv`,
   roster: 'PASS', duplicateImport: 'PASS', cumulativeRelease: 'PASS', historicalReconciliation: 'PASS',
   login: 'PASS', sessionRefresh: 'PASS', studentCoursework: 'PASS', directLinkage: 'PASS',
   scoring: { assignmentPoints: Number(metrics.assignmentPoints), projectPoints: Number(metrics.projectPoints), courseworkPoints: Number(metrics.courseworkPoints), leaderboardPoints: Number(leaderboard.current.totalPoints) },
 }, null, 2))
+} finally {
+  await cleanupRows('student_coursework_reconciliations', query => query.eq('batch', batch))
+  await cleanupRows('submissions', query => query.eq('batch', batch))
+  await cleanupRows('student_batch_memberships', query => query.eq('batch', batch))
+  await cleanupRows('students', query => query.eq('batch', batch))
+  await cleanupRows('batch_coursework_assignments', query => query.eq('batch', batch))
+  await cleanupRows('student_roster_imports', query => query.eq('batch', batch))
+  await cleanupRows('batch_curriculum_progress', query => query.eq('batch', batch))
+  const { data: createdItems, error: itemLookupError } = await db.from('coursework_items').select('id').like('title', `${tag}%`)
+  if (itemLookupError) cleanupErrors.push(`coursework_items lookup: ${itemLookupError.message}`)
+  const itemIds = (createdItems || []).map(row => row.id)
+  if (itemIds.length) await cleanupRows('coursework_items', query => query.in('id', itemIds))
+  await cleanupRows('batches', query => query.eq('name', batch))
+  if (cleanupErrors.length) throw new Error(`staging cumulative cleanup failed: ${cleanupErrors.join('; ')}`)
+}
