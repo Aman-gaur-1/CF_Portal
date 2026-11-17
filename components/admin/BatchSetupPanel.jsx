@@ -24,10 +24,10 @@ function canRetryOverview() {
   return true
 }
 
-function overviewMessage(error) {
+function overviewMessage(error, role = "admin") {
   if (error?.overviewKind === "offline") return "You appear to be offline. Reconnect and try again."
   if (error?.overviewKind === "timeout") return "Loading the batch roster took too long. Please try again."
-  if (error?.overviewKind === "auth") return "Your Admin session has expired. Please log in again."
+  if (error?.overviewKind === "auth") return `Your ${role === "teacher" ? "Trainer" : "Admin"} session has expired. Please log in again.`
   if (error?.overviewKind === "server") return "Could not load the batch roster. Please try again."
   if (error?.overviewKind === "network") return "We couldn't load the batch students. Check your connection and try again."
   return "Could not load the batch roster. Please try again."
@@ -59,7 +59,7 @@ function rowStatus(row) {
   return { label: "Review needed", tone: "badge-pending" }
 }
 
-export default function BatchSetupPanel({ adminToken, batches = [], success, showError, onOpenStudents }) {
+export default function BatchSetupPanel({ adminToken, authToken = adminToken, role = "admin", batches = [], success, showError, onOpenStudents }) {
   const [batch, setBatch] = useState(batches[0]?.name || "")
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
@@ -74,6 +74,8 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
   const [transferBatch, setTransferBatch] = useState("")
   const mountedRef = useRef(true)
   const overviewRequestRef = useRef({ sequence: 0, controller: null })
+  const endpoint = role === "teacher" ? "/api/teacher-roster" : "/api/admin-roster"
+  const canManageExisting = role === "admin"
 
   const batchNames = useMemo(() => batches.map(item => typeof item === "string" ? item : item.name).filter(Boolean), [batches])
 
@@ -113,8 +115,8 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
         controller.abort()
       }, OVERVIEW_TIMEOUT_MS)
       try {
-        const res = await fetch(`/api/admin-roster?mode=overview&batch=${encodeURIComponent(selectedBatch)}`, {
-          headers: { Authorization: `Bearer ${adminToken}` },
+        const res = await fetch(`${endpoint}?mode=overview&batch=${encodeURIComponent(selectedBatch)}`, {
+          headers: { Authorization: `Bearer ${authToken}` },
           cache: "no-store",
           signal: controller.signal,
         })
@@ -154,14 +156,14 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       setOverviewError("")
     } catch (error) {
       if (!isCurrent()) return
-      const message = overviewMessage(error)
+      const message = overviewMessage(error, role)
       setOverviewError(message)
       showError(message)
     } finally {
       if (isCurrent()) setOverviewLoading(false)
       if (overviewRequestRef.current.sequence === sequence) overviewRequestRef.current.controller = null
     }
-  }, [adminToken, showError])
+  }, [authToken, endpoint, role, showError])
 
   useEffect(() => { loadOverview(batch) }, [batch, loadOverview])
 
@@ -187,7 +189,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
 
   async function downloadTemplate(format = "xlsx") {
     try {
-      const res = await fetch(`/api/admin-roster?format=${format}`, { headers: { Authorization: `Bearer ${adminToken}` } })
+      const res = await fetch(`${endpoint}?format=${format}`, { headers: { Authorization: `Bearer ${authToken}` } })
       if (!res.ok) throw new Error("Could not download the roster template.")
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
@@ -201,7 +203,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
 
   async function submit(action) {
     if (!file || !batch) { showError("Select a batch and roster file first."); return }
-    if (action === "apply-pattern" && patternReadyCount > 0) {
+    if (action === "apply-pattern" && canManageExisting && patternReadyCount > 0) {
       const skippedCount = Math.max((preview?.summary?.existing || 0) - patternReadyCount, 0)
       const skippedMessage = skippedCount ? ` ${skippedCount} student${skippedCount === 1 ? " is" : "s are"} missing a valid phone number or Login ID and will not be changed.` : ""
       if (!window.confirm(`${patternReadyCount} existing student${patternReadyCount === 1 ? "" : "s"} will receive new Login IDs and passwords using the ConsoleFlare credential pattern.${skippedMessage} Old Login IDs and passwords for these students will stop working. Student IDs, attendance, submissions, Health Card, memberships, and batch assignments will remain unchanged.`)) return
@@ -212,7 +214,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       formData.set("batch", batch)
       formData.set("action", action)
       formData.set("file", file)
-      const res = await fetch("/api/admin-roster", { method: "POST", headers: { Authorization: `Bearer ${adminToken}` }, body: formData })
+      const res = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${authToken}` }, body: formData })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not process the roster.")
       setPreview(data)
@@ -228,8 +230,9 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
   }
 
   async function resetPassword(student) {
+    if (!canManageExisting) return
     try {
-      const res = await fetch("/api/admin-student-credentials", { method: "POST", headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ studentId: student.id }) })
+      const res = await fetch("/api/admin-student-credentials", { method: "POST", headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ studentId: student.id }) })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not reset the password.")
       setCredentials(current => [...current.filter(row => row.loginId !== data.credential.loginId), data.credential])
@@ -243,10 +246,11 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
   }
 
   async function confirmTransfer() {
+    if (!canManageExisting) return
     if (!transferTarget?.id || !transferBatch || transferBatch === transferTarget.batch) return
     setLoading(true)
     try {
-      const res = await fetch("/api/admin-roster", { method: "PATCH", headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ studentId: transferTarget.id, batch: transferBatch }) })
+      const res = await fetch("/api/admin-roster", { method: "PATCH", headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ studentId: transferTarget.id, batch: transferBatch }) })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || "Could not transfer the student.")
       setTransferTarget(null)
@@ -301,7 +305,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
   const loginIdReadyCount = preview?.summary?.loginIdReady || 0
   const phoneMissingCount = preview?.summary?.phoneMissing || 0
   const invalidPhoneCount = preview?.summary?.invalidPhone || 0
-  const actionableCount = newCount + aliasUpdateCount
+  const actionableCount = canManageExisting ? newCount + aliasUpdateCount : newCount
 
   return (
     <div className="grid gap-5">
@@ -310,7 +314,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
           <div>
             <p className="text-xs font-semibold" style={{ color: "var(--primary)" }}>STUDENTS</p>
             <h2 className="text-2xl font-black mt-1">Bulk Onboard Students</h2>
-            <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Create secure student accounts first, then use the registered roster for attendance matching.</p>
+            <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>{role === "teacher" ? "Create secure accounts in your assigned batch. Existing students are shown for review and are never reset by Trainer uploads." : "Create secure student accounts first, then use the registered roster for attendance matching."}</p>
           </div>
           <div className="flex gap-2 flex-wrap">
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => downloadTemplate("csv")}>CSV Template</button>
@@ -342,12 +346,12 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
             </label>
           </div>
         </div>
-        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Required: Student Name and Phone. Optional: Email, External Student ID, Teams Display Name, Join Date (YYYY-MM-DD). The selected batch is authoritative; transfers keep their actual transfer date. Login IDs use first name + final 2 phone digits. Passwords follow FirstName@last3#.</p>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Required: Student Name and Phone. Optional: Email, External Student ID, Teams Display Name, Join Date (YYYY-MM-DD). The selected batch is authoritative; {role === "teacher" ? "Trainer uploads cannot transfer or reset existing students. " : "transfers keep their actual transfer date. "}Login IDs use first name + final 2 phone digits. Passwords follow FirstName@last3#.</p>
         <div className="flex gap-2 flex-wrap">
           <button type="button" className="btn btn-primary" onClick={() => submit("preview")} disabled={loading || !file || !batch}>{loading ? <Spinner size="sm" /> : "Preview Students"}</button>
           {preview && newCount > 0 && <button type="button" className="btn btn-primary" onClick={() => submit("commit-new")} disabled={loading || newCount === 0}>{loading ? <Spinner size="sm" /> : `Create ${newCount} Student Account${newCount === 1 ? "" : "s"}`}</button>}
-          {preview && actionableCount > 0 && newCount === 0 && patternReadyCount === 0 && <button type="button" className="btn btn-primary" onClick={() => submit("commit-new")} disabled={loading}>{loading ? <Spinner size="sm" /> : "Apply Attendance Aliases"}</button>}
-          {preview && (patternReadyCount > 0 || (aliasUpdateCount > 0 && newCount === 0)) && <button type="button" className="btn btn-secondary" onClick={() => submit("apply-pattern")} disabled={loading}>{loading ? <Spinner size="sm" /> : patternReadyCount > 0 ? `Update ${patternReadyCount} Student${patternReadyCount === 1 ? "" : "s"} & Apply Login Credentials` : "Apply Attendance Aliases"}</button>}
+          {canManageExisting && preview && actionableCount > 0 && newCount === 0 && patternReadyCount === 0 && <button type="button" className="btn btn-primary" onClick={() => submit("commit-new")} disabled={loading}>{loading ? <Spinner size="sm" /> : "Apply Attendance Aliases"}</button>}
+          {canManageExisting && preview && (patternReadyCount > 0 || (aliasUpdateCount > 0 && newCount === 0)) && <button type="button" className="btn btn-secondary" onClick={() => submit("apply-pattern")} disabled={loading}>{loading ? <Spinner size="sm" /> : patternReadyCount > 0 ? `Update ${patternReadyCount} Student${patternReadyCount === 1 ? "" : "s"} & Apply Login Credentials` : "Apply Attendance Aliases"}</button>}
         </div>
       </section>
 
@@ -363,7 +367,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
             const status = rowStatus(row)
             return <div className="admin-row items-start" key={`${row.rowNumber}-${row.name}`}>
               <div className="min-w-0"><p className="font-semibold">{row.name || `Row ${row.rowNumber}`}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{[row.email, row.phoneUpdate ? `New: ${row.phone || "Not available"}` : row.phone && `Phone: ${row.phone}`, row.phoneUpdate && `Current: ${row.currentPhone || "Not available"}`, row.status === "existing" && row.currentLoginId && `Current Login ID: ${row.currentLoginId}`, row.status === "existing" && row.newLoginId && `New Login ID: ${row.newLoginId}`, row.teamsDisplayName && `Teams: ${row.teamsDisplayName}`].filter(Boolean).join(" · ") || "No optional identity details"}</p><p className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>{row.reason || (row.passwordCollisionCount > 1 ? "Password pattern collision warning: review the generated credentials before distribution." : "Ready to create")}</p>{row.passwordCollisionCount > 1 && <p className="text-xs mt-1" style={{ color: "var(--warning)" }}>{row.passwordCollisionCount} students generate the same password pattern. This is allowed, but distribute credentials carefully.</p>}</div>
-              <div className="flex gap-2 flex-wrap justify-end"><span className={status.tone}>{status.label}</span>{row.status === "existing_different_batch" && row.matchedStudent && <button type="button" className="btn btn-secondary btn-sm" onClick={() => askTransfer({ id: row.matchedStudent.id, name: row.matchedStudent.name, batch: row.matchedStudent.batch }, batch)}>Assign / Transfer Existing Student</button>}</div>
+              <div className="flex gap-2 flex-wrap justify-end"><span className={status.tone}>{status.label}</span>{canManageExisting && row.status === "existing_different_batch" && row.matchedStudent && <button type="button" className="btn btn-secondary btn-sm" onClick={() => askTransfer({ id: row.matchedStudent.id, name: row.matchedStudent.name, batch: row.matchedStudent.batch }, batch)}>Assign / Transfer Existing Student</button>}</div>
             </div>
           })}
         </div>
@@ -377,7 +381,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
       <section className="card admin-panel grid gap-4">
         <div className="flex items-start justify-between gap-3 flex-wrap"><div><h3 className="text-lg font-bold">Batch Students</h3><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Registered students are the authoritative attendance roster.</p></div><div className="flex items-center gap-2 flex-wrap"><button type="button" className="btn btn-secondary btn-sm" onClick={() => loadOverview(batch)} disabled={!batch || overviewLoading}>{overviewLoading ? <Spinner size="sm" /> : "Refresh"}</button><input className="input max-w-xs" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search student or Login ID" aria-label="Search batch students" /></div></div>
         {overviewError && <div className="rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap" style={{ border: "1px solid var(--danger)", background: "rgba(239,68,68,0.06)" }} role="alert"><div><p className="text-sm font-semibold">Couldn’t load batch students.</p><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>{overviewError}{overview.students.length > 0 ? " Showing the last loaded roster." : ""}</p></div><button type="button" className="btn btn-secondary btn-sm" onClick={() => loadOverview(batch)} disabled={!batch || overviewLoading}>Retry</button></div>}
-        {overviewLoading && overview.students.length === 0 ? <div className="flex justify-center py-8" aria-label="Loading batch students"><Spinner /></div> : filteredStudents.length === 0 ? overviewError ? null : <p className="text-sm py-5" style={{ color: "var(--text-muted)" }}>No students are registered in this batch yet.</p> : <div className="grid gap-2">{filteredStudents.map(student => <div className="admin-row" key={student.id}><div><p className="font-semibold">{student.name}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{student.login_id || "No Login ID"} · Onboarded {formatDate(student.created_at)}{student.attendanceAliases?.length ? ` · Teams: ${student.attendanceAliases.join(", ")}` : ""}</p></div><div className="flex gap-2 flex-wrap justify-end"><span className={student.status === "active" ? "badge-done" : "badge-failed"}>{student.status}</span>{onOpenStudents && <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenStudents}>View</button>}<button type="button" className="btn btn-secondary btn-sm" onClick={() => resetPassword(student)}>Reset Password</button><button type="button" className="btn btn-secondary btn-sm" onClick={() => askTransfer(student)}>Transfer Batch</button></div></div>)}</div>}
+        {overviewLoading && overview.students.length === 0 ? <div className="flex justify-center py-8" aria-label="Loading batch students"><Spinner /></div> : filteredStudents.length === 0 ? overviewError ? null : <p className="text-sm py-5" style={{ color: "var(--text-muted)" }}>No students are registered in this batch yet.</p> : <div className="grid gap-2">{filteredStudents.map(student => <div className="admin-row" key={student.id}><div><p className="font-semibold">{student.name}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{student.login_id || "No Login ID"} · Onboarded {formatDate(student.created_at)}{student.attendanceAliases?.length ? ` · Teams: ${student.attendanceAliases.join(", ")}` : ""}</p></div><div className="flex gap-2 flex-wrap justify-end"><span className={student.status === "active" ? "badge-done" : "badge-failed"}>{student.status}</span>{onOpenStudents && <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenStudents}>View</button>}{canManageExisting && <><button type="button" className="btn btn-secondary btn-sm" onClick={() => resetPassword(student)}>Reset Password</button><button type="button" className="btn btn-secondary btn-sm" onClick={() => askTransfer(student)}>Transfer Batch</button></>}</div></div>)}</div>}
       </section>
 
       <section className="card admin-panel grid gap-3">
@@ -385,7 +389,7 @@ export default function BatchSetupPanel({ adminToken, batches = [], success, sho
         {overview.imports.length === 0 ? <p className="text-sm" style={{ color: "var(--text-muted)" }}>No roster imports for this batch yet.</p> : <div className="grid gap-2">{overview.imports.map(item => <div className="admin-row" key={item.id}><div><p className="font-semibold">{item.original_filename}</p><p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{formatDate(item.completed_at || item.created_at)} · Uploaded by {item.uploaded_by_name}</p></div><p className="text-xs text-right" style={{ color: "var(--text-secondary)" }}>{item.new_count} new · {item.existing_count} existing · {item.possible_duplicate_count} review · {item.invalid_count} invalid</p></div>)}</div>}
       </section>
 
-      {transferTarget && <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.5)" }} role="dialog" aria-modal="true" aria-labelledby="transfer-student-title"><div className="card p-5 w-full max-w-md"><h3 id="transfer-student-title" className="text-lg font-bold">Transfer existing student?</h3><p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}><b>{transferTarget.name}</b> is currently assigned to {transferTarget.batch}. Existing credentials and history will be preserved.</p><label className="label mt-4">Target batch<SearchableBatchSelect batches={batchNames} value={transferBatch} onChange={setTransferBatch} placeholder="Select target batch" label="Transfer target batch" required /></label><div className="flex justify-end gap-2 mt-5"><button type="button" className="btn btn-secondary" onClick={() => setTransferTarget(null)} disabled={loading}>Cancel</button><button type="button" className="btn btn-primary" onClick={confirmTransfer} disabled={loading || !transferBatch || transferBatch === transferTarget.batch}>{loading ? <Spinner size="sm" /> : "Confirm Transfer"}</button></div></div></div>}
+      {canManageExisting && transferTarget && <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.5)" }} role="dialog" aria-modal="true" aria-labelledby="transfer-student-title"><div className="card p-5 w-full max-w-md"><h3 id="transfer-student-title" className="text-lg font-bold">Transfer existing student?</h3><p className="text-sm mt-2" style={{ color: "var(--text-secondary)" }}><b>{transferTarget.name}</b> is currently assigned to {transferTarget.batch}. Existing credentials and history will be preserved.</p><label className="label mt-4">Target batch<SearchableBatchSelect batches={batchNames} value={transferBatch} onChange={setTransferBatch} placeholder="Select target batch" label="Transfer target batch" required /></label><div className="flex justify-end gap-2 mt-5"><button type="button" className="btn btn-secondary" onClick={() => setTransferTarget(null)} disabled={loading}>Cancel</button><button type="button" className="btn btn-primary" onClick={confirmTransfer} disabled={loading || !transferBatch || transferBatch === transferTarget.batch}>{loading ? <Spinner size="sm" /> : "Confirm Transfer"}</button></div></div></div>}
     </div>
   )
 }

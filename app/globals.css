@@ -941,6 +941,12 @@ button.metric-card:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rg
 .badge-done { background: var(--portal-success-soft); border-color: color-mix(in srgb, var(--portal-success) 30%, transparent); color: var(--portal-success); }
 .badge-pending { background: var(--portal-warning-soft); border-color: color-mix(in srgb, var(--portal-warning) 30%, transparent); color: var(--portal-warning); }
 .badge-failed { background: var(--portal-danger-soft); border-color: color-mix(in srgb, var(--portal-danger) 30%, transparent); color: var(--portal-danger); }
+.badge-mapping-required, .badge-mapping-pending { border-radius: 999px; padding: 4px 8px; font-size: 0.68rem; font-weight: 750; letter-spacing: 0.02em; }
+.badge-mapping-required { background: var(--portal-danger-soft); color: var(--portal-danger); }
+.badge-mapping-pending { background: var(--portal-warning-soft); color: var(--portal-warning); }
+.student-mapping-required, .student-mapping-pending { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 14px; border-radius: var(--portal-radius-md); }
+.student-mapping-required { border: 1px solid color-mix(in srgb, var(--portal-danger) 45%, var(--portal-border)); background: var(--portal-danger-soft); color: var(--portal-text); }
+.student-mapping-pending { border: 1px solid color-mix(in srgb, var(--portal-warning) 45%, var(--portal-border)); background: var(--portal-warning-soft); color: var(--portal-text); }
 
 @media (max-width: 900px) {
   .health-card-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }

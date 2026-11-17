@@ -105,21 +105,59 @@ export async function GET(request) {
       .order('id', { ascending: false })
     if (correctionError && !isMissingHealthCardSchema(correctionError)) throw new Error(correctionError.message)
 
+    const { data: mappingRequests, error: mappingRequestError } = await supabase
+      .from('coursework_mapping_requests')
+      .select('id,submission_id,status,target_coursework_item_id,target_title,target_item_type,reason,created_at,updated_at')
+      .eq('student_id', student.id)
+      .order('created_at', { ascending: false })
+    if (mappingRequestError && !isMissingHealthCardSchema(mappingRequestError)) throw new Error(mappingRequestError.message)
+
     const courseworkSummary = calculateCourseworkSummary(
       submissions,
       courseworkItems,
       reconciliationError ? [] : (reconciliations || []),
       correctionError ? [] : (corrections || []),
     )
-    const decoratedSubmissions = submissions.map(row => ({
-      ...row,
-      coursework_points: courseworkSummary.awardBySubmissionId.get(String(row.id)) || 0,
-      canonical_coursework_type: courseworkSummary.awards.find(award => String(award.id) === String(row.id))?.canonical_type || null,
-      canonical_coursework_title: courseworkSummary.awards.find(award => String(award.id) === String(row.id))?.canonical_title || null,
-      canonical_coursework_phase: courseworkSummary.awards.find(award => String(award.id) === String(row.id))?.canonical_phase || null,
-      coursework_mapping_source: courseworkSummary.awards.find(award => String(award.id) === String(row.id))?.source || null,
-    }))
-    const serializableSummary = { ...courseworkSummary, awardBySubmissionId: undefined }
+    const catalogById = new Map(courseworkItems.map(item => [String(item.id), item]))
+    const awardBySubmissionId = new Map(courseworkSummary.awards.map(award => [String(award.id), award]))
+    const correctionBySubmissionId = new Map((correctionError ? [] : (corrections || [])).map(correction => [String(correction.submission_id), correction]))
+    const reconciliationBySubmissionId = new Map((reconciliationError ? [] : (reconciliations || [])).filter(row => row.source_submission_id).map(row => [String(row.source_submission_id), row]))
+    const latestRequestBySubmissionId = new Map()
+    for (const row of (mappingRequestError ? [] : (mappingRequests || []))) {
+      const key = String(row.submission_id)
+      if (!latestRequestBySubmissionId.has(key)) latestRequestBySubmissionId.set(key, row)
+    }
+    const decoratedSubmissions = submissions.map(row => {
+      const award = awardBySubmissionId.get(String(row.id))
+      const sourceItem = catalogById.get(String(row.coursework_item_id || ''))
+      const correction = correctionBySubmissionId.get(String(row.id))
+      const reconciliation = reconciliationBySubmissionId.get(String(row.id))
+      const canonicalItemId = correction?.new_canonical_coursework_item_id || reconciliation?.coursework_item_id || (sourceItem?.catalog_status === 'canonical' ? sourceItem.id : sourceItem?.canonical_coursework_item_id)
+      const canonicalItem = catalogById.get(String(canonicalItemId || ''))
+      const requestRow = latestRequestBySubmissionId.get(String(row.id))
+      const recognized = Boolean(award || canonicalItemId)
+      return {
+        ...row,
+        coursework_points: courseworkSummary.awardBySubmissionId.get(String(row.id)) || 0,
+        canonical_coursework_type: award?.canonical_type || correction?.new_item_type || reconciliation?.item_type || (canonicalItem ? normalizeHealthCourseworkType(canonicalItem.item_type) : null),
+        canonical_coursework_title: award?.canonical_title || correction?.new_canonical_title || reconciliation?.source_topic || canonicalItem?.title || null,
+        canonical_coursework_phase: award?.canonical_phase || correction?.new_canonical_phase || canonicalItem?.phase || null,
+        coursework_mapping_source: award?.source || (requestRow?.status === 'auto_applied' ? 'student_auto' : requestRow?.status === 'approved' ? 'teacher_review' : canonicalItemId ? 'canonical' : null),
+        mapping_status: requestRow?.status || (recognized ? 'mapped' : 'mapping_required'),
+        mapping_required: !recognized,
+        mapping_request_id: requestRow?.id || null,
+        mapping_reason: requestRow?.reason || null,
+      }
+    })
+    const serializableSummary = {
+      ...courseworkSummary,
+      awardBySubmissionId: undefined,
+      submissionAttempts: submissions.length,
+      recognizedAssignmentCount: courseworkSummary.assignmentCount,
+      recognizedProjectCount: courseworkSummary.projectCount,
+      mappingRequiredCount: decoratedSubmissions.filter(row => row.mapping_required).length,
+      mappingPendingCount: decoratedSubmissions.filter(row => row.mapping_status === 'pending_review').length,
+    }
     return jsonNoStore({
       success: true,
       submissions: await withSignedAssignmentUrls(decoratedSubmissions, { supabase }),

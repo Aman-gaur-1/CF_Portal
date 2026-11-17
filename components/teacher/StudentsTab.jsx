@@ -9,6 +9,8 @@ import { ToastContainer, useToast } from "@/components/ui/Toast"
 import { useRefreshAction } from "@/lib/use-refresh-action"
 import StaffStudentHealthCard from "@/components/ui/StaffStudentHealthCard"
 import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
+import BatchSetupPanel from "@/components/admin/BatchSetupPanel"
+import StudentOnboardingForm from "@/components/student/StudentOnboardingForm"
 
 const SCOPE_REFRESH_MS = 5 * 60 * 1000
 
@@ -28,6 +30,8 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
   const [savingProfile, setSavingProfile] = useState(false)
   const [deactivatingStudentId, setDeactivatingStudentId] = useState(null)
   const [healthStudent, setHealthStudent] = useState(null)
+  const [addStudentOpen, setAddStudentOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
   const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
   useEffect(() => setSearch(globalSearch), [globalSearch])
@@ -161,13 +165,23 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
     <div>
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <p className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>{filtered.length} assigned students</p>
-        <RefreshButton
-          onClick={refreshAction.refresh}
-          refreshing={refreshAction.refreshing}
-          updatedLabel={refreshAction.updatedLabel}
-          disabled={loading}
-        />
+        <div className="flex gap-2 flex-wrap justify-end">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAddStudentOpen(true)}>+ Add Student</button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setBulkOpen(current => !current)}>{bulkOpen ? "Close Bulk Onboard" : "Bulk Onboard"}</button>
+          <RefreshButton
+            onClick={refreshAction.refresh}
+            refreshing={refreshAction.refreshing}
+            updatedLabel={refreshAction.updatedLabel}
+            disabled={loading}
+          />
+        </div>
       </div>
+
+      {bulkOpen && (
+        <div className="mb-5">
+          <BatchSetupPanel authToken={teacherToken} role="teacher" batches={batches} success={success} showError={showError} onOpenStudents={() => setBulkOpen(false)} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
         <input className="input" placeholder="Search your assigned students..." value={search} onChange={e => setSearch(e.target.value)} />
@@ -239,6 +253,17 @@ export default function StudentsTab({ teacherToken, globalSearch = "" }) {
                 {savingProfile ? <Spinner size="sm" /> : "Save Changes"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {addStudentOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.45)" }} role="dialog" aria-modal="true" aria-labelledby="teacher-add-student-title">
+          <div className="card w-full max-w-2xl p-5">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div><p id="teacher-add-student-title" className="text-lg font-bold">Add Student to Your Batch</p><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>You can only create accounts in batches assigned to you.</p></div>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAddStudentOpen(false)} aria-label="Close Add Student">Close</button>
+            </div>
+            <StudentOnboardingForm token={teacherToken} role="teacher" batches={batches} success={success} showError={showError} onClose={() => setAddStudentOpen(false)} onCreated={() => load({ silent: true })} />
           </div>
         </div>
       )}

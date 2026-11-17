@@ -14,6 +14,7 @@ import AiStatusBadge from "@/components/ui/AiStatusBadge"
 import NotificationBell from "@/components/ui/NotificationBell"
 import RefreshButton from "@/components/ui/RefreshButton"
 import StudentHealthCard from "@/components/student/StudentHealthCard"
+import StudentCourseworkMappingModal from "@/components/student/StudentCourseworkMappingModal"
 import PageHeader from "@/components/ui/PageHeader"
 import { useToast, ToastContainer } from "@/components/ui/Toast"
 import { detectAssignmentLanguage } from "@/lib/assignment-analysis"
@@ -126,6 +127,7 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
   const [detectedAssignment, setDetectedAssignment] = useState({ language: "Unknown", phase: "Unknown", confidence: "none", evidence: [] })
   const [studentQueryEnabled, setStudentQueryEnabled] = useState(false)
   const [assignmentQueries, setAssignmentQueries] = useState([])
+  const [mappingSubmission, setMappingSubmission] = useState(null)
   const loadAbortRef = useRef(null)
   const { toasts, success, error: showError } = useToast()
   const showErrorRef = useRef(showError)
@@ -535,8 +537,14 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
               <>
                 <ScoreSection submissions={submissions} courseworkSummary={courseworkSummary} />
 
-                <div className="grid grid-cols-3 gap-3 mb-6">
-                  {[[submissions.length, "Submission Attempts"], [pending, "Feedback Pending"], [submissions.length - pending, "Feedback Done"]].map(([n, l]) => (
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+                  {[
+                    [courseworkSummary?.submissionAttempts ?? submissions.length, "Submission Attempts"],
+                    [courseworkSummary?.recognizedAssignmentCount ?? courseworkSummary?.assignmentCount ?? 0, "Recognized Assignments"],
+                    [courseworkSummary?.recognizedProjectCount ?? courseworkSummary?.projectCount ?? 0, "Recognized Projects"],
+                    [pending, "Feedback Pending"],
+                    [courseworkSummary?.mappingRequiredCount ?? submissions.filter(row => row.mapping_required).length, "Mapping Required"],
+                  ].map(([n, l]) => (
                     <div key={l} className="stat-card"><div className="stat-num">{n}</div><div className="stat-label">{l}</div></div>
                   ))}
                 </div>
@@ -550,6 +558,8 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
                   const typeEmoji = canonicalType === "project" ? "🚀" : canonicalType === "assignment" ? "📝" : "📘"
                   const shownFileName = displayFileName(r)
                   const queryBadge = queryBadgeForSubmission(r.id)
+                  const mappingRequired = Boolean(r.mapping_required || r.mapping_status === "mapping_required")
+                  const mappingPending = r.mapping_status === "pending_review"
                   return (
                     <Expander
                       key={r.id}
@@ -557,10 +567,21 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
                       badge={(
                         <span className="flex items-center gap-2 flex-wrap">
                           {queryBadge}
+                          {mappingRequired && <span className="badge-mapping-required">Mapping Required</span>}
+                          {mappingPending && <span className="badge-mapping-pending">Mapping Pending</span>}
                           {hasFb ? <span className="badge-done">DONE</span> : <span className="badge-pending animate-pulse">PENDING</span>}
                         </span>
                       )}
                     >
+                      {mappingRequired && (
+                        <div className="student-mapping-required mb-4" role="alert">
+                          <div><p className="font-semibold">Mapping Required</p><p className="text-sm mt-1">This submission is not counted until it is matched to one canonical assignment or project. Your raw submission remains unchanged.</p></div>
+                          <button type="button" className="btn btn-danger-outline btn-sm" onClick={() => setMappingSubmission(r)}>Map Assignment</button>
+                        </div>
+                      )}
+                      {mappingPending && !mappingRequired && (
+                        <div className="student-mapping-pending mb-4" role="status"><p className="font-semibold">Mapping Pending Review</p><p className="text-sm mt-1">Your Trainer will review this mapping. It does not award points until approved.</p><button type="button" className="btn btn-secondary btn-sm mt-2" onClick={() => setMappingSubmission(r)}>Update Mapping</button></div>
+                      )}
                       <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm mb-3">
                         <span><b>Topic:</b> {r.topic}</span>
                         {r.canonical_coursework_title && <span><b>Mapped coursework:</b> {r.canonical_coursework_title}</span>}
@@ -634,6 +655,14 @@ export default function StudentView({ student, onLogout, onSessionRefresh }) {
           <ThemeToggle />
         </div>
       </div>
+      {mappingSubmission && <StudentCourseworkMappingModal
+        submission={mappingSubmission}
+        token={student.token}
+        success={success}
+        showError={showError}
+        onClose={() => setMappingSubmission(null)}
+        onSaved={() => loadSubmissions({ silent: true })}
+      />}
       <ToastContainer toasts={toasts} />
     </div>
   )

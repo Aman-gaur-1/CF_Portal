@@ -19,6 +19,7 @@ import BatchSetupPanel from "@/components/admin/BatchSetupPanel"
 import CurriculumPanel from "@/components/admin/CurriculumPanel"
 import StaffStudentHealthCard from "@/components/ui/StaffStudentHealthCard"
 import CorrectCourseworkMappingModal from "@/components/admin/CorrectCourseworkMappingModal"
+import StudentOnboardingForm from "@/components/student/StudentOnboardingForm"
 import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 import PageHeader from "@/components/ui/PageHeader"
 import { useRefreshAction } from "@/lib/use-refresh-action"
@@ -284,6 +285,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
   const [deleteStudentTarget, setDeleteStudentTarget] = useState(null)
   const [deleteStudentConfirmation, setDeleteStudentConfirmation] = useState("")
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
+  const [addStudentOpen, setAddStudentOpen] = useState(false)
   const { toasts, success, error: showError } = useToast()
 
   useEffect(() => {
@@ -830,7 +832,10 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
         <div className="card admin-panel">
           <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
             <SectionTitle title="Students" detail={`${filteredStudents.length} visible`} />
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => setTab("batch-setup")}>Bulk Onboard Students</button>
+            <div className="flex gap-2 flex-wrap justify-end">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAddStudentOpen(true)}>+ Add Student</button>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => setTab("batch-setup")}>Bulk Onboard Students</button>
+            </div>
           </div>
           <div className="grid gap-3 md:grid-cols-2 mb-4">
             <input className="input" value={studentSearch} onChange={e => setStudentSearch(e.target.value)} placeholder="Search students" />
@@ -897,6 +902,17 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             </div>
           )}
         </div>
+        {addStudentOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.45)" }} role="dialog" aria-modal="true" aria-labelledby="add-student-title">
+            <div className="card w-full max-w-2xl p-5">
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div><p id="add-student-title" className="text-lg font-bold">Add Student</p><p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>Create one student account with the standard ConsoleFlare credentials.</p></div>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAddStudentOpen(false)} aria-label="Close Add Student">Close</button>
+              </div>
+              <StudentOnboardingForm token={adminToken} role="admin" batches={batches} success={success} showError={showError} onClose={() => setAddStudentOpen(false)} onCreated={() => load({ silent: true })} />
+            </div>
+          </div>
+        )}
       {deleteBatchTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.45)" }} role="dialog" aria-modal="true" aria-label="Delete batch confirmation">
           <div className="card p-5 w-full max-w-md">
@@ -1133,7 +1149,7 @@ export default function AdminDashboard({ adminName, adminToken, onLogout }) {
             {tab === "overview" && renderOverview()}
             {tab === "attendance" && <AdminHealthPanel adminToken={adminToken} showError={showError} success={success} batches={batches} initialTab="attendance" hideNavigation />}
             {tab === "students" && renderPeople()}
-            {tab === "batch-setup" && <BatchSetupPanel adminToken={adminToken} batches={batches} success={success} showError={showError} onOpenStudents={() => setTab("students")} />}
+            {tab === "batch-setup" && <BatchSetupPanel adminToken={adminToken} role="admin" batches={batches} success={success} showError={showError} onOpenStudents={() => setTab("students")} />}
             {tab === "curriculum" && <CurriculumPanel adminToken={adminToken} batches={batches} success={success} showError={showError} />}
             {tab === "advanced" && renderAdvanced()}
           </>

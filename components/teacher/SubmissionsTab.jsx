@@ -15,6 +15,7 @@ import { ToastContainer, useToast } from "@/components/ui/Toast"
 import TeacherQueryPanel from "@/components/teacher/TeacherQueryPanel"
 import SearchableBatchSelect from "@/components/ui/SearchableBatchSelect"
 import { useRefreshAction } from "@/lib/use-refresh-action"
+import MappingReviewPanel from "@/components/teacher/MappingReviewPanel"
 
 const DEFAULT_PHASE_OPTIONS = []
 const REVIEW_REFRESH_MS = 5 * 60 * 1000
@@ -1265,6 +1266,7 @@ export default function SubmissionsTab({ teacherName, teacherToken, requestedFil
 
   return (
     <div>
+      <MappingReviewPanel teacherToken={teacherToken} success={success} showError={showError} />
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
         <p className="text-xs uppercase tracking-[0.25em]" style={{ color: "var(--text-muted)" }}>Review queue</p>
         <div className="flex items-center gap-3 flex-wrap justify-end">
