@@ -184,6 +184,9 @@ export async function POST(request) {
     if (existingRequest && ['auto_applied', 'approved'].includes(existingRequest.status) && String(existingRequest.target_coursework_item_id || '') !== targetId) {
       return jsonNoStore({ error: 'This submission is already mapped. Ask your Trainer or Admin to correct the existing mapping.' }, { status: 409 })
     }
+    if (existingRequest && ['auto_applied', 'approved'].includes(existingRequest.status) && String(existingRequest.target_coursework_item_id || '') === targetId) {
+      return jsonNoStore({ success: true, status: existingRequest.status, request: existingRequest, duplicateTarget: true, pointsAwarded: 0 })
+    }
 
     const safeSuggestion = chooseSafeStudentMapping({ sourceTopic: submission.topic, sourceType: submission.submission_type, sourcePhase: submission.phase, canonicalItems: items, aliases })
     const typeChanged = normalizeHealthCourseworkType(submission.submission_type) !== normalizeHealthCourseworkType(item.item_type)
